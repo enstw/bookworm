@@ -271,8 +271,6 @@ html, body {
   writing-mode: vertical-rl;
   overflow-x: scroll;
   overflow-y: hidden;
-  scroll-snap-type: x mandatory;
-  scroll-behavior: smooth;
   font-size: var(--font-size);
   line-height: var(--line-height);
   font-family: var(--reader-font);
