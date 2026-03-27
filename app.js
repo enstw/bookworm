@@ -579,7 +579,7 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.1"}`;
+  $("version").textContent = `v${"1.1.2"}`;
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   await loadScript("https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js");
   const settings = loadSettings();
