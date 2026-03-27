@@ -8,7 +8,7 @@ declare const fflate: {
   unzipSync: (data: Uint8Array) => Record<string, Uint8Array>;
 };
 declare const OpenCC: {
-  Converter: new (options: { from: string; to: string }) => { convert: (s: string) => string };
+  Converter: (options: { from: string; to: string }) => (s: string) => string;
 };
 
 // --- DOM Elements ---
@@ -47,7 +47,7 @@ let books: Book[] = [];
 let currentBook: Book | null = null;
 let fullText = '';
 let chapters: Chapter[] = [];
-let converter: { convert: (s: string) => string } | null = null;
+let converter: ((s: string) => string) | null = null;
 let tts: AITextToSpeech | null = null;
 
 // --- Settings ---
@@ -147,9 +147,9 @@ async function openBook(book: Book): Promise<void> {
     // SC → TC conversion
     showLoading('正在轉換為繁體…');
     if (!converter) {
-      converter = new OpenCC.Converter({ from: 'cn', to: 'twp' });
+      converter = OpenCC.Converter({ from: 'cn', to: 'twp' });
     }
-    fullText = converter.convert(decoded);
+    fullText = converter(decoded);
 
     // Detect chapters
     showLoading('正在分析章節…');

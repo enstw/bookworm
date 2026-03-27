@@ -348,9 +348,9 @@ async function openBook(book) {
     const decoded = new TextDecoder("gb18030").decode(raw);
     showLoading("\u6B63\u5728\u8F49\u63DB\u70BA\u7E41\u9AD4\u2026");
     if (!converter) {
-      converter = new OpenCC.Converter({ from: "cn", to: "twp" });
+      converter = OpenCC.Converter({ from: "cn", to: "twp" });
     }
-    fullText = converter.convert(decoded);
+    fullText = converter(decoded);
     showLoading("\u6B63\u5728\u5206\u6790\u7AE0\u7BC0\u2026");
     chapters = detectChapters(fullText);
     renderBook();
