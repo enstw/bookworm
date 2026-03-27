@@ -49,6 +49,15 @@ bookworm/
 - `npm run watch` — watch mode for development
 - `npm run dev` — start local dev server (python3 http.server)
 
+## Version Bumping
+Before every push, bump the version in `package.json` using `npm version` (no git tag):
+- **Bug fix / minor tweak** → `npm version patch --no-git-tag-version`
+- **New feature** → `npm version minor --no-git-tag-version`
+- **Breaking change** → `npm version major --no-git-tag-version`
+
+Then run `npm run build` to bake the new version into `app.js` (via `__APP_VERSION__` define).
+Include the updated `package.json` and `app.js` in the commit.
+
 ## Code Style
 - TypeScript with strict mode
 - Minimal dependencies — prefer browser APIs over libraries
