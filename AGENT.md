@@ -1,38 +1,56 @@
-# BookBug
+# Bookworm 書蟲
 
 ## Project Overview
 A zero-backend Chinese e-reader web app hosted on GitHub Pages. Reads zipped, non-unicode (GB18030) Chinese text files directly in the browser, converts Simplified Chinese to Traditional Chinese, and displays in vertical traditional layout.
 
 ## Tech Stack
-- **Pure HTML/CSS/JS** — no build step, no framework
-- **fflate** — client-side zip decompression (~13KB)
-- **OpenCC-js** — Simplified → Traditional Chinese conversion (~200KB)
-- **Web Speech API** — text-to-speech (browser built-in)
+- **TypeScript** — source in `src/`, compiled to `app.js` via esbuild
+- **fflate** — client-side zip decompression (CDN)
+- **OpenCC-js** — Simplified → Traditional Chinese conversion (CDN)
+- **AI TTS** — OpenAI-compatible text-to-speech API
 - **CSS `writing-mode: vertical-rl`** — vertical text layout
+- **FontFace API** — custom font loading from `fonts/` folder
 
 ## Architecture
 ```
-bookbug/
-├── index.html          ← single page app
-├── style.css           ← vertical layout, pagination
-├── app.js              ← reader logic, TTS, SC→TC
+bookworm/
+├── index.html              ← single page app
+├── style.css               ← vertical layout, themes, pagination
+├── app.js                  ← compiled output (do not edit)
+├── src/
+│   ├── app.ts              ← main application logic
+│   ├── types.ts            ← TypeScript interfaces
+│   ├── chapters.ts         ← chapter heading detection
+│   ├── fonts.ts            ← custom font loading
+│   └── tts.ts              ← AI text-to-speech integration
 ├── books/
-│   └── *.zip           ← zipped GB18030-encoded text files
-└── CLAUDE.md
+│   ├── index.json          ← book manifest
+│   └── *.zip               ← zipped GB18030-encoded text files
+├── fonts/
+│   ├── index.json          ← font manifest
+│   └── *.woff2/ttf/otf     ← custom font files
+├── package.json
+├── tsconfig.json
+└── AGENT.md
 ```
 
 ## Key Design Decisions
 - Books are kept zipped — browser decompresses on the fly via fflate
 - Text files are GB18030 encoded — decoded via built-in `TextDecoder('gb18030')`
 - No backend — everything runs client-side, hosted on GitHub Pages
-- Bookmarks are stored in URL hash (e.g. `#book=abc&ch=3&pos=42`) for cross-browser sharing
+- Bookmarks are stored in URL hash for cross-browser sharing, with localStorage fallback
+- Chapter detection is automatic — regex-based pattern matching for Chinese chapter headings
+- Custom fonts loaded via FontFace API from `fonts/` directory with JSON manifest
+- AI TTS uses OpenAI-compatible API format — user provides endpoint + API key in settings
 - Pipeline: ZIP → fflate unzip → TextDecoder('gb18030') → OpenCC-js SC→TC → render
 
 ## Commands
-- No build step required. Open `index.html` or serve with any static file server.
-- `python3 -m http.server 8000` — local dev server (needed for fetch to work with local files)
+- `npm run build` — compile TypeScript to app.js
+- `npm run watch` — watch mode for development
+- `npm run dev` — start local dev server (python3 http.server)
 
 ## Code Style
-- Vanilla JS, no TypeScript
+- TypeScript with strict mode
 - Minimal dependencies — prefer browser APIs over libraries
-- No build tools, no bundler
+- CDN imports for fflate and OpenCC-js (no bundling of large libs)
+- esbuild for fast compilation

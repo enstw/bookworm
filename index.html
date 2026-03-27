@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bookworm 書蟲</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Book selector overlay -->
+  <div id="book-selector" class="overlay">
+    <div class="overlay-content">
+      <h1>書蟲 Bookworm</h1>
+      <p class="subtitle">選擇一本書開始閱讀</p>
+      <div id="book-list" class="book-list"></div>
+    </div>
+  </div>
+
+  <!-- Settings panel -->
+  <div id="settings-panel" class="side-panel left-panel hidden">
+    <div class="panel-header">
+      <h2>設定</h2>
+      <button id="close-settings" class="panel-close">&times;</button>
+    </div>
+    <div class="panel-body">
+      <section>
+        <h3>字體</h3>
+        <select id="font-select">
+          <option value="default">預設字體</option>
+        </select>
+        <label>
+          字體大小
+          <input id="font-size" type="range" min="16" max="48" value="24" step="2">
+          <span id="font-size-label">24px</span>
+        </label>
+      </section>
+      <section>
+        <h3>主題</h3>
+        <select id="theme-select">
+          <option value="light">淺色</option>
+          <option value="dark">深色</option>
+          <option value="sepia">復古</option>
+        </select>
+      </section>
+      <section>
+        <h3>AI 語音朗讀</h3>
+        <label>
+          TTS API 端點
+          <input id="tts-endpoint" type="url" placeholder="https://api.openai.com/v1/audio/speech">
+        </label>
+        <label>
+          API Key
+          <input id="tts-api-key" type="password" placeholder="sk-...">
+        </label>
+        <label>
+          語音模型
+          <input id="tts-model" type="text" placeholder="tts-1" value="tts-1">
+        </label>
+        <label>
+          聲音
+          <input id="tts-voice" type="text" placeholder="alloy" value="alloy">
+        </label>
+        <label>
+          語速
+          <input id="tts-speed" type="range" min="0.5" max="2.0" value="1.0" step="0.1">
+          <span id="tts-speed-label">1.0x</span>
+        </label>
+        <button id="save-tts-settings" class="btn">儲存設定</button>
+      </section>
+    </div>
+  </div>
+
+  <!-- Chapter sidebar -->
+  <div id="chapter-panel" class="side-panel right-panel hidden">
+    <div class="panel-header">
+      <h2>目錄</h2>
+      <button id="close-chapters" class="panel-close">&times;</button>
+    </div>
+    <div class="panel-body">
+      <ul id="chapter-list"></ul>
+    </div>
+  </div>
+
+  <!-- Top toolbar -->
+  <div id="toolbar" class="toolbar">
+    <button id="btn-settings" title="設定">⚙</button>
+    <button id="btn-back" title="返回書架">☰</button>
+    <span id="book-title" class="toolbar-title"></span>
+    <span id="page-info" class="toolbar-info"></span>
+    <button id="btn-chapters" title="目錄">目錄</button>
+  </div>
+
+  <!-- Reader area -->
+  <div id="reader-container">
+    <div id="reader" class="reader"></div>
+  </div>
+
+  <!-- TTS controls -->
+  <div id="tts-bar" class="tts-bar hidden">
+    <button id="tts-prev" title="上一句">⏮</button>
+    <button id="tts-play" title="播放/暫停">▶</button>
+    <button id="tts-stop" title="停止">⏹</button>
+    <button id="tts-next" title="下一句">⏭</button>
+    <span id="tts-status"></span>
+  </div>
+
+  <!-- Bottom navigation -->
+  <div id="nav-bar" class="nav-bar">
+    <button id="nav-prev" class="nav-btn" title="上一頁">◀</button>
+    <input id="page-slider" type="range" min="0" max="100" value="0">
+    <button id="nav-next" class="nav-btn" title="下一頁">▶</button>
+    <button id="btn-tts" title="朗讀">🔊</button>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="loading" class="overlay hidden">
+    <div class="overlay-content">
+      <div class="spinner"></div>
+      <p id="loading-text">載入中…</p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
