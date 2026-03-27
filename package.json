@@ -1,9 +1,9 @@
 {
   "name": "bookworm",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
-    "build": "esbuild src/app.ts --bundle --outfile=app.js --format=esm --target=es2020",
+    "build": "node build.js",
     "watch": "esbuild src/app.ts --bundle --outfile=app.js --format=esm --target=es2020 --watch",
     "dev": "python3 -m http.server 8000"
   },

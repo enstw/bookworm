@@ -11,6 +11,8 @@ declare const OpenCC: {
   Converter: (options: { from: string; to: string }) => (s: string) => string;
 };
 
+declare const __APP_VERSION__: string;
+
 // --- DOM Elements ---
 const $ = (id: string) => document.getElementById(id)!;
 const bookSelector = $('book-selector');
@@ -432,6 +434,9 @@ function bindEvents(): void {
 
 // --- Init ---
 async function init(): Promise<void> {
+  // Show version
+  $('version').textContent = `v${__APP_VERSION__}`;
+
   // Load CDN scripts
   await loadScript('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');
   await loadScript('https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js');
