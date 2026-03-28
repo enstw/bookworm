@@ -355,21 +355,26 @@ function exitFullscreen(): void {
   }
 }
 
+function toggleFullscreen(): void {
+  if (document.fullscreenElement) {
+    exitFullscreen();
+  } else {
+    requestFullscreen();
+  }
+}
+
 function toggleChrome(): void {
   const body = document.body;
   if (body.classList.contains('chrome-visible')) {
     body.classList.remove('chrome-visible');
     if (chromeTimer) { clearTimeout(chromeTimer); chromeTimer = null; }
-    requestFullscreen();
   } else {
     body.classList.add('chrome-visible');
-    exitFullscreen();
     // Auto-hide after 4 seconds
     if (chromeTimer) clearTimeout(chromeTimer);
     chromeTimer = setTimeout(() => {
       body.classList.remove('chrome-visible');
       chromeTimer = null;
-      requestFullscreen();
     }, 4000);
   }
 }
@@ -379,6 +384,7 @@ function bindEvents(): void {
   // Toolbar buttons
   $('btn-settings').onclick = () => settingsPanel.classList.toggle('hidden');
   $('close-settings').onclick = () => settingsPanel.classList.add('hidden');
+  $('btn-fullscreen').onclick = () => toggleFullscreen();
   $('btn-chapters').onclick = () => chapterPanel.classList.toggle('hidden');
   $('close-chapters').onclick = () => chapterPanel.classList.add('hidden');
   $('btn-back').onclick = () => {
