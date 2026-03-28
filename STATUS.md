@@ -18,9 +18,6 @@
 - [x] Settings panel (font, size, theme, TTS config)
 - [x] Book selector UI with `books/index.json` manifest
 
-## TODO
-- [ ] Mobile browser chrome auto-hide: test vertical scrollability to trigger native browser chrome hiding, giving more reading area. Create test pages at `t/1` through `t/9` (simple → full reading panel) to isolate which CSS/layout combinations allow the browser address bar to collapse on scroll.
-
 ## Future Enhancements
 - [ ] Preload next TTS audio for gapless playback
 - [ ] Drag-and-drop book upload
