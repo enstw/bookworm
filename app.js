@@ -485,17 +485,11 @@ function handleTTSState(state, info) {
       break;
   }
 }
-function isMobile() {
-  return "ontouchstart" in window || navigator.maxTouchPoints > 0;
-}
 function enterReadingMode() {
   document.body.classList.add("reading-mode");
-  if (isMobile()) $("scroll-spacer").style.display = "block";
 }
 function exitReadingMode() {
   document.body.classList.remove("reading-mode", "chrome-visible");
-  $("scroll-spacer").style.display = "none";
-  window.scrollTo(0, 0);
   if (chromeTimer) {
     clearTimeout(chromeTimer);
     chromeTimer = null;
@@ -658,7 +652,7 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.17"} (${"c8155a3"})`;
+  $("version").textContent = `v${"1.1.18"} (${"7446be1"})`;
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   await loadScript("https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js");
   converter = OpenCC.Converter({ from: "cn", to: "twp" });

@@ -337,13 +337,10 @@ function isMobile(): boolean {
 
 function enterReadingMode(): void {
   document.body.classList.add('reading-mode');
-  if (isMobile()) $('scroll-spacer').style.display = 'block';
 }
 
 function exitReadingMode(): void {
   document.body.classList.remove('reading-mode', 'chrome-visible');
-  $('scroll-spacer').style.display = 'none';
-  window.scrollTo(0, 0);
   if (chromeTimer) { clearTimeout(chromeTimer); chromeTimer = null; }
   exitFullscreen();
 }
