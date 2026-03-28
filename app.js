@@ -530,8 +530,8 @@ function bindEvents() {
   readerEl.addEventListener("touchend", (e) => {
     const dx = e.changedTouches[0].clientX - touchStartX;
     if (Math.abs(dx) > 50) {
-      if (dx > 0) prevPage();
-      else nextPage();
+      if (dx > 0) nextPage();
+      else prevPage();
     }
   });
   readerEl.addEventListener("scroll", () => updatePageInfo());
@@ -582,7 +582,7 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.7"} (${"4c9a534"})`;
+  $("version").textContent = `v${"1.1.8"} (${"781b5c4"})`;
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   await loadScript("https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js");
   const settings = loadSettings();

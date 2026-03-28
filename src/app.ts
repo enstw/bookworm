@@ -369,7 +369,7 @@ function bindEvents(): void {
   readerEl.addEventListener('touchend', (e) => {
     const dx = e.changedTouches[0].clientX - touchStartX;
     if (Math.abs(dx) > 50) {
-      if (dx > 0) prevPage(); else nextPage();
+      if (dx > 0) nextPage(); else prevPage();
     }
   });
 
