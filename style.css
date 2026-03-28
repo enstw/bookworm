@@ -307,8 +307,8 @@ html, body {
 }
 
 .reading-mode.chrome-visible #reader-container {
-  top: 48px;
-  bottom: 88px;
+  top: 0;
+  bottom: 0;
 }
 
 .reader {

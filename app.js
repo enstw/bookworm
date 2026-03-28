@@ -627,7 +627,7 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.9"} (${"383fa04"})`;
+  $("version").textContent = `v${"1.1.10"} (${"2a8dc8c"})`;
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   await loadScript("https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js");
   converter = OpenCC.Converter({ from: "cn", to: "twp" });
