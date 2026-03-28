@@ -337,7 +337,6 @@ function isMobile(): boolean {
 
 function enterReadingMode(): void {
   document.body.classList.add('reading-mode');
-  if (isMobile()) requestFullscreen();
 }
 
 function exitReadingMode(): void {
@@ -416,14 +415,13 @@ function bindEvents(): void {
     }
   });
 
-  // Touch swipe & center-tap – prevent native scroll so only programmatic scrollBy fires
+  // Touch swipe & center-tap – pan-y CSS allows vertical scroll (hides address bar)
   let touchStartX = 0;
   let touchStartY = 0;
   readerEl.addEventListener('touchstart', (e) => {
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
   });
-  readerEl.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
   readerEl.addEventListener('touchend', (e) => {
     const endX = e.changedTouches[0].clientX;
     const endY = e.changedTouches[0].clientY;

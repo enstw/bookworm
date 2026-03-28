@@ -301,6 +301,11 @@ html, body {
   transition: top 0.25s ease, bottom 0.25s ease;
 }
 
+.reading-mode {
+  height: calc(100% + 1px);
+  overflow-y: auto;
+}
+
 .reading-mode #reader-container {
   top: 0;
   bottom: 0;
@@ -318,7 +323,7 @@ html, body {
   writing-mode: vertical-rl;
   overflow-x: scroll;
   overflow-y: hidden;
-  touch-action: none;
+  touch-action: pan-y;
   font-size: var(--font-size);
   line-height: var(--line-height);
   font-family: var(--reader-font);
