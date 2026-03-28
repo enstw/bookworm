@@ -129,11 +129,16 @@ html:has(#book-selector:not(.hidden)) body {
 .toolbar button {
   background: none;
   border: none;
-  font-size: 1.2rem;
+  font-size: 1.5rem;
   cursor: pointer;
-  padding: 4px 8px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px 10px;
   color: var(--fg);
   border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .toolbar button:hover { background: var(--border); }
@@ -368,7 +373,7 @@ html:has(#book-selector:not(.hidden)) body {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 44px;
+  height: 52px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
   display: flex;
@@ -381,23 +386,37 @@ html:has(#book-selector:not(.hidden)) body {
 .nav-btn {
   background: none;
   border: none;
-  font-size: 1rem;
+  font-size: 1.3rem;
   cursor: pointer;
-  padding: 4px 8px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 4px 10px;
   color: var(--fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 #page-slider { flex: 1; direction: rtl; }
+
+.nav-bar button {
+  min-width: 48px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+}
 
 .nav-bar button:hover { opacity: 0.7; }
 
 /* === TTS Bar === */
 .tts-bar {
   position: fixed;
-  bottom: 44px;
+  bottom: 52px;
   left: 0;
   right: 0;
-  height: 44px;
+  height: 48px;
   background: var(--accent);
   color: #fff;
   display: flex;
@@ -415,9 +434,14 @@ html:has(#book-selector:not(.hidden)) body {
   background: none;
   border: none;
   color: #fff;
-  font-size: 1.1rem;
+  font-size: 1.3rem;
   cursor: pointer;
-  padding: 4px 8px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .tts-bar button:hover { opacity: 0.8; }

@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7a3b14"/>
+      <stop offset="100%" stop-color="#8b4513"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#faf8f0"/>
+      <stop offset="100%" stop-color="#ede8d8"/>
+    </linearGradient>
+    <linearGradient id="worm-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8bc34a"/>
+      <stop offset="100%" stop-color="#558b2f"/>
+    </linearGradient>
+    <linearGradient id="worm-head" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9ccc65"/>
+      <stop offset="100%" stop-color="#7cb342"/>
+    </linearGradient>
+    <filter id="shadow" x="-8%" y="-8%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+    <filter id="glow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+
+  <!-- Subtle paper texture lines on background -->
+  <g opacity="0.04" stroke="#000" stroke-width="0.8">
+    <line x1="30" y1="70" x2="482" y2="70"/>
+    <line x1="30" y1="110" x2="482" y2="110"/>
+    <line x1="30" y1="150" x2="482" y2="150"/>
+    <line x1="30" y1="190" x2="482" y2="190"/>
+    <line x1="30" y1="230" x2="482" y2="230"/>
+    <line x1="30" y1="270" x2="482" y2="270"/>
+    <line x1="30" y1="310" x2="482" y2="310"/>
+    <line x1="30" y1="350" x2="482" y2="350"/>
+    <line x1="30" y1="390" x2="482" y2="390"/>
+    <line x1="30" y1="430" x2="482" y2="430"/>
+  </g>
+
+  <!-- Open book - centered and larger -->
+  <!-- Left page -->
+  <g filter="url(#shadow)">
+    <path d="M256 170 L256 410 Q190 392 80 398 L80 163 Q190 152 256 170Z" fill="url(#page)"/>
+    <g stroke="#c8b898" stroke-width="1.8" opacity="0.45">
+      <line x1="110" y1="200" x2="238" y2="194"/>
+      <line x1="110" y1="228" x2="238" y2="222"/>
+      <line x1="110" y1="256" x2="238" y2="250"/>
+      <line x1="110" y1="284" x2="238" y2="278"/>
+      <line x1="110" y1="312" x2="238" y2="306"/>
+      <line x1="110" y1="340" x2="238" y2="334"/>
+      <line x1="110" y1="368" x2="225" y2="362"/>
+    </g>
+  </g>
+
+  <!-- Right page -->
+  <g filter="url(#shadow)">
+    <path d="M256 170 L256 410 Q322 392 432 398 L432 163 Q322 152 256 170Z" fill="url(#page)"/>
+    <g stroke="#c8b898" stroke-width="1.8" opacity="0.45">
+      <line x1="274" y1="194" x2="402" y2="200"/>
+      <line x1="274" y1="222" x2="402" y2="228"/>
+      <line x1="274" y1="250" x2="402" y2="256"/>
+      <line x1="274" y1="278" x2="402" y2="284"/>
+      <line x1="274" y1="306" x2="402" y2="312"/>
+      <line x1="274" y1="334" x2="402" y2="340"/>
+      <line x1="274" y1="362" x2="390" y2="368"/>
+    </g>
+  </g>
+
+  <!-- Book spine highlight -->
+  <line x1="256" y1="165" x2="256" y2="412" stroke="#b8860b" stroke-width="3" opacity="0.35"/>
+
+  <!-- Book cover edges (subtle depth) -->
+  <path d="M80 163 L80 398" stroke="#a0522d" stroke-width="3" opacity="0.3"/>
+  <path d="M432 163 L432 398" stroke="#a0522d" stroke-width="3" opacity="0.3"/>
+
+  <!-- Bookworm -->
+  <g filter="url(#glow)">
+    <!-- Worm body - sinuous S-curve emerging from between pages -->
+    <path d="M210 285 Q188 248 200 210 Q214 172 244 155 Q268 140 285 118 Q300 98 284 76"
+          fill="none" stroke="url(#worm-body)" stroke-width="22" stroke-linecap="round"/>
+
+    <!-- Worm body segment lines -->
+    <g stroke="#4a7c28" stroke-width="1.2" opacity="0.25" fill="none">
+      <path d="M196 250 Q192 254 198 258"/>
+      <path d="M198 232 Q194 236 200 239"/>
+      <path d="M205 215 Q201 218 207 221"/>
+      <path d="M218 195 Q214 198 220 201"/>
+      <path d="M234 178 Q230 180 236 183"/>
+      <path d="M252 160 Q248 162 254 165"/>
+      <path d="M270 142 Q266 144 272 147"/>
+      <path d="M285 125 Q281 127 287 130"/>
+      <path d="M293 108 Q289 110 295 113"/>
+    </g>
+
+    <!-- Belly highlight on worm -->
+    <path d="M210 285 Q188 248 200 210 Q214 172 244 155 Q268 140 285 118 Q300 98 284 76"
+          fill="none" stroke="#a5d651" stroke-width="8" stroke-linecap="round" opacity="0.35"/>
+
+    <!-- Worm head -->
+    <circle cx="282" cy="70" r="20" fill="#7cb342"/>
+    <circle cx="282" cy="70" r="18" fill="url(#worm-head)"/>
+
+    <!-- Cheek blush -->
+    <circle cx="268" cy="76" r="5" fill="#e57373" opacity="0.2"/>
+    <circle cx="298" cy="76" r="5" fill="#e57373" opacity="0.2"/>
+
+    <!-- Glasses frames -->
+    <circle cx="274" cy="66" r="10" fill="none" stroke="#4e342e" stroke-width="2"/>
+    <circle cx="292" cy="66" r="10" fill="none" stroke="#4e342e" stroke-width="2"/>
+    <!-- Glasses bridge -->
+    <path d="M284 65 Q283 62 282 65" fill="none" stroke="#4e342e" stroke-width="1.8"/>
+    <!-- Glasses arms -->
+    <path d="M264 66 Q260 64 258 68" fill="none" stroke="#4e342e" stroke-width="1.5"/>
+    <path d="M302 66 Q306 64 308 68" fill="none" stroke="#4e342e" stroke-width="1.5"/>
+
+    <!-- Glasses lens tint -->
+    <circle cx="274" cy="66" r="9" fill="#fff" opacity="0.08"/>
+    <circle cx="292" cy="66" r="9" fill="#fff" opacity="0.08"/>
+
+    <!-- Eyes -->
+    <circle cx="274" cy="65" r="4.5" fill="white"/>
+    <circle cx="292" cy="65" r="4.5" fill="white"/>
+    <circle cx="275" cy="64" r="2.8" fill="#2c2c2c"/>
+    <circle cx="293" cy="64" r="2.8" fill="#2c2c2c"/>
+    <!-- Eye shine -->
+    <circle cx="276.5" cy="63" r="1.2" fill="white"/>
+    <circle cx="294.5" cy="63" r="1.2" fill="white"/>
+
+    <!-- Smile -->
+    <path d="M278 75 Q283 81 290 75" fill="none" stroke="#33691e" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>
