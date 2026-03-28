@@ -305,6 +305,10 @@ html, body {
   overflow-y: auto !important;
 }
 
+html:has(.reading-mode) {
+  overflow-y: auto !important;
+}
+
 .scroll-spacer {
   height: calc(100vh + 1px);
   width: 100%;

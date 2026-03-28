@@ -337,7 +337,7 @@ function isMobile(): boolean {
 
 function enterReadingMode(): void {
   document.body.classList.add('reading-mode');
-  $('scroll-spacer').style.display = 'block';
+  if (isMobile()) $('scroll-spacer').style.display = 'block';
 }
 
 function exitReadingMode(): void {
