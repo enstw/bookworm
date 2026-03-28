@@ -12,6 +12,7 @@ declare const OpenCC: {
 };
 
 declare const __APP_VERSION__: string;
+declare const __BUILD_HASH__: string;
 
 // --- DOM Elements ---
 const $ = (id: string) => document.getElementById(id)!;
@@ -436,7 +437,7 @@ function bindEvents(): void {
 // --- Init ---
 async function init(): Promise<void> {
   // Show version
-  $('version').textContent = `v${__APP_VERSION__}`;
+  $('version').textContent = `v${__APP_VERSION__} (${__BUILD_HASH__})`;
 
   // Load CDN scripts
   await loadScript('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');

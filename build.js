@@ -1,7 +1,9 @@
 const esbuild = require('esbuild');
+const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { version } = require('./package.json');
+const gitHash = execSync('git rev-parse --short HEAD').toString().trim();
 
 // Read the first .txt filename from inside a zip file
 function getBookNameFromZip(zipPath) {
@@ -65,5 +67,6 @@ esbuild.buildSync({
   target: 'es2020',
   define: {
     '__APP_VERSION__': JSON.stringify(version),
+    '__BUILD_HASH__': JSON.stringify(gitHash),
   },
 });
