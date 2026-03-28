@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>T7 — scrollable wrapper div approach</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #faf8f0; color: #2c2c2c; }
+/* Outer wrapper scrolls vertically — this is what triggers browser chrome hide */
+#scroll-wrapper {
+  width: 100%;
+  height: calc(100% + 1px);
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+}
+/* Inner spacer forces the wrapper to be scrollable */
+#scroll-content {
+  min-height: calc(100% + 2px);
+}
+#reader-container {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+}
+.reader {
+  width: 100%;
+  height: 100%;
+  padding: 24px 40px;
+  writing-mode: vertical-rl;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  font-family: serif;
+  font-size: 24px;
+  line-height: 1.4;
+  column-gap: 40px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.info { position: fixed; top: 0; right: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 4px 10px; font-size: 12px; z-index: 99; writing-mode: horizontal-tb; }
+</style>
+</head>
+<body>
+<div class="info">T7: scrollable wrapper div underneath fixed reader</div>
+<div id="scroll-wrapper"><div id="scroll-content"></div></div>
+<div id="reader-container">
+  <div class="reader" id="reader"></div>
+</div>
+<script>
+const phrases = [
+  '天地玄黃，宇宙洪荒。日月盈昃，辰宿列張。',
+  '寒來暑往，秋收冬藏。閏餘成歲，律呂調陽。',
+  '雲騰致雨，露結為霜。金生麗水，玉出崑岡。',
+  '劍號巨闕，珠稱夜光。果珍李柰，菜重芥薑。',
+  '海鹹河淡，鱗潛羽翔。龍師火帝，鳥官人皇。',
+  '始制文字，乃服衣裳。推位讓國，有虞陶唐。',
+  '弔民伐罪，周發殷湯。坐朝問道，垂拱平章。',
+  '愛育黎首，臣伏戎羌。遐邇一體，率賓歸王。',
+];
+let text = '';
+for (let i = 0; i < 300; i++) text += phrases[i % phrases.length] + '\n';
+document.getElementById('reader').textContent = text;
+</script>
+</body>
+</html>

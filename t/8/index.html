@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
+<title>T8 — toolbar + nav + chrome hide</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root { --bg: #faf8f0; --fg: #2c2c2c; --bg-secondary: #f0ede4; --border: #d4d0c8; --accent: #8b4513; }
+html, body { height: 100%; background: var(--bg); color: var(--fg); }
+
+/* Scroll wrapper for browser chrome hiding */
+#scroll-wrapper {
+  width: 100%;
+  height: calc(100% + 1px);
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+}
+#scroll-content { min-height: calc(100% + 2px); }
+
+.toolbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 48px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  z-index: 50;
+  font-family: serif;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+.toolbar-title { flex: 1; text-align: center; font-weight: bold; }
+.toolbar-info { font-size: 0.85rem; opacity: 0.7; }
+
+.nav-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 44px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  z-index: 50;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+.nav-bar input[type="range"] { flex: 1; direction: rtl; }
+.nav-bar button { background: none; border: none; font-size: 1rem; cursor: pointer; color: var(--fg); padding: 4px 8px; }
+
+#reader-container {
+  position: fixed;
+  top: 48px; bottom: 44px; left: 0; right: 0;
+  overflow: hidden;
+  transition: top 0.25s ease, bottom 0.25s ease;
+}
+
+.reader {
+  width: 100%;
+  height: 100%;
+  padding: 24px 40px;
+  writing-mode: vertical-rl;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  font-family: serif;
+  font-size: 24px;
+  line-height: 1.4;
+  column-gap: 40px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Immersive mode */
+body.immersive .toolbar { transform: translateY(-100%); opacity: 0; pointer-events: none; }
+body.immersive .nav-bar { transform: translateY(100%); opacity: 0; pointer-events: none; }
+body.immersive #reader-container { top: 0; bottom: 0; }
+
+.info { position: fixed; top: 0; right: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 4px 10px; font-size: 12px; z-index: 99; writing-mode: horizontal-tb; }
+</style>
+</head>
+<body>
+<div class="info">T8: toolbar + nav bar + scroll-wrapper + immersive toggle (tap center)</div>
+<div id="scroll-wrapper"><div id="scroll-content"></div></div>
+
+<div class="toolbar">
+  <span class="toolbar-title">Test Book</span>
+  <span class="toolbar-info" id="page-info">1 / ?</span>
+</div>
+
+<div id="reader-container">
+  <div class="reader" id="reader"></div>
+</div>
+
+<div class="nav-bar">
+  <button id="nav-prev">◀</button>
+  <input id="page-slider" type="range" min="0" max="100" value="0">
+  <button id="nav-next">▶</button>
+</div>
+
+<script>
+const phrases = [
+  '天地玄黃，宇宙洪荒。日月盈昃，辰宿列張。',
+  '寒來暑往，秋收冬藏。閏餘成歲，律呂調陽。',
+  '雲騰致雨，露結為霜。金生麗水，玉出崑岡。',
+  '劍號巨闕，珠稱夜光。果珍李柰，菜重芥薑。',
+  '海鹹河淡，鱗潛羽翔。龍師火帝，鳥官人皇。',
+  '始制文字，乃服衣裳。推位讓國，有虞陶唐。',
+  '弔民伐罪，周發殷湯。坐朝問道，垂拱平章。',
+  '愛育黎首，臣伏戎羌。遐邇一體，率賓歸王。',
+];
+let text = '';
+for (let i = 0; i < 300; i++) text += phrases[i % phrases.length] + '\n';
+
+const reader = document.getElementById('reader');
+reader.textContent = text;
+
+// Page info
+function updatePageInfo() {
+  const pw = reader.clientWidth;
+  const total = Math.ceil(reader.scrollWidth / pw);
+  const cur = Math.floor(Math.abs(reader.scrollLeft) / pw) + 1;
+  document.getElementById('page-info').textContent = cur + ' / ' + total;
+}
+reader.addEventListener('scroll', updatePageInfo);
+updatePageInfo();
+
+// Prev / Next
+document.getElementById('nav-prev').addEventListener('click', () => {
+  reader.scrollBy({ left: reader.clientWidth, behavior: 'smooth' });
+});
+document.getElementById('nav-next').addEventListener('click', () => {
+  reader.scrollBy({ left: -reader.clientWidth, behavior: 'smooth' });
+});
+
+// Tap center to toggle immersive
+reader.addEventListener('click', (e) => {
+  const rect = reader.getBoundingClientRect();
+  const cx = (e.clientX - rect.left) / rect.width;
+  const cy = (e.clientY - rect.top) / rect.height;
+  if (cx > 0.33 && cx < 0.67 && cy > 0.33 && cy < 0.67) {
+    document.body.classList.toggle('immersive');
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bookworm Scroll Tests</title>
+<style>
+body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; background: #faf8f0; color: #2c2c2c; }
+h1 { color: #8b4513; margin-bottom: 8px; }
+p.desc { opacity: 0.6; margin-bottom: 24px; }
+a { display: block; padding: 16px; margin-bottom: 8px; background: #f0ede4; border: 1px solid #d4d0c8; border-radius: 8px; text-decoration: none; color: #2c2c2c; transition: transform 0.15s; }
+a:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+a strong { color: #8b4513; }
+a span { display: block; font-size: 0.85rem; opacity: 0.6; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>Scroll Tests</h1>
+<p class="desc">Testing mobile browser chrome auto-hide with vertical-rl reading layouts. Open each on mobile and swipe vertically to see if the address bar hides.</p>
+
+<a href="1/"><strong>T1</strong> — Basic vertical scroll (LTR, normal flow)
+<span>Baseline. Normal document, overflow-y scroll. Should always hide chrome.</span></a>
+
+<a href="2/"><strong>T2</strong> — vertical-rl, normal document flow
+<span>Body uses writing-mode:vertical-rl. Browser scrolls horizontally by default.</span></a>
+
+<a href="3/"><strong>T3</strong> — vertical-rl div, overflow-x scroll
+<span>html/body overflow:hidden. Inner div scrolls horizontally. No fixed positioning.</span></a>
+
+<a href="4/"><strong>T4</strong> — Fixed container + vertical-rl scroll
+<span>position:fixed wrapper around vertical-rl reader. Scroll is trapped in inner div.</span></a>
+
+<a href="5/"><strong>T5</strong> — Fixed container + touch-action:pan-y
+<span>Same as T4 but with touch-action:pan-y on reader. Current bookworm approach.</span></a>
+
+<a href="6/"><strong>T6</strong> — Body taller than viewport trick
+<span>body height:calc(100%+1px) to create minimal document scrollability.</span></a>
+
+<a href="7/"><strong>T7</strong> — Scrollable wrapper div under fixed reader
+<span>A scroll-wrapper div behind the fixed reader provides the scroll signal to browser.</span></a>
+
+<a href="8/"><strong>T8</strong> — Toolbar + nav + scroll wrapper + immersive toggle
+<span>Full chrome (toolbar/nav bar) with scroll-wrapper. Tap center to toggle immersive.</span></a>
+
+<a href="9/"><strong>T9</strong> — Full reading panel replica
+<span>Complete replica: themes, font size, navigation, TTS bar, settings, keyboard nav.</span></a>
+</body>
+</html>
