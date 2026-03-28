@@ -302,8 +302,13 @@ html, body {
 }
 
 .reading-mode {
-  height: calc(100% + 1px);
-  overflow-y: auto;
+  overflow-y: auto !important;
+}
+
+.scroll-spacer {
+  height: calc(100vh + 1px);
+  width: 100%;
+  pointer-events: none;
 }
 
 .reading-mode #reader-container {
