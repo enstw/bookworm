@@ -52,6 +52,7 @@ let fullText = '';
 let chapters: Chapter[] = [];
 let converter: ((s: string) => string) | null = null;
 let tts: AITextToSpeech | null = null;
+let chromeTimer: ReturnType<typeof setTimeout> | null = null;
 
 // --- Settings ---
 function loadSettings(): AppSettings {
@@ -119,7 +120,7 @@ async function loadBookList(): Promise<void> {
   for (const book of books) {
     const div = document.createElement('div');
     div.className = 'book-item';
-    div.textContent = book.name;
+    div.textContent = converter ? converter(book.name) : book.name;
     div.onclick = () => openBook(book);
     bookListEl.appendChild(div);
   }
@@ -149,10 +150,7 @@ async function openBook(book: Book): Promise<void> {
 
     // SC → TC conversion
     showLoading('正在轉換為繁體…');
-    if (!converter) {
-      converter = OpenCC.Converter({ from: 'cn', to: 'twp' });
-    }
-    fullText = converter(decoded);
+    fullText = converter!(decoded);
 
     // Detect chapters
     showLoading('正在分析章節…');
@@ -162,7 +160,8 @@ async function openBook(book: Book): Promise<void> {
     renderBook();
     populateChapterList();
     bookSelector.classList.add('hidden');
-    bookTitleEl.textContent = book.name;
+    bookTitleEl.textContent = converter(book.name);
+    enterReadingMode();
 
     // Restore reading position
     restorePosition();
@@ -331,6 +330,32 @@ function handleTTSState(state: string, info?: string): void {
   }
 }
 
+// --- Reading Mode ---
+function enterReadingMode(): void {
+  document.body.classList.add('reading-mode');
+}
+
+function exitReadingMode(): void {
+  document.body.classList.remove('reading-mode', 'chrome-visible');
+  if (chromeTimer) { clearTimeout(chromeTimer); chromeTimer = null; }
+}
+
+function toggleChrome(): void {
+  const body = document.body;
+  if (body.classList.contains('chrome-visible')) {
+    body.classList.remove('chrome-visible');
+    if (chromeTimer) { clearTimeout(chromeTimer); chromeTimer = null; }
+  } else {
+    body.classList.add('chrome-visible');
+    // Auto-hide after 4 seconds
+    if (chromeTimer) clearTimeout(chromeTimer);
+    chromeTimer = setTimeout(() => {
+      body.classList.remove('chrome-visible');
+      chromeTimer = null;
+    }, 4000);
+  }
+}
+
 // --- Event Binding ---
 function bindEvents(): void {
   // Toolbar buttons
@@ -341,6 +366,7 @@ function bindEvents(): void {
   $('btn-back').onclick = () => {
     tts?.stop();
     ttsBar.classList.add('hidden');
+    exitReadingMode();
     bookSelector.classList.remove('hidden');
     currentBook = null;
     readerEl.textContent = '';
@@ -362,14 +388,39 @@ function bindEvents(): void {
     }
   });
 
-  // Touch swipe – prevent native scroll so only programmatic scrollBy fires
+  // Touch swipe & center-tap – prevent native scroll so only programmatic scrollBy fires
   let touchStartX = 0;
-  readerEl.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  let touchStartY = 0;
+  readerEl.addEventListener('touchstart', (e) => {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  });
   readerEl.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
   readerEl.addEventListener('touchend', (e) => {
-    const dx = e.changedTouches[0].clientX - touchStartX;
+    const endX = e.changedTouches[0].clientX;
+    const endY = e.changedTouches[0].clientY;
+    const dx = endX - touchStartX;
+    const dy = endY - touchStartY;
+
     if (Math.abs(dx) > 50) {
+      // Swipe navigation
       if (dx > 0) nextPage(); else prevPage();
+    } else if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
+      // Tap — check if in center 1/9 area
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      if (endX > w / 3 && endX < (2 * w) / 3 && endY > h / 3 && endY < (2 * h) / 3) {
+        toggleChrome();
+      }
+    }
+  });
+
+  // Desktop click — center 1/9 toggles chrome
+  readerEl.addEventListener('click', (e) => {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (e.clientX > w / 3 && e.clientX < (2 * w) / 3 && e.clientY > h / 3 && e.clientY < (2 * h) / 3) {
+      toggleChrome();
     }
   });
 
@@ -442,6 +493,9 @@ async function init(): Promise<void> {
   // Load CDN scripts
   await loadScript('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');
   await loadScript('https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js');
+
+  // Init SC → TC converter
+  converter = OpenCC.Converter({ from: 'cn', to: 'twp' });
 
   // Apply saved settings
   const settings = loadSettings();

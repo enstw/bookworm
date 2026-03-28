@@ -55,8 +55,12 @@ Before every push, bump the version in `package.json` using `npm version` (no gi
 - **New feature** → `npm version minor --no-git-tag-version`
 - **Breaking change** → `npm version major --no-git-tag-version`
 
-Then run `npm run build` to bake the new version into `app.js` (via `__APP_VERSION__` define).
+Then run `npm run build` to bake the version and git commit hash into `app.js` (via `__APP_VERSION__` and `__BUILD_HASH__` defines). The startup page displays `v1.2.3 (abc1234)`.
 Include the updated `package.json` and `app.js` in the commit.
+
+## Deployment
+- Hosted on GitHub Pages at `https://enstw.github.io/bookworm/`
+- Verify deployments with gstack browse skill
 
 ## Code Style
 - TypeScript with strict mode

@@ -9,7 +9,7 @@
   --accent: #8b4513;
   --font-size: 24px;
   --reader-font: 'BookwormCustom', 'Noto Serif TC', 'Source Han Serif TC', serif;
-  --line-height: 1.8;
+  --line-height: 1.4;
   --column-gap: 40px;
 }
 
@@ -255,6 +255,41 @@ html, body {
 #chapter-list li:hover { background: var(--bg-secondary); }
 #chapter-list li.active { color: var(--accent); font-weight: bold; }
 
+/* === Reading Mode (immersive) === */
+.reading-mode .toolbar,
+.reading-mode .nav-bar,
+.reading-mode .tts-bar {
+  transform: translateY(0);
+  transition: opacity 0.25s ease, visibility 0.25s ease;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.reading-mode .toolbar {
+  transform: translateY(-100%);
+}
+
+.reading-mode .nav-bar,
+.reading-mode .tts-bar {
+  transform: translateY(100%);
+}
+
+.reading-mode.chrome-visible .toolbar,
+.reading-mode.chrome-visible .nav-bar {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.reading-mode.chrome-visible .tts-bar:not(.hidden) {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
 /* === Reader === */
 #reader-container {
   position: fixed;
@@ -263,6 +298,17 @@ html, body {
   left: 0;
   right: 0;
   overflow: hidden;
+  transition: top 0.25s ease, bottom 0.25s ease;
+}
+
+.reading-mode #reader-container {
+  top: 0;
+  bottom: 0;
+}
+
+.reading-mode.chrome-visible #reader-container {
+  top: 48px;
+  bottom: 88px;
 }
 
 .reader {

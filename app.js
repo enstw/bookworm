@@ -272,6 +272,7 @@ var fullText = "";
 var chapters = [];
 var converter = null;
 var tts = null;
+var chromeTimer = null;
 function loadSettings() {
   const raw = localStorage.getItem("bookworm_settings");
   const defaults = {
@@ -327,7 +328,7 @@ async function loadBookList() {
   for (const book of books) {
     const div = document.createElement("div");
     div.className = "book-item";
-    div.textContent = book.name;
+    div.textContent = converter ? converter(book.name) : book.name;
     div.onclick = () => openBook(book);
     bookListEl.appendChild(div);
   }
@@ -347,16 +348,14 @@ async function openBook(book) {
     showLoading("\u6B63\u5728\u89E3\u78BC\u6587\u5B57\u2026");
     const decoded = new TextDecoder("gb18030").decode(raw);
     showLoading("\u6B63\u5728\u8F49\u63DB\u70BA\u7E41\u9AD4\u2026");
-    if (!converter) {
-      converter = OpenCC.Converter({ from: "cn", to: "twp" });
-    }
     fullText = converter(decoded);
     showLoading("\u6B63\u5728\u5206\u6790\u7AE0\u7BC0\u2026");
     chapters = detectChapters(fullText);
     renderBook();
     populateChapterList();
     bookSelector.classList.add("hidden");
-    bookTitleEl.textContent = book.name;
+    bookTitleEl.textContent = converter(book.name);
+    enterReadingMode();
     restorePosition();
     const settings = loadSettings();
     tts = new AITextToSpeech(settings.tts, handleTTSState);
@@ -486,6 +485,33 @@ function handleTTSState(state, info) {
       break;
   }
 }
+function enterReadingMode() {
+  document.body.classList.add("reading-mode");
+}
+function exitReadingMode() {
+  document.body.classList.remove("reading-mode", "chrome-visible");
+  if (chromeTimer) {
+    clearTimeout(chromeTimer);
+    chromeTimer = null;
+  }
+}
+function toggleChrome() {
+  const body = document.body;
+  if (body.classList.contains("chrome-visible")) {
+    body.classList.remove("chrome-visible");
+    if (chromeTimer) {
+      clearTimeout(chromeTimer);
+      chromeTimer = null;
+    }
+  } else {
+    body.classList.add("chrome-visible");
+    if (chromeTimer) clearTimeout(chromeTimer);
+    chromeTimer = setTimeout(() => {
+      body.classList.remove("chrome-visible");
+      chromeTimer = null;
+    }, 4e3);
+  }
+}
 function bindEvents() {
   $("btn-settings").onclick = () => settingsPanel.classList.toggle("hidden");
   $("close-settings").onclick = () => settingsPanel.classList.add("hidden");
@@ -494,6 +520,7 @@ function bindEvents() {
   $("btn-back").onclick = () => {
     tts?.stop();
     ttsBar.classList.add("hidden");
+    exitReadingMode();
     bookSelector.classList.remove("hidden");
     currentBook = null;
     readerEl.textContent = "";
@@ -521,17 +548,35 @@ function bindEvents() {
     }
   });
   let touchStartX = 0;
+  let touchStartY = 0;
   readerEl.addEventListener("touchstart", (e) => {
     touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
   });
   readerEl.addEventListener("touchmove", (e) => {
     e.preventDefault();
   }, { passive: false });
   readerEl.addEventListener("touchend", (e) => {
-    const dx = e.changedTouches[0].clientX - touchStartX;
+    const endX = e.changedTouches[0].clientX;
+    const endY = e.changedTouches[0].clientY;
+    const dx = endX - touchStartX;
+    const dy = endY - touchStartY;
     if (Math.abs(dx) > 50) {
       if (dx > 0) nextPage();
       else prevPage();
+    } else if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      if (endX > w / 3 && endX < 2 * w / 3 && endY > h / 3 && endY < 2 * h / 3) {
+        toggleChrome();
+      }
+    }
+  });
+  readerEl.addEventListener("click", (e) => {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (e.clientX > w / 3 && e.clientX < 2 * w / 3 && e.clientY > h / 3 && e.clientY < 2 * h / 3) {
+      toggleChrome();
     }
   });
   readerEl.addEventListener("scroll", () => updatePageInfo());
@@ -582,9 +627,10 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.8"} (${"781b5c4"})`;
+  $("version").textContent = `v${"1.1.9"} (${"383fa04"})`;
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   await loadScript("https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js");
+  converter = OpenCC.Converter({ from: "cn", to: "twp" });
   const settings = loadSettings();
   applySettings(settings);
   const fonts = await loadFontList();
