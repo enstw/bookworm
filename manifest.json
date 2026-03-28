@@ -1,0 +1,9 @@
+{
+  "name": "Bookworm 書蟲",
+  "short_name": "書蟲",
+  "start_url": ".",
+  "display": "fullscreen",
+  "background_color": "#faf8f0",
+  "theme_color": "#8b4513",
+  "icons": []
+}

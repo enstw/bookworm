@@ -333,11 +333,26 @@ function handleTTSState(state: string, info?: string): void {
 // --- Reading Mode ---
 function enterReadingMode(): void {
   document.body.classList.add('reading-mode');
+  requestFullscreen();
 }
 
 function exitReadingMode(): void {
   document.body.classList.remove('reading-mode', 'chrome-visible');
   if (chromeTimer) { clearTimeout(chromeTimer); chromeTimer = null; }
+  exitFullscreen();
+}
+
+function requestFullscreen(): void {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen().catch(() => {});
+  }
+}
+
+function exitFullscreen(): void {
+  if (document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
 }
 
 function toggleChrome(): void {
@@ -345,13 +360,16 @@ function toggleChrome(): void {
   if (body.classList.contains('chrome-visible')) {
     body.classList.remove('chrome-visible');
     if (chromeTimer) { clearTimeout(chromeTimer); chromeTimer = null; }
+    requestFullscreen();
   } else {
     body.classList.add('chrome-visible');
+    exitFullscreen();
     // Auto-hide after 4 seconds
     if (chromeTimer) clearTimeout(chromeTimer);
     chromeTimer = setTimeout(() => {
       body.classList.remove('chrome-visible');
       chromeTimer = null;
+      requestFullscreen();
     }, 4000);
   }
 }

@@ -487,12 +487,27 @@ function handleTTSState(state, info) {
 }
 function enterReadingMode() {
   document.body.classList.add("reading-mode");
+  requestFullscreen();
 }
 function exitReadingMode() {
   document.body.classList.remove("reading-mode", "chrome-visible");
   if (chromeTimer) {
     clearTimeout(chromeTimer);
     chromeTimer = null;
+  }
+  exitFullscreen();
+}
+function requestFullscreen() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen().catch(() => {
+    });
+  }
+}
+function exitFullscreen() {
+  if (document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {
+    });
   }
 }
 function toggleChrome() {
@@ -503,12 +518,15 @@ function toggleChrome() {
       clearTimeout(chromeTimer);
       chromeTimer = null;
     }
+    requestFullscreen();
   } else {
     body.classList.add("chrome-visible");
+    exitFullscreen();
     if (chromeTimer) clearTimeout(chromeTimer);
     chromeTimer = setTimeout(() => {
       body.classList.remove("chrome-visible");
       chromeTimer = null;
+      requestFullscreen();
     }, 4e3);
   }
 }
@@ -633,7 +651,7 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.11"} (${"1abf6f3"})`;
+  $("version").textContent = `v${"1.1.12"} (${"778b0f6"})`;
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   await loadScript("https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js");
   converter = OpenCC.Converter({ from: "cn", to: "twp" });
