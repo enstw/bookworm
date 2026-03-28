@@ -361,9 +361,10 @@ function bindEvents(): void {
     }
   });
 
-  // Touch swipe
+  // Touch swipe – prevent native scroll so only programmatic scrollBy fires
   let touchStartX = 0;
   readerEl.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  readerEl.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
   readerEl.addEventListener('touchend', (e) => {
     const dx = e.changedTouches[0].clientX - touchStartX;
     if (Math.abs(dx) > 50) {
