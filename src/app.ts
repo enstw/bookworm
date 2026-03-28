@@ -331,9 +331,13 @@ function handleTTSState(state: string, info?: string): void {
 }
 
 // --- Reading Mode ---
+function isMobile(): boolean {
+  return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+}
+
 function enterReadingMode(): void {
   document.body.classList.add('reading-mode');
-  requestFullscreen();
+  if (isMobile()) requestFullscreen();
 }
 
 function exitReadingMode(): void {
