@@ -3,12 +3,9 @@ import { detectChapters, findCurrentChapter } from './chapters';
 import { loadFontList, registerFonts, applyFont } from './fonts';
 import { AITextToSpeech, splitSentences } from './tts';
 
-// We load fflate and OpenCC from CDN — declare their types
+// We load fflate from CDN — declare its types
 declare const fflate: {
   unzipSync: (data: Uint8Array) => Record<string, Uint8Array>;
-};
-declare const OpenCC: {
-  Converter: (options: { from: string; to: string }) => (s: string) => string;
 };
 
 declare const __APP_VERSION__: string;
@@ -50,7 +47,6 @@ let books: Book[] = [];
 let currentBook: Book | null = null;
 let fullText = '';
 let chapters: Chapter[] = [];
-let converter: ((s: string) => string) | null = null;
 let tts: AITextToSpeech | null = null;
 let chromeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -120,7 +116,7 @@ async function loadBookList(): Promise<void> {
   for (const book of books) {
     const div = document.createElement('div');
     div.className = 'book-item';
-    div.textContent = converter ? converter(book.name) : book.name;
+    div.textContent = book.name;
     div.onclick = () => openBook(book);
     bookListEl.appendChild(div);
   }
@@ -144,13 +140,9 @@ async function openBook(book: Book): Promise<void> {
     if (!txtFile) throw new Error('ZIP 中找不到 .txt 檔案');
     const raw = files[txtFile];
 
-    // Decode GB18030
+    // Decode UTF-8 (books are pre-converted to TC at build time)
     showLoading('正在解碼文字…');
-    const decoded = new TextDecoder('gb18030').decode(raw);
-
-    // SC → TC conversion
-    showLoading('正在轉換為繁體…');
-    fullText = converter!(decoded);
+    fullText = new TextDecoder('utf-8').decode(raw);
 
     // Detect chapters
     showLoading('正在分析章節…');
@@ -160,7 +152,7 @@ async function openBook(book: Book): Promise<void> {
     renderBook();
     populateChapterList();
     bookSelector.classList.add('hidden');
-    bookTitleEl.textContent = converter(book.name);
+    bookTitleEl.textContent = book.name;
     enterReadingMode();
 
     // Restore reading position
@@ -331,10 +323,6 @@ function handleTTSState(state: string, info?: string): void {
 }
 
 // --- Reading Mode ---
-function isMobile(): boolean {
-  return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-}
-
 function enterReadingMode(): void {
   document.body.classList.add('reading-mode');
 }
@@ -525,10 +513,6 @@ async function init(): Promise<void> {
 
   // Load CDN scripts
   await loadScript('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');
-  await loadScript('https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js');
-
-  // Init SC → TC converter
-  converter = OpenCC.Converter({ from: 'cn', to: 'twp' });
 
   // Apply saved settings
   const settings = loadSettings();

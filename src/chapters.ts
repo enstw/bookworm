@@ -4,10 +4,10 @@ import type { Chapter } from './types';
 const CHAPTER_PATTERNS: RegExp[] = [
   // 第一章, 第1章, 第一百二十三章, etc.
   /^[　\s]*第[零一二三四五六七八九十百千萬万〇○０-９0-9]+[章節回卷集部篇]/,
-  // 楔子, 序章, 序言, 引子, 前言
-  /^[　\s]*(楔子|序章|序言|引子|前言|引言|開篇)/,
-  // 尾聲, 後記, 終章, 番外
-  /^[　\s]*(尾聲|後記|终章|終章|番外|後話|結語|完本感言|完結感言)/,
+  // 楔子, 序章, 序言, 引子, 前言 — must be standalone or followed by space/colon/title
+  /^[　\s]*(楔子|序章|序言|引子|前言|引言|開篇)([　\s：:].+)?$/,
+  // 尾聲, 後記, 終章, 番外 — must be standalone or followed by space/colon/title
+  /^[　\s]*(尾聲|後記|終章|番外|後話|結語|完本感言|完結感言)([　\s：:].+)?$/,
   // Chapter patterns with colon/space: 第X章 XXXX or 第X章：XXXX
   /^[　\s]*第[零一二三四五六七八九十百千萬万〇○０-９0-9]+[章節回卷集部篇][　\s：:]/,
 ];

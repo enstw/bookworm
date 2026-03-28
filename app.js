@@ -2,10 +2,10 @@
 var CHAPTER_PATTERNS = [
   // 第一章, 第1章, 第一百二十三章, etc.
   /^[　\s]*第[零一二三四五六七八九十百千萬万〇○０-９0-9]+[章節回卷集部篇]/,
-  // 楔子, 序章, 序言, 引子, 前言
-  /^[　\s]*(楔子|序章|序言|引子|前言|引言|開篇)/,
-  // 尾聲, 後記, 終章, 番外
-  /^[　\s]*(尾聲|後記|终章|終章|番外|後話|結語|完本感言|完結感言)/,
+  // 楔子, 序章, 序言, 引子, 前言 — must be standalone or followed by space/colon/title
+  /^[　\s]*(楔子|序章|序言|引子|前言|引言|開篇)([　\s：:].+)?$/,
+  // 尾聲, 後記, 終章, 番外 — must be standalone or followed by space/colon/title
+  /^[　\s]*(尾聲|後記|終章|番外|後話|結語|完本感言|完結感言)([　\s：:].+)?$/,
   // Chapter patterns with colon/space: 第X章 XXXX or 第X章：XXXX
   /^[　\s]*第[零一二三四五六七八九十百千萬万〇○０-９0-9]+[章節回卷集部篇][　\s：:]/
 ];
@@ -270,7 +270,6 @@ var books = [];
 var currentBook = null;
 var fullText = "";
 var chapters = [];
-var converter = null;
 var tts = null;
 var chromeTimer = null;
 function loadSettings() {
@@ -328,7 +327,7 @@ async function loadBookList() {
   for (const book of books) {
     const div = document.createElement("div");
     div.className = "book-item";
-    div.textContent = converter ? converter(book.name) : book.name;
+    div.textContent = book.name;
     div.onclick = () => openBook(book);
     bookListEl.appendChild(div);
   }
@@ -346,15 +345,13 @@ async function openBook(book) {
     if (!txtFile) throw new Error("ZIP \u4E2D\u627E\u4E0D\u5230 .txt \u6A94\u6848");
     const raw = files[txtFile];
     showLoading("\u6B63\u5728\u89E3\u78BC\u6587\u5B57\u2026");
-    const decoded = new TextDecoder("gb18030").decode(raw);
-    showLoading("\u6B63\u5728\u8F49\u63DB\u70BA\u7E41\u9AD4\u2026");
-    fullText = converter(decoded);
+    fullText = new TextDecoder("utf-8").decode(raw);
     showLoading("\u6B63\u5728\u5206\u6790\u7AE0\u7BC0\u2026");
     chapters = detectChapters(fullText);
     renderBook();
     populateChapterList();
     bookSelector.classList.add("hidden");
-    bookTitleEl.textContent = converter(book.name);
+    bookTitleEl.textContent = book.name;
     enterReadingMode();
     restorePosition();
     const settings = loadSettings();
@@ -652,10 +649,8 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.20"} (${"cdee28e"})`;
+  $("version").textContent = `v${"1.1.21"} (${"4801e96"})`;
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
-  await loadScript("https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js");
-  converter = OpenCC.Converter({ from: "cn", to: "twp" });
   const settings = loadSettings();
   applySettings(settings);
   const fonts = await loadFontList();

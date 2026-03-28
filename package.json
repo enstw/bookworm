@@ -1,6 +1,6 @@
 {
   "name": "bookworm",
-  "version": "1.1.20",
+  "version": "1.1.21",
   "private": true,
   "scripts": {
     "build": "node build.js",
@@ -8,6 +8,8 @@
     "dev": "python3 -m http.server 8000"
   },
   "devDependencies": {
-    "esbuild": "^0.21.0"
+    "esbuild": "^0.21.0",
+    "fflate": "^0.8.2",
+    "opencc-js": "^1.0.5"
   }
 }
