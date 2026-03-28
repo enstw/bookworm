@@ -373,7 +373,7 @@ html, body {
   color: var(--fg);
 }
 
-#page-slider { flex: 1; }
+#page-slider { flex: 1; direction: rtl; }
 
 .nav-bar button:hover { opacity: 0.7; }
 

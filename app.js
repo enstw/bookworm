@@ -569,6 +569,9 @@ function bindEvents() {
       const h = window.innerHeight;
       if (endX > w / 3 && endX < 2 * w / 3 && endY > h / 3 && endY < 2 * h / 3) {
         toggleChrome();
+      } else if (endY > h / 2) {
+        if (endX < w / 4) nextPage();
+        else if (endX > 3 * w / 4) prevPage();
       }
     }
   });
@@ -577,6 +580,9 @@ function bindEvents() {
     const h = window.innerHeight;
     if (e.clientX > w / 3 && e.clientX < 2 * w / 3 && e.clientY > h / 3 && e.clientY < 2 * h / 3) {
       toggleChrome();
+    } else if (e.clientY > h / 2) {
+      if (e.clientX < w / 4) nextPage();
+      else if (e.clientX > 3 * w / 4) prevPage();
     }
   });
   readerEl.addEventListener("scroll", () => updatePageInfo());
@@ -627,7 +633,7 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.10"} (${"2a8dc8c"})`;
+  $("version").textContent = `v${"1.1.11"} (${"1abf6f3"})`;
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   await loadScript("https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js");
   converter = OpenCC.Converter({ from: "cn", to: "twp" });

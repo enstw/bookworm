@@ -406,21 +406,28 @@ function bindEvents(): void {
       // Swipe navigation
       if (dx > 0) nextPage(); else prevPage();
     } else if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
-      // Tap — check if in center 1/9 area
       const w = window.innerWidth;
       const h = window.innerHeight;
+      // Center 1/9 toggles chrome
       if (endX > w / 3 && endX < (2 * w) / 3 && endY > h / 3 && endY < (2 * h) / 3) {
         toggleChrome();
+      // Bottom half: left 1/4 = next, right 1/4 = prev
+      } else if (endY > h / 2) {
+        if (endX < w / 4) nextPage();
+        else if (endX > (3 * w) / 4) prevPage();
       }
     }
   });
 
-  // Desktop click — center 1/9 toggles chrome
+  // Desktop click — center 1/9 toggles chrome, bottom corners turn pages
   readerEl.addEventListener('click', (e) => {
     const w = window.innerWidth;
     const h = window.innerHeight;
     if (e.clientX > w / 3 && e.clientX < (2 * w) / 3 && e.clientY > h / 3 && e.clientY < (2 * h) / 3) {
       toggleChrome();
+    } else if (e.clientY > h / 2) {
+      if (e.clientX < w / 4) nextPage();
+      else if (e.clientX > (3 * w) / 4) prevPage();
     }
   });
 
