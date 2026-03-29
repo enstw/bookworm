@@ -1,5 +1,5 @@
 import type { Book, Chapter, AppSettings, ReadingPosition } from './types';
-import { detectChapters, findCurrentChapter } from './chapters';
+import { detectChapters } from './chapters';
 import { loadFontList, registerFonts, applyFont } from './fonts';
 import { AITextToSpeech, splitSentences } from './tts';
 
@@ -47,6 +47,7 @@ let books: Book[] = [];
 let currentBook: Book | null = null;
 let fullText = '';
 let chapters: Chapter[] = [];
+let currentChapterIndex = 0;
 let tts: AITextToSpeech | null = null;
 let chromeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -148,20 +149,21 @@ async function openBook(book: Book): Promise<void> {
     showLoading('正在分析章節…');
     chapters = detectChapters(fullText);
 
-    // Render
-    renderBook();
+    // Render first chapter (restorePosition may change it)
     populateChapterList();
     bookSelector.classList.add('hidden');
     bookTitleEl.textContent = book.name;
     enterReadingMode();
 
-    // Restore reading position
-    restorePosition();
+    // Restore reading position or start at chapter 0
+    if (!restorePosition()) {
+      renderChapter(0);
+    }
 
-    // Set up TTS sentences
+    // Set up TTS
     const settings = loadSettings();
     tts = new AITextToSpeech(settings.tts, handleTTSState);
-    tts.setSentences(splitSentences(fullText));
+    tts.setSentences(splitSentences(getChapterText(currentChapterIndex)));
 
     hideLoading();
   } catch (e: any) {
@@ -171,19 +173,34 @@ async function openBook(book: Book): Promise<void> {
   }
 }
 
+// --- Chapter Text ---
+function getChapterText(index: number): string {
+  const start = chapters[index].startIndex;
+  const end = index + 1 < chapters.length ? chapters[index + 1].startIndex : fullText.length;
+  return fullText.slice(start, end);
+}
+
 // --- Render ---
-function renderBook(): void {
-  readerEl.textContent = fullText;
+function renderChapter(index: number): void {
+  if (index < 0 || index >= chapters.length) return;
+  currentChapterIndex = index;
+  const text = getChapterText(index);
+  readerEl.textContent = text;
+  readerEl.scrollLeft = 0;
   updatePageInfo();
+  highlightActiveChapter(index);
+  // Update TTS for new chapter
+  if (tts) tts.setSentences(splitSentences(text));
 }
 
 function updatePageInfo(): void {
   const el = readerEl;
   const maxScroll = el.scrollWidth - el.clientWidth;
   if (maxScroll <= 0) {
-    pageInfoEl.textContent = '1 / 1';
+    pageInfoEl.textContent = `${currentChapterIndex + 1}/${chapters.length}  1/1`;
     pageSlider.value = '0';
     pageSlider.max = '0';
+    savePosition();
     return;
   }
 
@@ -193,7 +210,7 @@ function updatePageInfo(): void {
   const totalPages = Math.ceil(el.scrollWidth / pageWidth);
   const currentPage = Math.floor(scrollPos / pageWidth) + 1;
 
-  pageInfoEl.textContent = `${currentPage} / ${totalPages}`;
+  pageInfoEl.textContent = `${currentChapterIndex + 1}/${chapters.length}  ${currentPage}/${totalPages}`;
   pageSlider.max = String(totalPages - 1);
   pageSlider.value = String(currentPage - 1);
 
@@ -210,26 +227,34 @@ function scrollToPage(pageIndex: number): void {
 
 function nextPage(): void {
   const pageWidth = readerEl.clientWidth;
-  readerEl.scrollBy({ left: -pageWidth, behavior: 'smooth' });
+  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
+  const atEnd = Math.abs(readerEl.scrollLeft) >= maxScroll - 2;
+  if (atEnd && currentChapterIndex + 1 < chapters.length) {
+    renderChapter(currentChapterIndex + 1);
+  } else {
+    readerEl.scrollBy({ left: -pageWidth, behavior: 'smooth' });
+  }
 }
 
 function prevPage(): void {
   const pageWidth = readerEl.clientWidth;
-  readerEl.scrollBy({ left: pageWidth, behavior: 'smooth' });
+  const atStart = Math.abs(readerEl.scrollLeft) < 2;
+  if (atStart && currentChapterIndex > 0) {
+    renderChapter(currentChapterIndex - 1);
+    // Jump to last page of previous chapter
+    requestAnimationFrame(() => {
+      readerEl.scrollLeft = -(readerEl.scrollWidth - readerEl.clientWidth);
+      updatePageInfo();
+    });
+  } else {
+    readerEl.scrollBy({ left: pageWidth, behavior: 'smooth' });
+  }
 }
 
 function goToChapter(index: number): void {
   if (index < 0 || index >= chapters.length) return;
-  const chapter = chapters[index];
-
-  // Find the character position ratio and scroll to it
-  const ratio = chapter.startIndex / fullText.length;
-  const targetScroll = ratio * readerEl.scrollWidth;
-  readerEl.scrollLeft = -targetScroll;
-
+  renderChapter(index);
   chapterPanel.classList.add('hidden');
-  updatePageInfo();
-  highlightActiveChapter(index);
 }
 
 // --- Chapter List ---
@@ -253,19 +278,14 @@ function savePosition(): void {
   if (!currentBook) return;
   const pos: ReadingPosition = {
     book: currentBook.file,
-    chapter: 0,
+    chapter: currentChapterIndex,
     scrollLeft: readerEl.scrollLeft,
   };
-
-  // Determine current chapter
-  const scrollRatio = Math.abs(readerEl.scrollLeft) / readerEl.scrollWidth;
-  const charPos = Math.floor(scrollRatio * fullText.length);
-  pos.chapter = findCurrentChapter(chapters, charPos);
-  highlightActiveChapter(pos.chapter);
 
   // Save to URL hash
   const params = new URLSearchParams();
   params.set('book', currentBook.file);
+  params.set('ch', String(currentChapterIndex));
   params.set('pos', String(Math.round(readerEl.scrollLeft)));
   history.replaceState(null, '', '#' + params.toString());
 
@@ -273,17 +293,19 @@ function savePosition(): void {
   localStorage.setItem('bookworm_position', JSON.stringify(pos));
 }
 
-function restorePosition(): void {
+function restorePosition(): boolean {
   // Try URL hash first
   const hash = location.hash.slice(1);
   if (hash) {
     const params = new URLSearchParams(hash);
     const bookFile = params.get('book');
+    const ch = params.get('ch');
     const pos = params.get('pos');
-    if (bookFile === currentBook?.file && pos) {
-      readerEl.scrollLeft = parseInt(pos, 10);
+    if (bookFile === currentBook?.file && ch != null) {
+      renderChapter(parseInt(ch, 10));
+      if (pos) readerEl.scrollLeft = parseInt(pos, 10);
       updatePageInfo();
-      return;
+      return true;
     }
   }
 
@@ -293,11 +315,14 @@ function restorePosition(): void {
     if (raw) {
       const pos: ReadingPosition = JSON.parse(raw);
       if (pos.book === currentBook?.file) {
+        renderChapter(pos.chapter);
         readerEl.scrollLeft = pos.scrollLeft;
         updatePageInfo();
+        return true;
       }
     }
   } catch { /* ignore */ }
+  return false;
 }
 
 // --- TTS ---

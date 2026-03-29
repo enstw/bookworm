@@ -36,12 +36,6 @@ function detectChapters(text) {
   }
   return chapters2;
 }
-function findCurrentChapter(chapters2, charPosition) {
-  for (let i = chapters2.length - 1; i >= 0; i--) {
-    if (charPosition >= chapters2[i].startIndex) return i;
-  }
-  return 0;
-}
 
 // src/fonts.ts
 var SUPPORTED_EXTENSIONS = [".ttf", ".otf", ".woff", ".woff2"];
@@ -270,6 +264,7 @@ var books = [];
 var currentBook = null;
 var fullText = "";
 var chapters = [];
+var currentChapterIndex = 0;
 var tts = null;
 var chromeTimer = null;
 function loadSettings() {
@@ -348,15 +343,16 @@ async function openBook(book) {
     fullText = new TextDecoder("utf-8").decode(raw);
     showLoading("\u6B63\u5728\u5206\u6790\u7AE0\u7BC0\u2026");
     chapters = detectChapters(fullText);
-    renderBook();
     populateChapterList();
     bookSelector.classList.add("hidden");
     bookTitleEl.textContent = book.name;
     enterReadingMode();
-    restorePosition();
+    if (!restorePosition()) {
+      renderChapter(0);
+    }
     const settings = loadSettings();
     tts = new AITextToSpeech(settings.tts, handleTTSState);
-    tts.setSentences(splitSentences(fullText));
+    tts.setSentences(splitSentences(getChapterText(currentChapterIndex)));
     hideLoading();
   } catch (e) {
     hideLoading();
@@ -364,24 +360,36 @@ async function openBook(book) {
     console.error(e);
   }
 }
-function renderBook() {
-  readerEl.textContent = fullText;
+function getChapterText(index) {
+  const start = chapters[index].startIndex;
+  const end = index + 1 < chapters.length ? chapters[index + 1].startIndex : fullText.length;
+  return fullText.slice(start, end);
+}
+function renderChapter(index) {
+  if (index < 0 || index >= chapters.length) return;
+  currentChapterIndex = index;
+  const text = getChapterText(index);
+  readerEl.textContent = text;
+  readerEl.scrollLeft = 0;
   updatePageInfo();
+  highlightActiveChapter(index);
+  if (tts) tts.setSentences(splitSentences(text));
 }
 function updatePageInfo() {
   const el = readerEl;
   const maxScroll = el.scrollWidth - el.clientWidth;
   if (maxScroll <= 0) {
-    pageInfoEl.textContent = "1 / 1";
+    pageInfoEl.textContent = `${currentChapterIndex + 1}/${chapters.length}  1/1`;
     pageSlider.value = "0";
     pageSlider.max = "0";
+    savePosition();
     return;
   }
   const scrollPos = Math.abs(el.scrollLeft);
   const pageWidth = el.clientWidth;
   const totalPages = Math.ceil(el.scrollWidth / pageWidth);
   const currentPage = Math.floor(scrollPos / pageWidth) + 1;
-  pageInfoEl.textContent = `${currentPage} / ${totalPages}`;
+  pageInfoEl.textContent = `${currentChapterIndex + 1}/${chapters.length}  ${currentPage}/${totalPages}`;
   pageSlider.max = String(totalPages - 1);
   pageSlider.value = String(currentPage - 1);
   savePosition();
@@ -392,21 +400,31 @@ function scrollToPage(pageIndex) {
 }
 function nextPage() {
   const pageWidth = readerEl.clientWidth;
-  readerEl.scrollBy({ left: -pageWidth, behavior: "smooth" });
+  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
+  const atEnd = Math.abs(readerEl.scrollLeft) >= maxScroll - 2;
+  if (atEnd && currentChapterIndex + 1 < chapters.length) {
+    renderChapter(currentChapterIndex + 1);
+  } else {
+    readerEl.scrollBy({ left: -pageWidth, behavior: "smooth" });
+  }
 }
 function prevPage() {
   const pageWidth = readerEl.clientWidth;
-  readerEl.scrollBy({ left: pageWidth, behavior: "smooth" });
+  const atStart = Math.abs(readerEl.scrollLeft) < 2;
+  if (atStart && currentChapterIndex > 0) {
+    renderChapter(currentChapterIndex - 1);
+    requestAnimationFrame(() => {
+      readerEl.scrollLeft = -(readerEl.scrollWidth - readerEl.clientWidth);
+      updatePageInfo();
+    });
+  } else {
+    readerEl.scrollBy({ left: pageWidth, behavior: "smooth" });
+  }
 }
 function goToChapter(index) {
   if (index < 0 || index >= chapters.length) return;
-  const chapter = chapters[index];
-  const ratio = chapter.startIndex / fullText.length;
-  const targetScroll = ratio * readerEl.scrollWidth;
-  readerEl.scrollLeft = -targetScroll;
+  renderChapter(index);
   chapterPanel.classList.add("hidden");
-  updatePageInfo();
-  highlightActiveChapter(index);
 }
 function populateChapterList() {
   chapterListEl.innerHTML = "";
@@ -425,15 +443,12 @@ function savePosition() {
   if (!currentBook) return;
   const pos = {
     book: currentBook.file,
-    chapter: 0,
+    chapter: currentChapterIndex,
     scrollLeft: readerEl.scrollLeft
   };
-  const scrollRatio = Math.abs(readerEl.scrollLeft) / readerEl.scrollWidth;
-  const charPos = Math.floor(scrollRatio * fullText.length);
-  pos.chapter = findCurrentChapter(chapters, charPos);
-  highlightActiveChapter(pos.chapter);
   const params = new URLSearchParams();
   params.set("book", currentBook.file);
+  params.set("ch", String(currentChapterIndex));
   params.set("pos", String(Math.round(readerEl.scrollLeft)));
   history.replaceState(null, "", "#" + params.toString());
   localStorage.setItem("bookworm_position", JSON.stringify(pos));
@@ -443,11 +458,13 @@ function restorePosition() {
   if (hash) {
     const params = new URLSearchParams(hash);
     const bookFile = params.get("book");
+    const ch = params.get("ch");
     const pos = params.get("pos");
-    if (bookFile === currentBook?.file && pos) {
-      readerEl.scrollLeft = parseInt(pos, 10);
+    if (bookFile === currentBook?.file && ch != null) {
+      renderChapter(parseInt(ch, 10));
+      if (pos) readerEl.scrollLeft = parseInt(pos, 10);
       updatePageInfo();
-      return;
+      return true;
     }
   }
   try {
@@ -455,12 +472,15 @@ function restorePosition() {
     if (raw) {
       const pos = JSON.parse(raw);
       if (pos.book === currentBook?.file) {
+        renderChapter(pos.chapter);
         readerEl.scrollLeft = pos.scrollLeft;
         updatePageInfo();
+        return true;
       }
     }
   } catch {
   }
+  return false;
 }
 function handleTTSState(state, info) {
   switch (state) {
@@ -650,7 +670,7 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $("version");
-  versionEl.textContent = `v${"1.1.28"} (${"ea35870"})`;
+  versionEl.textContent = `v${"1.1.29"} (${"bf7b2c0"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", () => location.reload());
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
