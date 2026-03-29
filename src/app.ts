@@ -508,8 +508,11 @@ function bindEvents(): void {
 
 // --- Init ---
 async function init(): Promise<void> {
-  // Show version
-  $('version').textContent = `v${__APP_VERSION__} (${__BUILD_HASH__})`;
+  // Show version (tap to reload in PWA mode)
+  const versionEl = $('version');
+  versionEl.textContent = `v${__APP_VERSION__} (${__BUILD_HASH__})`;
+  versionEl.style.cursor = 'pointer';
+  versionEl.addEventListener('click', () => location.reload());
 
   // Load CDN scripts
   await loadScript('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');

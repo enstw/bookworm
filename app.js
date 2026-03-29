@@ -649,7 +649,10 @@ function bindEvents() {
   $("tts-prev").onclick = () => tts?.prev();
 }
 async function init() {
-  $("version").textContent = `v${"1.1.24"} (${"0835f00"})`;
+  const versionEl = $("version");
+  versionEl.textContent = `v${"1.1.25"} (${"885f789"})`;
+  versionEl.style.cursor = "pointer";
+  versionEl.addEventListener("click", () => location.reload());
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   const settings = loadSettings();
   applySettings(settings);
