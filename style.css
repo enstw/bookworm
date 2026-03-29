@@ -44,6 +44,12 @@ html:has(#book-selector:not(.hidden)) body {
   transition: background 0.3s, color 0.3s;
 }
 
+html:has(#book-selector:not(.hidden)) .toolbar,
+html:has(#book-selector:not(.hidden)) .nav-bar,
+html:has(#book-selector:not(.hidden)) .tts-bar {
+  display: none;
+}
+
 /* === Overlays === */
 .overlay {
   position: fixed;
