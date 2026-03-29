@@ -332,7 +332,8 @@ html:has(#book-selector:not(.hidden)) body {
 .reader {
   width: 100%;
   height: 100%;
-  padding: 0 calc(40px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(40px + env(safe-area-inset-left));
+  padding: 0 calc(40px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(40px + env(safe-area-inset-left));
+  margin-top: calc(-1 * env(safe-area-inset-top, 0px));
   writing-mode: vertical-rl;
   overflow-x: scroll;
   overflow-y: hidden;
@@ -468,7 +469,7 @@ html:has(#book-selector:not(.hidden)) body {
 
 /* === Mobile === */
 @media (max-width: 600px) {
-  .reader { padding: 0 calc(20px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
+  .reader { padding: 0 calc(20px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
   .toolbar { padding: 0 8px; }
   .toolbar-title { font-size: 0.85rem; }
 }
