@@ -337,6 +337,7 @@ html:has(#book-selector:not(.hidden)) body {
   writing-mode: vertical-rl;
   overflow-x: scroll;
   overflow-y: hidden;
+  scrollbar-width: none;
   touch-action: pan-y;
   font-size: var(--font-size);
   line-height: var(--line-height);
@@ -345,6 +346,8 @@ html:has(#book-selector:not(.hidden)) body {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+.reader::-webkit-scrollbar { display: none; }
 
 .reader .page-column {
   scroll-snap-align: start;
