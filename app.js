@@ -270,8 +270,8 @@ var chromeTimer = null;
 function loadSettings() {
   const raw = localStorage.getItem("bookworm_settings");
   const defaults = {
-    fontSize: 24,
-    theme: "light",
+    fontSize: 26,
+    theme: "sepia",
     font: "default",
     tts: { endpoint: "", apiKey: "", model: "tts-1", voice: "alloy", speed: 1 }
   };
@@ -670,7 +670,7 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $("version");
-  versionEl.textContent = `v${"1.1.29"} (${"bf7b2c0"})`;
+  versionEl.textContent = `v${"1.1.30"} (${"14affa2"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", () => location.reload());
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");

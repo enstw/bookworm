@@ -55,8 +55,8 @@ let chromeTimer: ReturnType<typeof setTimeout> | null = null;
 function loadSettings(): AppSettings {
   const raw = localStorage.getItem('bookworm_settings');
   const defaults: AppSettings = {
-    fontSize: 24,
-    theme: 'light',
+    fontSize: 26,
+    theme: 'sepia',
     font: 'default',
     tts: { endpoint: '', apiKey: '', model: 'tts-1', voice: 'alloy', speed: 1.0 },
   };
