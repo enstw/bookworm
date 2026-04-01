@@ -13,7 +13,7 @@ const outDir = path.join(__dirname, 'books');
 // Ensure output directory exists
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
 
-// --- Chapter detection (same logic as src/chapters.ts) ---
+// --- Chapter detection (same logic as original chapters.ts) ---
 const CHAPTER_PATTERNS = [
   /^[　\s]*第[零一二三四五六七八九十百千萬万〇○０-９0-9]+[章節回卷集部篇]/,
   /^[　\s]*(楔子|序章|序言|引子|前言|引言|開篇)([　\s：:].+)?$/,
@@ -100,38 +100,40 @@ function convertBook(srcPath, outDir) {
   }
 }
 
-// --- Main build ---
-const srcFiles = fs.readdirSync(srcDir)
-  .filter(f => /\.(zip|txt)$/i.test(f))
-  .sort();
+// --- Convert new source books (if any) ---
+if (fs.existsSync(srcDir)) {
+  const srcFiles = fs.readdirSync(srcDir)
+    .filter(f => /\.(zip|txt)$/i.test(f))
+    .sort();
 
-// Convert source books → output directory
-const books = [];
-for (const f of srcFiles) {
-  const srcPath = path.join(srcDir, f);
+  for (const f of srcFiles) {
+    const srcPath = path.join(srcDir, f);
 
-  if (/\.zip$/i.test(f)) {
-    console.log(`  ${f}: converting GB18030 SC → UTF-8 TC + splitting chapters...`);
-    const result = convertBook(srcPath, outDir);
-    if (result) {
-      console.log(`  ${f}: → ${result.file}`);
-      books.push(result);
+    if (/\.zip$/i.test(f)) {
+      console.log(`  ${f}: converting GB18030 SC → UTF-8 TC + splitting chapters...`);
+      const result = convertBook(srcPath, outDir);
+      if (result) console.log(`  ${f}: → ${result.file}`);
+    } else {
+      fs.copyFileSync(srcPath, path.join(outDir, f));
     }
-  } else {
-    // Plain .txt — just copy
-    fs.copyFileSync(srcPath, path.join(outDir, f));
-    books.push({ name: f.replace(/\.txt$/i, ''), file: f });
   }
 }
 
-// Generate books/index.json
+// --- Generate books/index.json from all zips in books/ ---
+const existingZips = fs.readdirSync(outDir)
+  .filter(f => /\.zip$/i.test(f))
+  .sort();
+const books = existingZips.map(f => ({
+  name: f.replace(/\.zip$/i, ''),
+  file: f,
+}));
 fs.writeFileSync(
   path.join(outDir, 'index.json'),
   JSON.stringify(books, null, 2) + '\n'
 );
 console.log(`Generated books/index.json: ${books.length} book(s)`);
 
-// Compile TypeScript
+// --- Compile TypeScript ---
 esbuild.buildSync({
   entryPoints: ['src/app.ts'],
   bundle: true,
