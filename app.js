@@ -195,283 +195,78 @@ function splitSentences(text) {
   return raw.map((s) => s.trim()).filter((s) => s.length > 0 && s.length < 500);
 }
 
-// src/app.ts
-var $ = (id) => document.getElementById(id);
-var bookSelector = $("book-selector");
-var bookListEl = $("book-list");
-var settingsPanel = $("settings-panel");
-var chapterPanel = $("chapter-panel");
-var readerEl = $("reader");
-var loadingOverlay = $("loading");
-var loadingText = $("loading-text");
-var bookTitleEl = $("book-title");
-var pageInfoEl = $("page-info");
-var chapterListEl = $("chapter-list");
-var pageSlider = $("page-slider");
-var fontSelect = $("font-select");
-var fontSizeInput = $("font-size");
-var fontSizeLabel = $("font-size-label");
-var themeSelect = $("theme-select");
-var ttsEndpointInput = $("tts-endpoint");
-var ttsApiKeyInput = $("tts-api-key");
-var ttsModelInput = $("tts-model");
-var ttsVoiceInput = $("tts-voice");
-var ttsSpeedInput = $("tts-speed");
-var ttsSpeedLabel = $("tts-speed-label");
-var ttsBar = $("tts-bar");
-var ttsPlayBtn = $("tts-play");
-var ttsStatusEl = $("tts-status");
-var books = [];
-var currentBook = null;
-var zipEntries = {};
-var chapters = [];
-var currentChapterIndex = 0;
-var tts = null;
-var chromeTimer = null;
+// src/state.ts
+var state = {
+  books: [],
+  currentBook: null,
+  zipEntries: {},
+  chapters: [],
+  currentChapterIndex: 0,
+  tts: null
+};
 var decoder = new TextDecoder("utf-8");
-function loadSettings() {
+function getChapterText(index) {
+  const raw = state.zipEntries[state.chapters[index].filename];
+  return decoder.decode(raw);
+}
+
+// src/settings.ts
+var $ = (id) => document.getElementById(id);
+var DEFAULTS = {
+  fontSize: 26,
+  theme: "sepia",
+  font: "default",
+  tts: { endpoint: "", apiKey: "", model: "tts-1", voice: "alloy", speed: 1 }
+};
+var current = null;
+function getSettings() {
+  if (current) return current;
   const raw = localStorage.getItem("bookworm_settings");
-  const defaults = {
-    fontSize: 26,
-    theme: "sepia",
-    font: "default",
-    tts: { endpoint: "", apiKey: "", model: "tts-1", voice: "alloy", speed: 1 }
-  };
-  if (!raw) return defaults;
-  try {
-    return { ...defaults, ...JSON.parse(raw) };
-  } catch {
-    return defaults;
+  if (!raw) {
+    current = { ...DEFAULTS, tts: { ...DEFAULTS.tts } };
+    return current;
   }
+  try {
+    current = { ...DEFAULTS, ...JSON.parse(raw) };
+  } catch {
+    current = { ...DEFAULTS, tts: { ...DEFAULTS.tts } };
+  }
+  return current;
 }
-function saveSettings(settings) {
-  localStorage.setItem("bookworm_settings", JSON.stringify(settings));
+function save() {
+  localStorage.setItem("bookworm_settings", JSON.stringify(current));
 }
-function applySettings(settings) {
-  document.documentElement.dataset.theme = settings.theme;
-  document.documentElement.style.setProperty("--font-size", settings.fontSize + "px");
-  themeSelect.value = settings.theme;
-  fontSizeInput.value = String(settings.fontSize);
-  fontSizeLabel.textContent = settings.fontSize + "px";
-  fontSelect.value = settings.font;
-  applyFont(settings.font);
-  ttsEndpointInput.value = settings.tts.endpoint;
-  ttsApiKeyInput.value = settings.tts.apiKey;
-  ttsModelInput.value = settings.tts.model;
-  ttsVoiceInput.value = settings.tts.voice;
-  ttsSpeedInput.value = String(settings.tts.speed);
-  ttsSpeedLabel.textContent = settings.tts.speed + "x";
+function updateSetting(key, value) {
+  getSettings()[key] = value;
+  save();
 }
+function applySettings() {
+  const s = getSettings();
+  document.documentElement.dataset.theme = s.theme;
+  document.documentElement.style.setProperty("--font-size", s.fontSize + "px");
+  $("theme-select").value = s.theme;
+  $("font-size").value = String(s.fontSize);
+  $("font-size-label").textContent = s.fontSize + "px";
+  $("font-select").value = s.font;
+  applyFont(s.font);
+  $("tts-endpoint").value = s.tts.endpoint;
+  $("tts-api-key").value = s.tts.apiKey;
+  $("tts-model").value = s.tts.model;
+  $("tts-voice").value = s.tts.voice;
+  $("tts-speed").value = String(s.tts.speed);
+  $("tts-speed-label").textContent = s.tts.speed + "x";
+}
+
+// src/ui.ts
+var loadingOverlay = document.getElementById("loading");
+var loadingText = document.getElementById("loading-text");
+var chromeTimer = null;
 function showLoading(msg) {
   loadingText.textContent = msg;
   loadingOverlay.classList.remove("hidden");
 }
 function hideLoading() {
   loadingOverlay.classList.add("hidden");
-}
-async function loadBookList() {
-  try {
-    const res = await fetch("books/index.json");
-    books = await res.json();
-  } catch {
-    books = [];
-  }
-  bookListEl.innerHTML = "";
-  if (books.length === 0) {
-    bookListEl.innerHTML = '<p style="opacity:0.5">\u627E\u4E0D\u5230\u66F8\u7C4D\u3002\u8ACB\u5728 books/ \u8CC7\u6599\u593E\u4E2D\u65B0\u589E .zip \u6A94\u6848\u4E26\u66F4\u65B0 index.json\u3002</p>';
-    return;
-  }
-  for (const book of books) {
-    const div = document.createElement("div");
-    div.className = "book-item";
-    div.textContent = book.name;
-    div.onclick = () => openBook(book);
-    bookListEl.appendChild(div);
-  }
-}
-async function openBook(book) {
-  showLoading("\u6B63\u5728\u8F09\u5165\u66F8\u7C4D\u2026");
-  currentBook = book;
-  try {
-    showLoading("\u6B63\u5728\u4E0B\u8F09\u2026");
-    const res = await fetch(`books/${book.file}`);
-    const buf = new Uint8Array(await res.arrayBuffer());
-    showLoading("\u6B63\u5728\u89E3\u58D3\u7E2E\u2026");
-    zipEntries = fflate.unzipSync(buf);
-    const filenames = Object.keys(zipEntries).filter((k) => k.endsWith(".txt")).sort();
-    chapters = filenames.map((f) => {
-      const base = f.replace(/\.txt$/i, "");
-      const title = base.replace(/^\d+_/, "");
-      return { title, filename: f };
-    });
-    if (chapters.length === 0) throw new Error("ZIP \u4E2D\u627E\u4E0D\u5230\u7AE0\u7BC0\u6A94\u6848");
-    populateChapterList();
-    bookSelector.classList.add("hidden");
-    bookTitleEl.textContent = book.name;
-    enterReadingMode();
-    if (!restorePosition()) {
-      renderChapter(0);
-    }
-    const settings = loadSettings();
-    tts = new AITextToSpeech(settings.tts, handleTTSState);
-    tts.setSentences(splitSentences(getChapterText(currentChapterIndex)));
-    hideLoading();
-  } catch (e) {
-    hideLoading();
-    alert(`\u8F09\u5165\u5931\u6557: ${e.message}`);
-    console.error(e);
-  }
-}
-function getChapterText(index) {
-  const raw = zipEntries[chapters[index].filename];
-  return decoder.decode(raw);
-}
-function renderChapter(index) {
-  if (index < 0 || index >= chapters.length) return;
-  currentChapterIndex = index;
-  const text = getChapterText(index);
-  readerEl.textContent = text;
-  readerEl.scrollLeft = 0;
-  updatePageInfo();
-  highlightActiveChapter(index);
-  if (tts) tts.setSentences(splitSentences(text));
-}
-function updatePageInfo() {
-  const el = readerEl;
-  const maxScroll = el.scrollWidth - el.clientWidth;
-  if (maxScroll <= 0) {
-    pageInfoEl.textContent = `${currentChapterIndex + 1}/${chapters.length}  1/1`;
-    pageSlider.value = "0";
-    pageSlider.max = "0";
-    savePosition();
-    return;
-  }
-  const scrollPos = Math.abs(el.scrollLeft);
-  const pageWidth = el.clientWidth;
-  const totalPages = Math.ceil(el.scrollWidth / pageWidth);
-  const currentPage = Math.floor(scrollPos / pageWidth) + 1;
-  pageInfoEl.textContent = `${currentChapterIndex + 1}/${chapters.length}  ${currentPage}/${totalPages}`;
-  pageSlider.max = String(totalPages - 1);
-  pageSlider.value = String(currentPage - 1);
-  savePosition();
-}
-function scrollToPage(pageIndex) {
-  const pageWidth = readerEl.clientWidth;
-  readerEl.scrollLeft = -(pageIndex * pageWidth);
-}
-function nextPage() {
-  const pageWidth = readerEl.clientWidth;
-  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
-  const atEnd = Math.abs(readerEl.scrollLeft) >= maxScroll - 2;
-  if (atEnd && currentChapterIndex + 1 < chapters.length) {
-    renderChapter(currentChapterIndex + 1);
-  } else {
-    readerEl.scrollBy({ left: -pageWidth, behavior: "smooth" });
-  }
-}
-function prevPage() {
-  const pageWidth = readerEl.clientWidth;
-  const atStart = Math.abs(readerEl.scrollLeft) < 2;
-  if (atStart && currentChapterIndex > 0) {
-    renderChapter(currentChapterIndex - 1);
-    requestAnimationFrame(() => {
-      readerEl.scrollLeft = -(readerEl.scrollWidth - readerEl.clientWidth);
-      updatePageInfo();
-    });
-  } else {
-    readerEl.scrollBy({ left: pageWidth, behavior: "smooth" });
-  }
-}
-function goToChapter(index) {
-  if (index < 0 || index >= chapters.length) return;
-  renderChapter(index);
-  chapterPanel.classList.add("hidden");
-}
-var chapterListDirty = true;
-function populateChapterList() {
-  chapterListDirty = true;
-  chapterListEl.innerHTML = "";
-}
-function ensureChapterListPopulated() {
-  if (!chapterListDirty) return;
-  chapterListDirty = false;
-  chapterListEl.innerHTML = "";
-  const frag = document.createDocumentFragment();
-  chapters.forEach((ch, i) => {
-    const li = document.createElement("li");
-    li.textContent = ch.title;
-    li.onclick = () => goToChapter(i);
-    frag.appendChild(li);
-  });
-  chapterListEl.appendChild(frag);
-  highlightActiveChapter(currentChapterIndex);
-}
-function highlightActiveChapter(index) {
-  const items = chapterListEl.querySelectorAll("li");
-  items.forEach((li, i) => li.classList.toggle("active", i === index));
-}
-function savePosition() {
-  if (!currentBook) return;
-  const pos = {
-    book: currentBook.file,
-    chapter: currentChapterIndex,
-    scrollLeft: readerEl.scrollLeft
-  };
-  const params = new URLSearchParams();
-  params.set("book", currentBook.file);
-  params.set("ch", String(currentChapterIndex));
-  params.set("pos", String(Math.round(readerEl.scrollLeft)));
-  history.replaceState(null, "", "#" + params.toString());
-  localStorage.setItem("bookworm_position", JSON.stringify(pos));
-}
-function restorePosition() {
-  const hash = location.hash.slice(1);
-  if (hash) {
-    const params = new URLSearchParams(hash);
-    const bookFile = params.get("book");
-    const ch = params.get("ch");
-    const pos = params.get("pos");
-    if (bookFile === currentBook?.file && ch != null) {
-      renderChapter(parseInt(ch, 10));
-      if (pos) readerEl.scrollLeft = parseInt(pos, 10);
-      updatePageInfo();
-      return true;
-    }
-  }
-  try {
-    const raw = localStorage.getItem("bookworm_position");
-    if (raw) {
-      const pos = JSON.parse(raw);
-      if (pos.book === currentBook?.file) {
-        renderChapter(pos.chapter);
-        readerEl.scrollLeft = pos.scrollLeft;
-        updatePageInfo();
-        return true;
-      }
-    }
-  } catch {
-  }
-  return false;
-}
-function handleTTSState(state, info) {
-  switch (state) {
-    case "playing":
-      ttsPlayBtn.textContent = "\u23F8";
-      ttsStatusEl.textContent = info ?? "\u64AD\u653E\u4E2D\u2026";
-      break;
-    case "paused":
-      ttsPlayBtn.textContent = "\u25B6";
-      ttsStatusEl.textContent = "\u5DF2\u66AB\u505C";
-      break;
-    case "stopped":
-      ttsPlayBtn.textContent = "\u25B6";
-      ttsStatusEl.textContent = "";
-      break;
-    case "error":
-      ttsPlayBtn.textContent = "\u25B6";
-      ttsStatusEl.textContent = `\u932F\u8AA4: ${info}`;
-      break;
-  }
 }
 function enterReadingMode() {
   document.body.classList.add("reading-mode");
@@ -498,11 +293,8 @@ function exitFullscreen() {
   }
 }
 function toggleFullscreen() {
-  if (document.fullscreenElement) {
-    exitFullscreen();
-  } else {
-    requestFullscreen();
-  }
+  if (document.fullscreenElement) exitFullscreen();
+  else requestFullscreen();
 }
 function toggleChrome() {
   const body = document.body;
@@ -521,28 +313,143 @@ function toggleChrome() {
     }, 4e3);
   }
 }
-function bindEvents() {
-  $("btn-settings").onclick = () => settingsPanel.classList.toggle("hidden");
-  $("close-settings").onclick = () => settingsPanel.classList.add("hidden");
-  $("btn-fullscreen").onclick = () => toggleFullscreen();
-  $("btn-chapters").onclick = () => {
-    ensureChapterListPopulated();
-    chapterPanel.classList.toggle("hidden");
-  };
-  $("close-chapters").onclick = () => chapterPanel.classList.add("hidden");
-  $("btn-back").onclick = () => {
-    tts?.stop();
-    ttsBar.classList.add("hidden");
-    exitReadingMode();
-    bookSelector.classList.remove("hidden");
-    currentBook = null;
-    readerEl.textContent = "";
-  };
-  $("nav-prev").onclick = prevPage;
-  $("nav-next").onclick = nextPage;
+
+// src/position.ts
+var readerEl = document.getElementById("reader");
+function savePosition() {
+  if (!state.currentBook) return;
+  const params = new URLSearchParams();
+  params.set("book", state.currentBook.file);
+  params.set("ch", String(state.currentChapterIndex));
+  params.set("pos", String(Math.round(readerEl.scrollLeft)));
+  history.replaceState(null, "", "#" + params.toString());
+  localStorage.setItem("bookworm_position", JSON.stringify({
+    book: state.currentBook.file,
+    chapter: state.currentChapterIndex,
+    scrollLeft: readerEl.scrollLeft
+  }));
+}
+function getSavedPosition() {
+  const hash = location.hash.slice(1);
+  if (hash) {
+    const params = new URLSearchParams(hash);
+    const bookFile = params.get("book");
+    const ch = params.get("ch");
+    const pos = params.get("pos");
+    if (bookFile === state.currentBook?.file && ch != null) {
+      return { chapter: parseInt(ch, 10), scrollLeft: pos ? parseInt(pos, 10) : 0 };
+    }
+  }
+  try {
+    const raw = localStorage.getItem("bookworm_position");
+    if (raw) {
+      const pos = JSON.parse(raw);
+      if (pos.book === state.currentBook?.file) {
+        return { chapter: pos.chapter, scrollLeft: pos.scrollLeft };
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+
+// src/navigation.ts
+var $2 = (id) => document.getElementById(id);
+var readerEl2 = $2("reader");
+var pageInfoEl = $2("page-info");
+var pageSlider = $2("page-slider");
+var chapterListEl = $2("chapter-list");
+var chapterPanel = $2("chapter-panel");
+function renderChapter(index) {
+  if (index < 0 || index >= state.chapters.length) return;
+  state.currentChapterIndex = index;
+  const text = getChapterText(index);
+  readerEl2.textContent = text;
+  readerEl2.scrollLeft = 0;
+  updatePageInfo();
+  highlightActiveChapter(index);
+  if (state.tts) state.tts.setSentences(splitSentences(text));
+}
+function updatePageInfo() {
+  const maxScroll = readerEl2.scrollWidth - readerEl2.clientWidth;
+  if (maxScroll <= 0) {
+    pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${state.chapters.length}  1/1`;
+    pageSlider.value = "0";
+    pageSlider.max = "0";
+    savePosition();
+    return;
+  }
+  const scrollPos = Math.abs(readerEl2.scrollLeft);
+  const pageWidth = readerEl2.clientWidth;
+  const totalPages = Math.ceil(readerEl2.scrollWidth / pageWidth);
+  const currentPage = Math.floor(scrollPos / pageWidth) + 1;
+  pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${state.chapters.length}  ${currentPage}/${totalPages}`;
+  pageSlider.max = String(totalPages - 1);
+  pageSlider.value = String(currentPage - 1);
+  savePosition();
+}
+function scrollToPage(pageIndex) {
+  readerEl2.scrollLeft = -(pageIndex * readerEl2.clientWidth);
+}
+function nextPage() {
+  const pageWidth = readerEl2.clientWidth;
+  const maxScroll = readerEl2.scrollWidth - readerEl2.clientWidth;
+  const atEnd = Math.abs(readerEl2.scrollLeft) >= maxScroll - 2;
+  if (atEnd && state.currentChapterIndex + 1 < state.chapters.length) {
+    renderChapter(state.currentChapterIndex + 1);
+  } else {
+    readerEl2.scrollBy({ left: -pageWidth, behavior: "smooth" });
+  }
+}
+function prevPage() {
+  const pageWidth = readerEl2.clientWidth;
+  const atStart = Math.abs(readerEl2.scrollLeft) < 2;
+  if (atStart && state.currentChapterIndex > 0) {
+    renderChapter(state.currentChapterIndex - 1);
+    requestAnimationFrame(() => {
+      readerEl2.scrollLeft = -(readerEl2.scrollWidth - readerEl2.clientWidth);
+      updatePageInfo();
+    });
+  } else {
+    readerEl2.scrollBy({ left: pageWidth, behavior: "smooth" });
+  }
+}
+function goToChapter(index) {
+  if (index < 0 || index >= state.chapters.length) return;
+  renderChapter(index);
+  chapterPanel.classList.add("hidden");
+}
+var chapterListDirty = true;
+function markChapterListDirty() {
+  chapterListDirty = true;
+  chapterListEl.innerHTML = "";
+}
+function ensureChapterListPopulated() {
+  if (!chapterListDirty) return;
+  chapterListDirty = false;
+  chapterListEl.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  state.chapters.forEach((ch, i) => {
+    const li = document.createElement("li");
+    li.textContent = ch.title;
+    li.onclick = () => goToChapter(i);
+    frag.appendChild(li);
+  });
+  chapterListEl.appendChild(frag);
+  highlightActiveChapter(state.currentChapterIndex);
+}
+function highlightActiveChapter(index) {
+  const items = chapterListEl.querySelectorAll("li");
+  items.forEach((li, i) => li.classList.toggle("active", i === index));
+}
+var lastTouchEnd = 0;
+function bindNavigationEvents() {
   pageSlider.oninput = () => scrollToPage(parseInt(pageSlider.value, 10));
+  $2("nav-prev").onclick = prevPage;
+  $2("nav-next").onclick = nextPage;
+  readerEl2.addEventListener("scroll", () => updatePageInfo());
   document.addEventListener("keydown", (e) => {
-    if (!currentBook) return;
+    if (!state.currentBook) return;
     switch (e.key) {
       case "ArrowLeft":
       case "PageDown":
@@ -553,20 +460,21 @@ function bindEvents() {
         prevPage();
         break;
       case "Home":
-        readerEl.scrollLeft = 0;
+        readerEl2.scrollLeft = 0;
         break;
       case "End":
-        readerEl.scrollLeft = -readerEl.scrollWidth;
+        readerEl2.scrollLeft = -readerEl2.scrollWidth;
         break;
     }
   });
   let touchStartX = 0;
   let touchStartY = 0;
-  readerEl.addEventListener("touchstart", (e) => {
+  readerEl2.addEventListener("touchstart", (e) => {
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
   });
-  readerEl.addEventListener("touchend", (e) => {
+  readerEl2.addEventListener("touchend", (e) => {
+    lastTouchEnd = Date.now();
     const endX = e.changedTouches[0].clientX;
     const endY = e.changedTouches[0].clientY;
     const dx = endX - touchStartX;
@@ -575,83 +483,187 @@ function bindEvents() {
       if (dx > 0) nextPage();
       else prevPage();
     } else if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      if (endX > w / 3 && endX < 2 * w / 3 && endY > h / 3 && endY < 2 * h / 3) {
-        toggleChrome();
-      } else if (endY > h / 2) {
-        if (endX < w / 4) nextPage();
-        else if (endX > 3 * w / 4) prevPage();
-      }
+      handleTapZone(endX, endY);
     }
   });
-  readerEl.addEventListener("click", (e) => {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    if (e.clientX > w / 3 && e.clientX < 2 * w / 3 && e.clientY > h / 3 && e.clientY < 2 * h / 3) {
-      toggleChrome();
-    } else if (e.clientY > h / 2) {
-      if (e.clientX < w / 4) nextPage();
-      else if (e.clientX > 3 * w / 4) prevPage();
-    }
+  readerEl2.addEventListener("click", (e) => {
+    if (Date.now() - lastTouchEnd < 300) return;
+    handleTapZone(e.clientX, e.clientY);
   });
-  readerEl.addEventListener("scroll", () => updatePageInfo());
+}
+function handleTapZone(x, y) {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (x > w / 3 && x < 2 * w / 3 && y > h / 3 && y < 2 * h / 3) {
+    toggleChrome();
+  } else if (y > h / 2) {
+    if (x < w / 4) nextPage();
+    else if (x > 3 * w / 4) prevPage();
+  }
+}
+
+// src/app.ts
+var $3 = (id) => document.getElementById(id);
+var bookSelector = $3("book-selector");
+var bookListEl = $3("book-list");
+var settingsPanel = $3("settings-panel");
+var chapterPanel2 = $3("chapter-panel");
+var readerEl3 = $3("reader");
+var bookTitleEl = $3("book-title");
+var fontSelect = $3("font-select");
+var ttsBar = $3("tts-bar");
+var ttsPlayBtn = $3("tts-play");
+var ttsStatusEl = $3("tts-status");
+async function loadBookList() {
+  try {
+    const res = await fetch("books/index.json");
+    state.books = await res.json();
+  } catch {
+    state.books = [];
+  }
+  bookListEl.innerHTML = "";
+  if (state.books.length === 0) {
+    bookListEl.innerHTML = '<p style="opacity:0.5">\u627E\u4E0D\u5230\u66F8\u7C4D\u3002\u8ACB\u5728 books/ \u8CC7\u6599\u593E\u4E2D\u65B0\u589E .zip \u6A94\u6848\u4E26\u66F4\u65B0 index.json\u3002</p>';
+    return;
+  }
+  for (const book of state.books) {
+    const div = document.createElement("div");
+    div.className = "book-item";
+    div.textContent = book.name;
+    div.onclick = () => openBook(book);
+    bookListEl.appendChild(div);
+  }
+}
+async function openBook(book) {
+  showLoading("\u6B63\u5728\u8F09\u5165\u66F8\u7C4D\u2026");
+  state.currentBook = book;
+  try {
+    showLoading("\u6B63\u5728\u4E0B\u8F09\u2026");
+    const res = await fetch(`books/${book.file}`);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    showLoading("\u6B63\u5728\u89E3\u58D3\u7E2E\u2026");
+    state.zipEntries = fflate.unzipSync(buf);
+    const filenames = Object.keys(state.zipEntries).filter((k) => k.endsWith(".txt")).sort();
+    state.chapters = filenames.map((f) => {
+      const base = f.replace(/\.txt$/i, "");
+      const title = base.replace(/^\d+_/, "");
+      return { title, filename: f };
+    });
+    if (state.chapters.length === 0) throw new Error("ZIP \u4E2D\u627E\u4E0D\u5230\u7AE0\u7BC0\u6A94\u6848");
+    markChapterListDirty();
+    bookSelector.classList.add("hidden");
+    bookTitleEl.textContent = book.name;
+    enterReadingMode();
+    const saved = getSavedPosition();
+    if (saved) {
+      renderChapter(saved.chapter);
+      readerEl3.scrollLeft = saved.scrollLeft;
+      updatePageInfo();
+    } else {
+      renderChapter(0);
+    }
+    const settings = getSettings();
+    state.tts = new AITextToSpeech(settings.tts, handleTTSState);
+    state.tts.setSentences(splitSentences(getChapterText(state.currentChapterIndex)));
+    hideLoading();
+  } catch (e) {
+    hideLoading();
+    alert(`\u8F09\u5165\u5931\u6557: ${e.message}`);
+    console.error(e);
+  }
+}
+function handleTTSState(ttsState, info) {
+  switch (ttsState) {
+    case "playing":
+      ttsPlayBtn.textContent = "\u23F8";
+      ttsStatusEl.textContent = info ?? "\u64AD\u653E\u4E2D\u2026";
+      break;
+    case "paused":
+      ttsPlayBtn.textContent = "\u25B6";
+      ttsStatusEl.textContent = "\u5DF2\u66AB\u505C";
+      break;
+    case "stopped":
+      ttsPlayBtn.textContent = "\u25B6";
+      ttsStatusEl.textContent = "";
+      break;
+    case "error":
+      ttsPlayBtn.textContent = "\u25B6";
+      ttsStatusEl.textContent = `\u932F\u8AA4: ${info}`;
+      break;
+  }
+}
+function bindEvents() {
+  bindNavigationEvents();
+  $3("btn-settings").onclick = () => settingsPanel.classList.toggle("hidden");
+  $3("close-settings").onclick = () => settingsPanel.classList.add("hidden");
+  $3("btn-fullscreen").onclick = toggleFullscreen;
+  $3("btn-chapters").onclick = () => {
+    ensureChapterListPopulated();
+    chapterPanel2.classList.toggle("hidden");
+  };
+  $3("close-chapters").onclick = () => chapterPanel2.classList.add("hidden");
+  $3("btn-back").onclick = () => {
+    state.tts?.stop();
+    ttsBar.classList.add("hidden");
+    exitReadingMode();
+    bookSelector.classList.remove("hidden");
+    state.currentBook = null;
+    readerEl3.textContent = "";
+  };
+  const fontSizeInput = $3("font-size");
+  const fontSizeLabel = $3("font-size-label");
   fontSizeInput.oninput = () => {
     const size = parseInt(fontSizeInput.value, 10);
     fontSizeLabel.textContent = size + "px";
     document.documentElement.style.setProperty("--font-size", size + "px");
-    const settings = loadSettings();
-    settings.fontSize = size;
-    saveSettings(settings);
+    updateSetting("fontSize", size);
   };
+  const themeSelect = $3("theme-select");
   themeSelect.onchange = () => {
     document.documentElement.dataset.theme = themeSelect.value;
-    const settings = loadSettings();
-    settings.theme = themeSelect.value;
-    saveSettings(settings);
+    updateSetting("theme", themeSelect.value);
   };
   fontSelect.onchange = () => {
     applyFont(fontSelect.value);
-    const settings = loadSettings();
-    settings.font = fontSelect.value;
-    saveSettings(settings);
+    updateSetting("font", fontSelect.value);
   };
+  const ttsSpeedInput = $3("tts-speed");
+  const ttsSpeedLabel = $3("tts-speed-label");
   ttsSpeedInput.oninput = () => {
     ttsSpeedLabel.textContent = ttsSpeedInput.value + "x";
   };
-  $("save-tts-settings").onclick = () => {
-    const settings = loadSettings();
-    settings.tts = {
-      endpoint: ttsEndpointInput.value,
-      apiKey: ttsApiKeyInput.value,
-      model: ttsModelInput.value,
-      voice: ttsVoiceInput.value,
+  $3("save-tts-settings").onclick = () => {
+    const ttsSettings = {
+      endpoint: $3("tts-endpoint").value,
+      apiKey: $3("tts-api-key").value,
+      model: $3("tts-model").value,
+      voice: $3("tts-voice").value,
       speed: parseFloat(ttsSpeedInput.value)
     };
-    saveSettings(settings);
-    tts?.updateSettings(settings.tts);
+    updateSetting("tts", ttsSettings);
+    state.tts?.updateSettings(ttsSettings);
     settingsPanel.classList.add("hidden");
   };
-  $("btn-tts").onclick = () => ttsBar.classList.toggle("hidden");
+  $3("btn-tts").onclick = () => ttsBar.classList.toggle("hidden");
   ttsPlayBtn.onclick = () => {
-    if (!tts) return;
-    if (tts.isPlaying()) tts.pause();
-    else tts.play();
+    if (!state.tts) return;
+    if (state.tts.isPlaying()) state.tts.pause();
+    else state.tts.play();
   };
-  $("tts-stop").onclick = () => tts?.stop();
-  $("tts-next").onclick = () => tts?.next();
-  $("tts-prev").onclick = () => tts?.prev();
+  $3("tts-stop").onclick = () => state.tts?.stop();
+  $3("tts-next").onclick = () => state.tts?.next();
+  $3("tts-prev").onclick = () => state.tts?.prev();
 }
 async function init() {
-  const versionEl = $("version");
-  versionEl.textContent = `v${"1.2.0"} (${"d059098"})`;
+  const versionEl = $3("version");
+  versionEl.textContent = `v${"1.2.1"} (${"dd41088"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", () => location.reload());
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
-  const settings = loadSettings();
-  applySettings(settings);
+  applySettings();
   bindEvents();
   await loadBookList();
+  const settings = getSettings();
   loadFontList().then(async (fonts) => {
     if (fonts.length > 0) {
       await registerFonts(fonts);
@@ -670,7 +682,7 @@ async function init() {
     const params = new URLSearchParams(hash);
     const bookFile = params.get("book");
     if (bookFile) {
-      const book = books.find((b) => b.file === bookFile);
+      const book = state.books.find((b) => b.file === bookFile);
       if (book) {
         openBook(book);
         return;

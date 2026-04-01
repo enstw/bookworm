@@ -53,8 +53,8 @@ function sanitizeFilename(name) {
   return name.replace(/[\/\\:*?"<>|]/g, '_');
 }
 
-// Convert a book zip: unzip → decode GB18030 → SC→TC → detect chapters → split → re-zip
-function convertBook(srcPath, outPath) {
+// Convert a book zip: unzip → decode GB18030 → SC→TC → detect chapters → split → re-zip with TC name
+function convertBook(srcPath, outDir) {
   const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'bookworm-'));
   try {
     execSync(`unzip -o "${srcPath}" -d "${tmp}"`, { stdio: 'pipe' });
@@ -62,6 +62,11 @@ function convertBook(srcPath, outPath) {
     const allFiles = fs.readdirSync(tmp);
     const txtFile = allFiles.find(f => /\.txt$/i.test(f));
     if (!txtFile) return null;
+
+    // Book name: txt filename SC→TC
+    const bookName = converter(txtFile.replace(/\.txt$/i, ''));
+    const outFile = `${sanitizeFilename(bookName)}.zip`;
+    const outPath = path.join(outDir, outFile);
 
     const raw = fs.readFileSync(path.join(tmp, txtFile));
     const decoded = new TextDecoder('gb18030').decode(raw);
@@ -89,21 +94,7 @@ function convertBook(srcPath, outPath) {
     // Zip chapter files to output
     execSync(`cd "${tmp}" && zip -j "${outPath}" *.txt`, { stdio: 'pipe' });
 
-    // Book name from original txt filename, converted to TC
-    return converter(txtFile.replace(/\.txt$/i, ''));
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
-// Read book name from a processed zip (TC name from first chapter file)
-function getBookNameFromZip(zipPath, srcZipPath) {
-  // Derive name from source txt filename
-  const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'bookworm-name-'));
-  try {
-    execSync(`unzip -o "${srcZipPath}" -d "${tmp}"`, { stdio: 'pipe' });
-    const txtFile = fs.readdirSync(tmp).find(f => /\.txt$/i.test(f));
-    return txtFile ? converter(txtFile.replace(/\.txt$/i, '')) : null;
+    return { name: bookName, file: outFile };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -114,39 +105,33 @@ const srcFiles = fs.readdirSync(srcDir)
   .filter(f => /\.(zip|txt)$/i.test(f))
   .sort();
 
-// Step 1: Convert source books → output directory
+// Convert source books → output directory
 const books = [];
 for (const f of srcFiles) {
   const srcPath = path.join(srcDir, f);
-  const outPath = path.join(outDir, f);
 
   if (/\.zip$/i.test(f)) {
-    // Skip if output already exists and is newer than source
-    if (fs.existsSync(outPath) && fs.statSync(outPath).mtimeMs >= fs.statSync(srcPath).mtimeMs) {
-      const name = getBookNameFromZip(outPath, srcPath);
-      console.log(`  ${f}: up to date, skipping`);
-      books.push({ name: name || f.replace(/\.zip$/i, ''), file: f });
-    } else {
-      console.log(`  ${f}: converting GB18030 SC → UTF-8 TC + splitting chapters...`);
-      const name = convertBook(srcPath, outPath);
-      console.log(`  ${f}: done`);
-      books.push({ name: name || f.replace(/\.zip$/i, ''), file: f });
+    console.log(`  ${f}: converting GB18030 SC → UTF-8 TC + splitting chapters...`);
+    const result = convertBook(srcPath, outDir);
+    if (result) {
+      console.log(`  ${f}: → ${result.file}`);
+      books.push(result);
     }
   } else {
     // Plain .txt — just copy
-    fs.copyFileSync(srcPath, outPath);
+    fs.copyFileSync(srcPath, path.join(outDir, f));
     books.push({ name: f.replace(/\.txt$/i, ''), file: f });
   }
 }
 
-// Step 2: Generate books/index.json
+// Generate books/index.json
 fs.writeFileSync(
   path.join(outDir, 'index.json'),
   JSON.stringify(books, null, 2) + '\n'
 );
 console.log(`Generated books/index.json: ${books.length} book(s)`);
 
-// Step 3: Compile TypeScript
+// Compile TypeScript
 esbuild.buildSync({
   entryPoints: ['src/app.ts'],
   bundle: true,

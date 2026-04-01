@@ -1,120 +1,48 @@
-import type { Book, Chapter, AppSettings, ReadingPosition } from './types';
+import type { Book } from './types';
 import { loadFontList, registerFonts, applyFont } from './fonts';
 import { AITextToSpeech, splitSentences } from './tts';
+import { state, getChapterText } from './state';
+import { getSettings, updateSetting, applySettings } from './settings';
+import { showLoading, hideLoading, enterReadingMode, exitReadingMode, toggleFullscreen } from './ui';
+import { renderChapter, updatePageInfo, markChapterListDirty, ensureChapterListPopulated, bindNavigationEvents } from './navigation';
+import { getSavedPosition } from './position';
 
-// We load fflate from CDN — declare its types
+// fflate loaded from CDN
 declare const fflate: {
   unzipSync: (data: Uint8Array) => Record<string, Uint8Array>;
 };
-
 declare const __APP_VERSION__: string;
 declare const __BUILD_HASH__: string;
 
-// --- DOM Elements ---
 const $ = (id: string) => document.getElementById(id)!;
 const bookSelector = $('book-selector');
 const bookListEl = $('book-list');
 const settingsPanel = $('settings-panel');
 const chapterPanel = $('chapter-panel');
 const readerEl = $('reader') as HTMLDivElement;
-const loadingOverlay = $('loading');
-const loadingText = $('loading-text');
 const bookTitleEl = $('book-title');
-const pageInfoEl = $('page-info');
-const chapterListEl = $('chapter-list');
-const pageSlider = $('page-slider') as HTMLInputElement;
-
-// Settings inputs
 const fontSelect = $('font-select') as HTMLSelectElement;
-const fontSizeInput = $('font-size') as HTMLInputElement;
-const fontSizeLabel = $('font-size-label');
-const themeSelect = $('theme-select') as HTMLSelectElement;
-const ttsEndpointInput = $('tts-endpoint') as HTMLInputElement;
-const ttsApiKeyInput = $('tts-api-key') as HTMLInputElement;
-const ttsModelInput = $('tts-model') as HTMLInputElement;
-const ttsVoiceInput = $('tts-voice') as HTMLInputElement;
-const ttsSpeedInput = $('tts-speed') as HTMLInputElement;
-const ttsSpeedLabel = $('tts-speed-label');
-
-// TTS elements
 const ttsBar = $('tts-bar');
 const ttsPlayBtn = $('tts-play');
 const ttsStatusEl = $('tts-status');
 
-// --- App State ---
-let books: Book[] = [];
-let currentBook: Book | null = null;
-let zipEntries: Record<string, Uint8Array> = {};
-let chapters: Chapter[] = [];
-let currentChapterIndex = 0;
-let tts: AITextToSpeech | null = null;
-let chromeTimer: ReturnType<typeof setTimeout> | null = null;
-const decoder = new TextDecoder('utf-8');
-
-// --- Settings ---
-function loadSettings(): AppSettings {
-  const raw = localStorage.getItem('bookworm_settings');
-  const defaults: AppSettings = {
-    fontSize: 26,
-    theme: 'sepia',
-    font: 'default',
-    tts: { endpoint: '', apiKey: '', model: 'tts-1', voice: 'alloy', speed: 1.0 },
-  };
-  if (!raw) return defaults;
-  try {
-    return { ...defaults, ...JSON.parse(raw) };
-  } catch {
-    return defaults;
-  }
-}
-
-function saveSettings(settings: AppSettings): void {
-  localStorage.setItem('bookworm_settings', JSON.stringify(settings));
-}
-
-function applySettings(settings: AppSettings): void {
-  document.documentElement.dataset.theme = settings.theme;
-  document.documentElement.style.setProperty('--font-size', settings.fontSize + 'px');
-  themeSelect.value = settings.theme;
-  fontSizeInput.value = String(settings.fontSize);
-  fontSizeLabel.textContent = settings.fontSize + 'px';
-  fontSelect.value = settings.font;
-  applyFont(settings.font);
-
-  ttsEndpointInput.value = settings.tts.endpoint;
-  ttsApiKeyInput.value = settings.tts.apiKey;
-  ttsModelInput.value = settings.tts.model;
-  ttsVoiceInput.value = settings.tts.voice;
-  ttsSpeedInput.value = String(settings.tts.speed);
-  ttsSpeedLabel.textContent = settings.tts.speed + 'x';
-}
-
-// --- Loading ---
-function showLoading(msg: string): void {
-  loadingText.textContent = msg;
-  loadingOverlay.classList.remove('hidden');
-}
-
-function hideLoading(): void {
-  loadingOverlay.classList.add('hidden');
-}
-
 // --- Book List ---
+
 async function loadBookList(): Promise<void> {
   try {
     const res = await fetch('books/index.json');
-    books = await res.json();
+    state.books = await res.json();
   } catch {
-    books = [];
+    state.books = [];
   }
 
   bookListEl.innerHTML = '';
-  if (books.length === 0) {
+  if (state.books.length === 0) {
     bookListEl.innerHTML = '<p style="opacity:0.5">找不到書籍。請在 books/ 資料夾中新增 .zip 檔案並更新 index.json。</p>';
     return;
   }
 
-  for (const book of books) {
+  for (const book of state.books) {
     const div = document.createElement('div');
     div.className = 'book-item';
     div.textContent = book.name;
@@ -124,48 +52,47 @@ async function loadBookList(): Promise<void> {
 }
 
 // --- Open Book ---
+
 async function openBook(book: Book): Promise<void> {
   showLoading('正在載入書籍…');
-  currentBook = book;
+  state.currentBook = book;
 
   try {
-    // Fetch the zip
     showLoading('正在下載…');
     const res = await fetch(`books/${book.file}`);
     const buf = new Uint8Array(await res.arrayBuffer());
 
-    // Unzip
     showLoading('正在解壓縮…');
-    zipEntries = fflate.unzipSync(buf);
+    state.zipEntries = fflate.unzipSync(buf);
 
-    // Build chapter list from zip filenames (sorted by filename prefix)
-    const filenames = Object.keys(zipEntries)
+    const filenames = Object.keys(state.zipEntries)
       .filter(k => k.endsWith('.txt'))
       .sort();
-    chapters = filenames.map(f => {
-      // Strip prefix "0001_" and ".txt" to get chapter title
+    state.chapters = filenames.map(f => {
       const base = f.replace(/\.txt$/i, '');
       const title = base.replace(/^\d+_/, '');
       return { title, filename: f };
     });
 
-    if (chapters.length === 0) throw new Error('ZIP 中找不到章節檔案');
+    if (state.chapters.length === 0) throw new Error('ZIP 中找不到章節檔案');
 
-    // Render first chapter (restorePosition may change it)
-    populateChapterList();
+    markChapterListDirty();
     bookSelector.classList.add('hidden');
     bookTitleEl.textContent = book.name;
     enterReadingMode();
 
-    // Restore reading position or start at chapter 0
-    if (!restorePosition()) {
+    const saved = getSavedPosition();
+    if (saved) {
+      renderChapter(saved.chapter);
+      readerEl.scrollLeft = saved.scrollLeft;
+      updatePageInfo();
+    } else {
       renderChapter(0);
     }
 
-    // Set up TTS
-    const settings = loadSettings();
-    tts = new AITextToSpeech(settings.tts, handleTTSState);
-    tts.setSentences(splitSentences(getChapterText(currentChapterIndex)));
+    const settings = getSettings();
+    state.tts = new AITextToSpeech(settings.tts, handleTTSState);
+    state.tts.setSentences(splitSentences(getChapterText(state.currentChapterIndex)));
 
     hideLoading();
   } catch (e: any) {
@@ -175,172 +102,10 @@ async function openBook(book: Book): Promise<void> {
   }
 }
 
-// --- Chapter Text ---
-function getChapterText(index: number): string {
-  const raw = zipEntries[chapters[index].filename];
-  return decoder.decode(raw);
-}
+// --- TTS State ---
 
-// --- Render ---
-function renderChapter(index: number): void {
-  if (index < 0 || index >= chapters.length) return;
-  currentChapterIndex = index;
-  const text = getChapterText(index);
-  readerEl.textContent = text;
-  readerEl.scrollLeft = 0;
-  updatePageInfo();
-  highlightActiveChapter(index);
-  // Update TTS for new chapter
-  if (tts) tts.setSentences(splitSentences(text));
-}
-
-function updatePageInfo(): void {
-  const el = readerEl;
-  const maxScroll = el.scrollWidth - el.clientWidth;
-  if (maxScroll <= 0) {
-    pageInfoEl.textContent = `${currentChapterIndex + 1}/${chapters.length}  1/1`;
-    pageSlider.value = '0';
-    pageSlider.max = '0';
-    savePosition();
-    return;
-  }
-
-  // In vertical-rl, scrollLeft is negative (right-to-left)
-  const scrollPos = Math.abs(el.scrollLeft);
-  const pageWidth = el.clientWidth;
-  const totalPages = Math.ceil(el.scrollWidth / pageWidth);
-  const currentPage = Math.floor(scrollPos / pageWidth) + 1;
-
-  pageInfoEl.textContent = `${currentChapterIndex + 1}/${chapters.length}  ${currentPage}/${totalPages}`;
-  pageSlider.max = String(totalPages - 1);
-  pageSlider.value = String(currentPage - 1);
-
-  // Update URL hash
-  savePosition();
-}
-
-// --- Navigation ---
-function scrollToPage(pageIndex: number): void {
-  const pageWidth = readerEl.clientWidth;
-  // vertical-rl: scrollLeft goes negative
-  readerEl.scrollLeft = -(pageIndex * pageWidth);
-}
-
-function nextPage(): void {
-  const pageWidth = readerEl.clientWidth;
-  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
-  const atEnd = Math.abs(readerEl.scrollLeft) >= maxScroll - 2;
-  if (atEnd && currentChapterIndex + 1 < chapters.length) {
-    renderChapter(currentChapterIndex + 1);
-  } else {
-    readerEl.scrollBy({ left: -pageWidth, behavior: 'smooth' });
-  }
-}
-
-function prevPage(): void {
-  const pageWidth = readerEl.clientWidth;
-  const atStart = Math.abs(readerEl.scrollLeft) < 2;
-  if (atStart && currentChapterIndex > 0) {
-    renderChapter(currentChapterIndex - 1);
-    // Jump to last page of previous chapter
-    requestAnimationFrame(() => {
-      readerEl.scrollLeft = -(readerEl.scrollWidth - readerEl.clientWidth);
-      updatePageInfo();
-    });
-  } else {
-    readerEl.scrollBy({ left: pageWidth, behavior: 'smooth' });
-  }
-}
-
-function goToChapter(index: number): void {
-  if (index < 0 || index >= chapters.length) return;
-  renderChapter(index);
-  chapterPanel.classList.add('hidden');
-}
-
-// --- Chapter List ---
-let chapterListDirty = true;
-
-function populateChapterList(): void {
-  chapterListDirty = true;
-  chapterListEl.innerHTML = '';
-}
-
-function ensureChapterListPopulated(): void {
-  if (!chapterListDirty) return;
-  chapterListDirty = false;
-  chapterListEl.innerHTML = '';
-  const frag = document.createDocumentFragment();
-  chapters.forEach((ch, i) => {
-    const li = document.createElement('li');
-    li.textContent = ch.title;
-    li.onclick = () => goToChapter(i);
-    frag.appendChild(li);
-  });
-  chapterListEl.appendChild(frag);
-  highlightActiveChapter(currentChapterIndex);
-}
-
-function highlightActiveChapter(index: number): void {
-  const items = chapterListEl.querySelectorAll('li');
-  items.forEach((li, i) => li.classList.toggle('active', i === index));
-}
-
-// --- Position / Bookmarks ---
-function savePosition(): void {
-  if (!currentBook) return;
-  const pos: ReadingPosition = {
-    book: currentBook.file,
-    chapter: currentChapterIndex,
-    scrollLeft: readerEl.scrollLeft,
-  };
-
-  // Save to URL hash
-  const params = new URLSearchParams();
-  params.set('book', currentBook.file);
-  params.set('ch', String(currentChapterIndex));
-  params.set('pos', String(Math.round(readerEl.scrollLeft)));
-  history.replaceState(null, '', '#' + params.toString());
-
-  // Also save to localStorage for convenience
-  localStorage.setItem('bookworm_position', JSON.stringify(pos));
-}
-
-function restorePosition(): boolean {
-  // Try URL hash first
-  const hash = location.hash.slice(1);
-  if (hash) {
-    const params = new URLSearchParams(hash);
-    const bookFile = params.get('book');
-    const ch = params.get('ch');
-    const pos = params.get('pos');
-    if (bookFile === currentBook?.file && ch != null) {
-      renderChapter(parseInt(ch, 10));
-      if (pos) readerEl.scrollLeft = parseInt(pos, 10);
-      updatePageInfo();
-      return true;
-    }
-  }
-
-  // Fallback to localStorage
-  try {
-    const raw = localStorage.getItem('bookworm_position');
-    if (raw) {
-      const pos: ReadingPosition = JSON.parse(raw);
-      if (pos.book === currentBook?.file) {
-        renderChapter(pos.chapter);
-        readerEl.scrollLeft = pos.scrollLeft;
-        updatePageInfo();
-        return true;
-      }
-    }
-  } catch { /* ignore */ }
-  return false;
-}
-
-// --- TTS ---
-function handleTTSState(state: string, info?: string): void {
-  switch (state) {
+function handleTTSState(ttsState: string, info?: string): void {
+  switch (ttsState) {
     case 'playing':
       ttsPlayBtn.textContent = '⏸';
       ttsStatusEl.textContent = info ?? '播放中…';
@@ -360,215 +125,101 @@ function handleTTSState(state: string, info?: string): void {
   }
 }
 
-// --- Reading Mode ---
-function enterReadingMode(): void {
-  document.body.classList.add('reading-mode');
-}
-
-function exitReadingMode(): void {
-  document.body.classList.remove('reading-mode', 'chrome-visible');
-  if (chromeTimer) { clearTimeout(chromeTimer); chromeTimer = null; }
-  exitFullscreen();
-}
-
-function requestFullscreen(): void {
-  const el = document.documentElement;
-  if (!document.fullscreenElement && el.requestFullscreen) {
-    el.requestFullscreen().catch(() => {});
-  }
-}
-
-function exitFullscreen(): void {
-  if (document.fullscreenElement && document.exitFullscreen) {
-    document.exitFullscreen().catch(() => {});
-  }
-}
-
-function toggleFullscreen(): void {
-  if (document.fullscreenElement) {
-    exitFullscreen();
-  } else {
-    requestFullscreen();
-  }
-}
-
-function toggleChrome(): void {
-  const body = document.body;
-  if (body.classList.contains('chrome-visible')) {
-    body.classList.remove('chrome-visible');
-    if (chromeTimer) { clearTimeout(chromeTimer); chromeTimer = null; }
-  } else {
-    body.classList.add('chrome-visible');
-    // Auto-hide after 4 seconds
-    if (chromeTimer) clearTimeout(chromeTimer);
-    chromeTimer = setTimeout(() => {
-      body.classList.remove('chrome-visible');
-      chromeTimer = null;
-    }, 4000);
-  }
-}
-
 // --- Event Binding ---
+
 function bindEvents(): void {
-  // Toolbar buttons
+  bindNavigationEvents();
+
+  // Toolbar
   $('btn-settings').onclick = () => settingsPanel.classList.toggle('hidden');
   $('close-settings').onclick = () => settingsPanel.classList.add('hidden');
-  $('btn-fullscreen').onclick = () => toggleFullscreen();
+  $('btn-fullscreen').onclick = toggleFullscreen;
   $('btn-chapters').onclick = () => {
     ensureChapterListPopulated();
     chapterPanel.classList.toggle('hidden');
   };
   $('close-chapters').onclick = () => chapterPanel.classList.add('hidden');
   $('btn-back').onclick = () => {
-    tts?.stop();
+    state.tts?.stop();
     ttsBar.classList.add('hidden');
     exitReadingMode();
     bookSelector.classList.remove('hidden');
-    currentBook = null;
+    state.currentBook = null;
     readerEl.textContent = '';
   };
 
-  // Navigation
-  $('nav-prev').onclick = prevPage;
-  $('nav-next').onclick = nextPage;
-  pageSlider.oninput = () => scrollToPage(parseInt(pageSlider.value, 10));
-
-  // Keyboard
-  document.addEventListener('keydown', (e) => {
-    if (!currentBook) return;
-    switch (e.key) {
-      case 'ArrowLeft': case 'PageDown': nextPage(); break;
-      case 'ArrowRight': case 'PageUp': prevPage(); break;
-      case 'Home': readerEl.scrollLeft = 0; break;
-      case 'End': readerEl.scrollLeft = -(readerEl.scrollWidth); break;
-    }
-  });
-
-  // Touch swipe & center-tap – pan-y CSS allows vertical scroll (hides address bar)
-  let touchStartX = 0;
-  let touchStartY = 0;
-  readerEl.addEventListener('touchstart', (e) => {
-    touchStartX = e.touches[0].clientX;
-    touchStartY = e.touches[0].clientY;
-  });
-  readerEl.addEventListener('touchend', (e) => {
-    const endX = e.changedTouches[0].clientX;
-    const endY = e.changedTouches[0].clientY;
-    const dx = endX - touchStartX;
-    const dy = endY - touchStartY;
-
-    if (Math.abs(dx) > 50) {
-      // Swipe navigation
-      if (dx > 0) nextPage(); else prevPage();
-    } else if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      // Center 1/9 toggles chrome
-      if (endX > w / 3 && endX < (2 * w) / 3 && endY > h / 3 && endY < (2 * h) / 3) {
-        toggleChrome();
-      // Bottom half: left 1/4 = next, right 1/4 = prev
-      } else if (endY > h / 2) {
-        if (endX < w / 4) nextPage();
-        else if (endX > (3 * w) / 4) prevPage();
-      }
-    }
-  });
-
-  // Desktop click — center 1/9 toggles chrome, bottom corners turn pages
-  readerEl.addEventListener('click', (e) => {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    if (e.clientX > w / 3 && e.clientX < (2 * w) / 3 && e.clientY > h / 3 && e.clientY < (2 * h) / 3) {
-      toggleChrome();
-    } else if (e.clientY > h / 2) {
-      if (e.clientX < w / 4) nextPage();
-      else if (e.clientX > (3 * w) / 4) prevPage();
-    }
-  });
-
-  // Scroll tracking for page info
-  readerEl.addEventListener('scroll', () => updatePageInfo());
-
   // Settings: font size
+  const fontSizeInput = $('font-size') as HTMLInputElement;
+  const fontSizeLabel = $('font-size-label');
   fontSizeInput.oninput = () => {
     const size = parseInt(fontSizeInput.value, 10);
     fontSizeLabel.textContent = size + 'px';
     document.documentElement.style.setProperty('--font-size', size + 'px');
-    const settings = loadSettings();
-    settings.fontSize = size;
-    saveSettings(settings);
+    updateSetting('fontSize', size);
   };
 
   // Settings: theme
+  const themeSelect = $('theme-select') as HTMLSelectElement;
   themeSelect.onchange = () => {
     document.documentElement.dataset.theme = themeSelect.value;
-    const settings = loadSettings();
-    settings.theme = themeSelect.value;
-    saveSettings(settings);
+    updateSetting('theme', themeSelect.value);
   };
 
   // Settings: font
   fontSelect.onchange = () => {
     applyFont(fontSelect.value);
-    const settings = loadSettings();
-    settings.font = fontSelect.value;
-    saveSettings(settings);
+    updateSetting('font', fontSelect.value);
   };
 
   // Settings: TTS speed label
+  const ttsSpeedInput = $('tts-speed') as HTMLInputElement;
+  const ttsSpeedLabel = $('tts-speed-label');
   ttsSpeedInput.oninput = () => {
     ttsSpeedLabel.textContent = ttsSpeedInput.value + 'x';
   };
 
   // Settings: save TTS
   $('save-tts-settings').onclick = () => {
-    const settings = loadSettings();
-    settings.tts = {
-      endpoint: ttsEndpointInput.value,
-      apiKey: ttsApiKeyInput.value,
-      model: ttsModelInput.value,
-      voice: ttsVoiceInput.value,
+    const ttsSettings = {
+      endpoint: ($('tts-endpoint') as HTMLInputElement).value,
+      apiKey: ($('tts-api-key') as HTMLInputElement).value,
+      model: ($('tts-model') as HTMLInputElement).value,
+      voice: ($('tts-voice') as HTMLInputElement).value,
       speed: parseFloat(ttsSpeedInput.value),
     };
-    saveSettings(settings);
-    tts?.updateSettings(settings.tts);
+    updateSetting('tts', ttsSettings);
+    state.tts?.updateSettings(ttsSettings);
     settingsPanel.classList.add('hidden');
   };
 
   // TTS controls
   $('btn-tts').onclick = () => ttsBar.classList.toggle('hidden');
   ttsPlayBtn.onclick = () => {
-    if (!tts) return;
-    if (tts.isPlaying()) tts.pause();
-    else tts.play();
+    if (!state.tts) return;
+    if (state.tts.isPlaying()) state.tts.pause();
+    else state.tts.play();
   };
-  $('tts-stop').onclick = () => tts?.stop();
-  $('tts-next').onclick = () => tts?.next();
-  $('tts-prev').onclick = () => tts?.prev();
+  $('tts-stop').onclick = () => state.tts?.stop();
+  $('tts-next').onclick = () => state.tts?.next();
+  $('tts-prev').onclick = () => state.tts?.prev();
 }
 
 // --- Init ---
+
 async function init(): Promise<void> {
-  // Show version (tap to reload in PWA mode)
   const versionEl = $('version');
   versionEl.textContent = `v${__APP_VERSION__} (${__BUILD_HASH__})`;
   versionEl.style.cursor = 'pointer';
   versionEl.addEventListener('click', () => location.reload());
 
-  // Load CDN scripts
   await loadScript('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');
 
-  // Apply saved settings
-  const settings = loadSettings();
-  applySettings(settings);
-
-  // Bind events
+  applySettings();
   bindEvents();
-
-  // Load book list (don't wait for fonts)
   await loadBookList();
 
   // Load custom fonts in background
+  const settings = getSettings();
   loadFontList().then(async (fonts) => {
     if (fonts.length > 0) {
       await registerFonts(fonts);
@@ -589,7 +240,7 @@ async function init(): Promise<void> {
     const params = new URLSearchParams(hash);
     const bookFile = params.get('book');
     if (bookFile) {
-      const book = books.find(b => b.file === bookFile);
+      const book = state.books.find(b => b.file === bookFile);
       if (book) {
         openBook(book);
         return;
