@@ -1,5 +1,4 @@
 import type { Book, Chapter, AppSettings, ReadingPosition } from './types';
-import { detectChapters } from './chapters';
 import { loadFontList, registerFonts, applyFont } from './fonts';
 import { AITextToSpeech, splitSentences } from './tts';
 
@@ -45,11 +44,12 @@ const ttsStatusEl = $('tts-status');
 // --- App State ---
 let books: Book[] = [];
 let currentBook: Book | null = null;
-let fullText = '';
+let zipEntries: Record<string, Uint8Array> = {};
 let chapters: Chapter[] = [];
 let currentChapterIndex = 0;
 let tts: AITextToSpeech | null = null;
 let chromeTimer: ReturnType<typeof setTimeout> | null = null;
+const decoder = new TextDecoder('utf-8');
 
 // --- Settings ---
 function loadSettings(): AppSettings {
@@ -136,18 +136,20 @@ async function openBook(book: Book): Promise<void> {
 
     // Unzip
     showLoading('正在解壓縮…');
-    const files = fflate.unzipSync(buf);
-    const txtFile = Object.keys(files).find(k => k.endsWith('.txt'));
-    if (!txtFile) throw new Error('ZIP 中找不到 .txt 檔案');
-    const raw = files[txtFile];
+    zipEntries = fflate.unzipSync(buf);
 
-    // Decode UTF-8 (books are pre-converted to TC at build time)
-    showLoading('正在解碼文字…');
-    fullText = new TextDecoder('utf-8').decode(raw);
+    // Build chapter list from zip filenames (sorted by filename prefix)
+    const filenames = Object.keys(zipEntries)
+      .filter(k => k.endsWith('.txt'))
+      .sort();
+    chapters = filenames.map(f => {
+      // Strip prefix "0001_" and ".txt" to get chapter title
+      const base = f.replace(/\.txt$/i, '');
+      const title = base.replace(/^\d+_/, '');
+      return { title, filename: f };
+    });
 
-    // Detect chapters
-    showLoading('正在分析章節…');
-    chapters = detectChapters(fullText);
+    if (chapters.length === 0) throw new Error('ZIP 中找不到章節檔案');
 
     // Render first chapter (restorePosition may change it)
     populateChapterList();
@@ -175,9 +177,8 @@ async function openBook(book: Book): Promise<void> {
 
 // --- Chapter Text ---
 function getChapterText(index: number): string {
-  const start = chapters[index].startIndex;
-  const end = index + 1 < chapters.length ? chapters[index + 1].startIndex : fullText.length;
-  return fullText.slice(start, end);
+  const raw = zipEntries[chapters[index].filename];
+  return decoder.decode(raw);
 }
 
 // --- Render ---
@@ -258,14 +259,26 @@ function goToChapter(index: number): void {
 }
 
 // --- Chapter List ---
+let chapterListDirty = true;
+
 function populateChapterList(): void {
+  chapterListDirty = true;
   chapterListEl.innerHTML = '';
+}
+
+function ensureChapterListPopulated(): void {
+  if (!chapterListDirty) return;
+  chapterListDirty = false;
+  chapterListEl.innerHTML = '';
+  const frag = document.createDocumentFragment();
   chapters.forEach((ch, i) => {
     const li = document.createElement('li');
     li.textContent = ch.title;
     li.onclick = () => goToChapter(i);
-    chapterListEl.appendChild(li);
+    frag.appendChild(li);
   });
+  chapterListEl.appendChild(frag);
+  highlightActiveChapter(currentChapterIndex);
 }
 
 function highlightActiveChapter(index: number): void {
@@ -401,7 +414,10 @@ function bindEvents(): void {
   $('btn-settings').onclick = () => settingsPanel.classList.toggle('hidden');
   $('close-settings').onclick = () => settingsPanel.classList.add('hidden');
   $('btn-fullscreen').onclick = () => toggleFullscreen();
-  $('btn-chapters').onclick = () => chapterPanel.classList.toggle('hidden');
+  $('btn-chapters').onclick = () => {
+    ensureChapterListPopulated();
+    chapterPanel.classList.toggle('hidden');
+  };
   $('close-chapters').onclick = () => chapterPanel.classList.add('hidden');
   $('btn-back').onclick = () => {
     tts?.stop();
@@ -546,25 +562,26 @@ async function init(): Promise<void> {
   const settings = loadSettings();
   applySettings(settings);
 
-  // Load custom fonts
-  const fonts = await loadFontList();
-  if (fonts.length > 0) {
-    await registerFonts(fonts);
-    for (const f of fonts) {
-      const opt = document.createElement('option');
-      opt.value = f.name;
-      opt.textContent = f.name;
-      fontSelect.appendChild(opt);
-    }
-    fontSelect.value = settings.font;
-    applyFont(settings.font);
-  }
-
   // Bind events
   bindEvents();
 
-  // Load book list
+  // Load book list (don't wait for fonts)
   await loadBookList();
+
+  // Load custom fonts in background
+  loadFontList().then(async (fonts) => {
+    if (fonts.length > 0) {
+      await registerFonts(fonts);
+      for (const f of fonts) {
+        const opt = document.createElement('option');
+        opt.value = f.name;
+        opt.textContent = f.name;
+        fontSelect.appendChild(opt);
+      }
+      fontSelect.value = settings.font;
+      applyFont(settings.font);
+    }
+  });
 
   // If URL hash specifies a book, open it directly
   const hash = location.hash.slice(1);

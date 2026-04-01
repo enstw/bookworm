@@ -5,7 +5,7 @@ export interface Book {
 
 export interface Chapter {
   title: string;
-  startIndex: number;
+  filename: string;
 }
 
 export interface TTSSettings {

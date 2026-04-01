@@ -41,11 +41,17 @@ bookworm/
 - Build converts source books: GB18030 SC → UTF-8 TC (via OpenCC), normalizes CRLF
 - No backend — everything runs client-side, hosted on GitHub Pages
 - Bookmarks are stored in URL hash for cross-browser sharing, with localStorage fallback
-- Chapter detection is automatic — regex-based pattern matching for Chinese chapter headings
 - Custom fonts loaded via FontFace API from `fonts/` directory with JSON manifest
 - AI TTS uses OpenAI-compatible API format — user provides endpoint + API key in settings
-- Build pipeline: books-src/*.zip (GB18030 SC) → OpenCC SC→TC + CRLF normalize → books/*.zip (UTF-8 TC)
-- Runtime pipeline: books/*.zip → fflate unzip → TextDecoder('utf-8') → render
+
+### Chapter-per-file Zip Format
+- Chapters are detected and split at **build time**, not runtime
+- Each zip contains individual chapter files: `0001_第一章 標題.txt`, `0002_第二章 標題.txt`, etc.
+- Zero-padded index prefix ensures correct sort order
+- Filename minus prefix and `.txt` = chapter title shown in UI chapter list
+- Runtime reads chapter list from zip entry filenames — no regex parsing needed
+- Build pipeline: books-src/*.zip (GB18030 SC) → OpenCC SC→TC + CRLF normalize + chapter split → books/*.zip (UTF-8 TC, one file per chapter)
+- Runtime pipeline: books/*.zip → fflate unzip → chapter list from filenames → load chapter on demand
 
 ## Commands
 - `npm run build` — convert books (GB18030 SC → UTF-8 TC) + compile TypeScript to app.js

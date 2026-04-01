@@ -1,42 +1,3 @@
-// src/chapters.ts
-var CHAPTER_PATTERNS = [
-  // 第一章, 第1章, 第一百二十三章, etc.
-  /^[　\s]*第[零一二三四五六七八九十百千萬万〇○０-９0-9]+[章節回卷集部篇]/,
-  // 楔子, 序章, 序言, 引子, 前言 — must be standalone or followed by space/colon/title
-  /^[　\s]*(楔子|序章|序言|引子|前言|引言|開篇)([　\s：:].+)?$/,
-  // 尾聲, 後記, 終章, 番外 — must be standalone or followed by space/colon/title
-  /^[　\s]*(尾聲|後記|終章|番外|後話|結語|完本感言|完結感言)([　\s：:].+)?$/,
-  // Chapter patterns with colon/space: 第X章 XXXX or 第X章：XXXX
-  /^[　\s]*第[零一二三四五六七八九十百千萬万〇○０-９0-9]+[章節回卷集部篇][　\s：:]/
-];
-var MIN_CHAPTER_DISTANCE = 500;
-function detectChapters(text) {
-  const chapters2 = [];
-  const lines = text.split("\n");
-  let charIndex = 0;
-  let lastChapterIndex = -MIN_CHAPTER_DISTANCE;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.length > 0 && trimmed.length <= 50) {
-      for (const pattern of CHAPTER_PATTERNS) {
-        if (pattern.test(trimmed) && charIndex - lastChapterIndex >= MIN_CHAPTER_DISTANCE) {
-          chapters2.push({
-            title: trimmed,
-            startIndex: charIndex
-          });
-          lastChapterIndex = charIndex;
-          break;
-        }
-      }
-    }
-    charIndex += line.length + 1;
-  }
-  if (chapters2.length === 0) {
-    chapters2.push({ title: "\u5168\u6587", startIndex: 0 });
-  }
-  return chapters2;
-}
-
 // src/fonts.ts
 var SUPPORTED_EXTENSIONS = [".ttf", ".otf", ".woff", ".woff2"];
 async function loadFontList() {
@@ -262,11 +223,12 @@ var ttsPlayBtn = $("tts-play");
 var ttsStatusEl = $("tts-status");
 var books = [];
 var currentBook = null;
-var fullText = "";
+var zipEntries = {};
 var chapters = [];
 var currentChapterIndex = 0;
 var tts = null;
 var chromeTimer = null;
+var decoder = new TextDecoder("utf-8");
 function loadSettings() {
   const raw = localStorage.getItem("bookworm_settings");
   const defaults = {
@@ -335,14 +297,14 @@ async function openBook(book) {
     const res = await fetch(`books/${book.file}`);
     const buf = new Uint8Array(await res.arrayBuffer());
     showLoading("\u6B63\u5728\u89E3\u58D3\u7E2E\u2026");
-    const files = fflate.unzipSync(buf);
-    const txtFile = Object.keys(files).find((k) => k.endsWith(".txt"));
-    if (!txtFile) throw new Error("ZIP \u4E2D\u627E\u4E0D\u5230 .txt \u6A94\u6848");
-    const raw = files[txtFile];
-    showLoading("\u6B63\u5728\u89E3\u78BC\u6587\u5B57\u2026");
-    fullText = new TextDecoder("utf-8").decode(raw);
-    showLoading("\u6B63\u5728\u5206\u6790\u7AE0\u7BC0\u2026");
-    chapters = detectChapters(fullText);
+    zipEntries = fflate.unzipSync(buf);
+    const filenames = Object.keys(zipEntries).filter((k) => k.endsWith(".txt")).sort();
+    chapters = filenames.map((f) => {
+      const base = f.replace(/\.txt$/i, "");
+      const title = base.replace(/^\d+_/, "");
+      return { title, filename: f };
+    });
+    if (chapters.length === 0) throw new Error("ZIP \u4E2D\u627E\u4E0D\u5230\u7AE0\u7BC0\u6A94\u6848");
     populateChapterList();
     bookSelector.classList.add("hidden");
     bookTitleEl.textContent = book.name;
@@ -361,9 +323,8 @@ async function openBook(book) {
   }
 }
 function getChapterText(index) {
-  const start = chapters[index].startIndex;
-  const end = index + 1 < chapters.length ? chapters[index + 1].startIndex : fullText.length;
-  return fullText.slice(start, end);
+  const raw = zipEntries[chapters[index].filename];
+  return decoder.decode(raw);
 }
 function renderChapter(index) {
   if (index < 0 || index >= chapters.length) return;
@@ -426,14 +387,24 @@ function goToChapter(index) {
   renderChapter(index);
   chapterPanel.classList.add("hidden");
 }
+var chapterListDirty = true;
 function populateChapterList() {
+  chapterListDirty = true;
   chapterListEl.innerHTML = "";
+}
+function ensureChapterListPopulated() {
+  if (!chapterListDirty) return;
+  chapterListDirty = false;
+  chapterListEl.innerHTML = "";
+  const frag = document.createDocumentFragment();
   chapters.forEach((ch, i) => {
     const li = document.createElement("li");
     li.textContent = ch.title;
     li.onclick = () => goToChapter(i);
-    chapterListEl.appendChild(li);
+    frag.appendChild(li);
   });
+  chapterListEl.appendChild(frag);
+  highlightActiveChapter(currentChapterIndex);
 }
 function highlightActiveChapter(index) {
   const items = chapterListEl.querySelectorAll("li");
@@ -554,7 +525,10 @@ function bindEvents() {
   $("btn-settings").onclick = () => settingsPanel.classList.toggle("hidden");
   $("close-settings").onclick = () => settingsPanel.classList.add("hidden");
   $("btn-fullscreen").onclick = () => toggleFullscreen();
-  $("btn-chapters").onclick = () => chapterPanel.classList.toggle("hidden");
+  $("btn-chapters").onclick = () => {
+    ensureChapterListPopulated();
+    chapterPanel.classList.toggle("hidden");
+  };
   $("close-chapters").onclick = () => chapterPanel.classList.add("hidden");
   $("btn-back").onclick = () => {
     tts?.stop();
@@ -670,26 +644,27 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $("version");
-  versionEl.textContent = `v${"1.1.30"} (${"14affa2"})`;
+  versionEl.textContent = `v${"1.2.0"} (${"d059098"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", () => location.reload());
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   const settings = loadSettings();
   applySettings(settings);
-  const fonts = await loadFontList();
-  if (fonts.length > 0) {
-    await registerFonts(fonts);
-    for (const f of fonts) {
-      const opt = document.createElement("option");
-      opt.value = f.name;
-      opt.textContent = f.name;
-      fontSelect.appendChild(opt);
-    }
-    fontSelect.value = settings.font;
-    applyFont(settings.font);
-  }
   bindEvents();
   await loadBookList();
+  loadFontList().then(async (fonts) => {
+    if (fonts.length > 0) {
+      await registerFonts(fonts);
+      for (const f of fonts) {
+        const opt = document.createElement("option");
+        opt.value = f.name;
+        opt.textContent = f.name;
+        fontSelect.appendChild(opt);
+      }
+      fontSelect.value = settings.font;
+      applyFont(settings.font);
+    }
+  });
   const hash = location.hash.slice(1);
   if (hash) {
     const params = new URLSearchParams(hash);
