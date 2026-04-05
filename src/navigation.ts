@@ -140,6 +140,13 @@ function showChapter(i: number, page: number): void {
   readerEl.appendChild(el);
   state.currentChapterIndex = i;
 
+  // Re-snap against the live reader — cached width from the ghost can be
+  // stale if the viewport height changed (iOS URL bar, rotation) between
+  // the original measurement and now.
+  el.style.width = 'auto';
+  const natural = el.offsetWidth;
+  el.style.width = `${Math.max(pageW, Math.ceil(natural / pageW) * pageW)}px`;
+
   // Scroll to target page within the chapter
   const maxPage = Math.max(0, Math.round(el.offsetWidth / pageW) - 1);
   const targetPage = page < 0 ? maxPage : Math.min(Math.max(0, page), maxPage);

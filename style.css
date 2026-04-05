@@ -407,13 +407,13 @@ html:has(#book-selector:not(.hidden)) .tts-bar {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 52px;
+  height: calc(52px + env(safe-area-inset-bottom));
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
+  padding: 0 12px env(safe-area-inset-bottom) 12px;
   z-index: 50;
 }
 
@@ -447,7 +447,7 @@ html:has(#book-selector:not(.hidden)) .tts-bar {
 /* === TTS Bar === */
 .tts-bar {
   position: fixed;
-  bottom: 52px;
+  bottom: calc(52px + env(safe-area-inset-bottom));
   left: 0;
   right: 0;
   height: 48px;
