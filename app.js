@@ -365,10 +365,30 @@ function renderChapter(index) {
   state.currentChapterIndex = index;
   const text = getChapterText(index);
   readerEl2.textContent = text;
+  fitPageToLines();
   readerEl2.scrollLeft = 0;
   updatePageInfo();
   highlightActiveChapter(index);
   if (state.tts) state.tts.setSentences(splitSentences(text));
+}
+function fitPageToLines() {
+  const container = readerEl2.parentElement;
+  if (!container) return;
+  const available = container.clientWidth;
+  if (available <= 0) return;
+  const cs = getComputedStyle(readerEl2);
+  const fontSize = parseFloat(cs.fontSize);
+  let lineH = parseFloat(cs.lineHeight);
+  if (!isFinite(lineH) || lineH < 5) lineH = fontSize * 1.4;
+  const linesPerPage = Math.max(1, Math.floor(available / lineH));
+  readerEl2.style.width = `${linesPerPage * lineH}px`;
+}
+function relayout() {
+  const prevClientW = readerEl2.clientWidth || 1;
+  const prevPage2 = Math.round(Math.abs(readerEl2.scrollLeft) / prevClientW);
+  fitPageToLines();
+  readerEl2.scrollLeft = -(prevPage2 * readerEl2.clientWidth);
+  updatePageInfo();
 }
 function updatePageInfo() {
   const maxScroll = readerEl2.scrollWidth - readerEl2.clientWidth;
@@ -448,6 +468,11 @@ function bindNavigationEvents() {
   $2("nav-prev").onclick = prevPage;
   $2("nav-next").onclick = nextPage;
   readerEl2.addEventListener("scroll", () => updatePageInfo());
+  const container = readerEl2.parentElement;
+  if (container && typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(() => relayout());
+    ro.observe(container);
+  }
   document.addEventListener("keydown", (e) => {
     if (!state.currentBook) return;
     switch (e.key) {
@@ -617,6 +642,7 @@ function bindEvents() {
     fontSizeLabel.textContent = size + "px";
     document.documentElement.style.setProperty("--font-size", size + "px");
     updateSetting("fontSize", size);
+    relayout();
   };
   const themeSelect = $3("theme-select");
   themeSelect.onchange = () => {
@@ -656,7 +682,7 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $3("version");
-  versionEl.textContent = `v${"1.2.3"} (${"0686dfb"})`;
+  versionEl.textContent = `v${"1.2.4"} (${"328275d"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", () => location.reload());
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");

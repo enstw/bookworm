@@ -4,7 +4,7 @@ import { AITextToSpeech, splitSentences } from './tts';
 import { state, getChapterText } from './state';
 import { getSettings, updateSetting, applySettings } from './settings';
 import { showLoading, hideLoading, enterReadingMode, exitReadingMode, toggleFullscreen } from './ui';
-import { renderChapter, updatePageInfo, markChapterListDirty, ensureChapterListPopulated, bindNavigationEvents } from './navigation';
+import { renderChapter, updatePageInfo, markChapterListDirty, ensureChapterListPopulated, bindNavigationEvents, relayout } from './navigation';
 import { getSavedPosition } from './position';
 
 // fflate loaded from CDN
@@ -156,6 +156,7 @@ function bindEvents(): void {
     fontSizeLabel.textContent = size + 'px';
     document.documentElement.style.setProperty('--font-size', size + 'px');
     updateSetting('fontSize', size);
+    relayout();
   };
 
   // Settings: theme

@@ -1,6 +1,6 @@
 {
   "name": "bookworm",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "private": true,
   "scripts": {
     "build": "node build.js",

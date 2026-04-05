@@ -17,10 +17,38 @@ export function renderChapter(index: number): void {
   state.currentChapterIndex = index;
   const text = getChapterText(index);
   readerEl.textContent = text;
+  fitPageToLines();
   readerEl.scrollLeft = 0;
   updatePageInfo();
   highlightActiveChapter(index);
   if (state.tts) state.tts.setSentences(splitSentences(text));
+}
+
+// --- Layout: snap reader width to an integer multiple of the line pitch ---
+// In vertical-rl, each "line" is a vertical column whose width equals the
+// computed line-height. If clientWidth isn't a multiple of that pitch, lines
+// straddling a page boundary get visually sliced. We pin the reader's width
+// to floor(available / lineH) * lineH so every page contains whole lines.
+
+export function fitPageToLines(): void {
+  const container = readerEl.parentElement;
+  if (!container) return;
+  const available = container.clientWidth;
+  if (available <= 0) return;
+  const cs = getComputedStyle(readerEl);
+  const fontSize = parseFloat(cs.fontSize);
+  let lineH = parseFloat(cs.lineHeight);
+  if (!isFinite(lineH) || lineH < 5) lineH = fontSize * 1.4;
+  const linesPerPage = Math.max(1, Math.floor(available / lineH));
+  readerEl.style.width = `${linesPerPage * lineH}px`;
+}
+
+export function relayout(): void {
+  const prevClientW = readerEl.clientWidth || 1;
+  const prevPage = Math.round(Math.abs(readerEl.scrollLeft) / prevClientW);
+  fitPageToLines();
+  readerEl.scrollLeft = -(prevPage * readerEl.clientWidth);
+  updatePageInfo();
 }
 
 // --- Page info ---
@@ -123,6 +151,15 @@ export function bindNavigationEvents(): void {
   $('nav-prev').onclick = prevPage;
   $('nav-next').onclick = nextPage;
   readerEl.addEventListener('scroll', () => updatePageInfo());
+
+  // Re-snap page width on viewport changes (rotation, PWA chrome show/hide,
+  // font load). Re-anchor scrollLeft to the nearest page so reading position
+  // doesn't drift mid-line.
+  const container = readerEl.parentElement;
+  if (container && typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => relayout());
+    ro.observe(container);
+  }
 
   // Keyboard
   document.addEventListener('keydown', (e) => {
