@@ -7,6 +7,7 @@ const DEFAULTS: AppSettings = {
   fontSize: 26,
   theme: 'sepia',
   font: 'default',
+  preloadChapters: 2,
   tts: { endpoint: '', apiKey: '', model: 'tts-1', voice: 'alloy', speed: 1.0 },
 };
 
@@ -46,6 +47,9 @@ export function applySettings(): void {
   $('font-size-label').textContent = s.fontSize + 'px';
   ($('font-select') as HTMLSelectElement).value = s.font;
   applyFont(s.font);
+
+  ($('preload-chapters') as HTMLInputElement).value = String(s.preloadChapters);
+  $('preload-chapters-label').textContent = String(s.preloadChapters);
 
   ($('tts-endpoint') as HTMLInputElement).value = s.tts.endpoint;
   ($('tts-api-key') as HTMLInputElement).value = s.tts.apiKey;

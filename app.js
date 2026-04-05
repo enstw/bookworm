@@ -216,6 +216,7 @@ var DEFAULTS = {
   fontSize: 26,
   theme: "sepia",
   font: "default",
+  preloadChapters: 2,
   tts: { endpoint: "", apiKey: "", model: "tts-1", voice: "alloy", speed: 1 }
 };
 var current = null;
@@ -249,6 +250,8 @@ function applySettings() {
   $("font-size-label").textContent = s.fontSize + "px";
   $("font-select").value = s.font;
   applyFont(s.font);
+  $("preload-chapters").value = String(s.preloadChapters);
+  $("preload-chapters-label").textContent = String(s.preloadChapters);
   $("tts-endpoint").value = s.tts.endpoint;
   $("tts-api-key").value = s.tts.apiKey;
   $("tts-model").value = s.tts.model;
@@ -315,15 +318,17 @@ function toggleChrome() {
 }
 
 // src/position.ts
-function savePosition() {
+function savePosition(chapter, page) {
   if (!state.currentBook) return;
   const params = new URLSearchParams();
   params.set("book", state.currentBook.file);
-  params.set("ch", String(state.currentChapterIndex));
+  params.set("ch", String(chapter));
+  params.set("p", String(page));
   history.replaceState(null, "", "#" + params.toString());
   localStorage.setItem("bookworm_position", JSON.stringify({
     book: state.currentBook.file,
-    chapter: state.currentChapterIndex
+    chapter,
+    page
   }));
 }
 function getSavedPosition() {
@@ -332,8 +337,12 @@ function getSavedPosition() {
     const params = new URLSearchParams(hash);
     const bookFile = params.get("book");
     const ch = params.get("ch");
+    const p = params.get("p");
     if (bookFile === state.currentBook?.file && ch != null) {
-      return { chapter: parseInt(ch, 10) };
+      return {
+        chapter: parseInt(ch, 10),
+        page: p != null ? parseInt(p, 10) : 0
+      };
     }
   }
   try {
@@ -341,7 +350,10 @@ function getSavedPosition() {
     if (raw) {
       const pos = JSON.parse(raw);
       if (pos.book === state.currentBook?.file) {
-        return { chapter: pos.chapter };
+        return {
+          chapter: pos.chapter ?? 0,
+          page: pos.page ?? 0
+        };
       }
     }
   } catch {
@@ -356,17 +368,8 @@ var pageInfoEl = $2("page-info");
 var pageSlider = $2("page-slider");
 var chapterListEl = $2("chapter-list");
 var chapterPanel = $2("chapter-panel");
-function renderChapter(index) {
-  if (index < 0 || index >= state.chapters.length) return;
-  state.currentChapterIndex = index;
-  const text = getChapterText(index);
-  readerEl.textContent = text;
-  fitPageToLines();
-  readerEl.scrollLeft = 0;
-  updatePageInfo();
-  highlightActiveChapter(index);
-  if (state.tts) state.tts.setSentences(splitSentences(text));
-}
+var pageW = 0;
+var lineH = 0;
 function fitPageToLines() {
   const container = readerEl.parentElement;
   if (!container) return;
@@ -374,66 +377,147 @@ function fitPageToLines() {
   if (available <= 0) return;
   const cs = getComputedStyle(readerEl);
   const fontSize = parseFloat(cs.fontSize);
-  const lineH = Math.max(1, Math.round(fontSize * 1.4));
+  lineH = Math.max(1, Math.round(fontSize * 1.4));
   readerEl.style.lineHeight = `${lineH}px`;
   const linesPerPage = Math.max(1, Math.floor(available / lineH));
-  readerEl.style.width = `${linesPerPage * lineH}px`;
+  pageW = linesPerPage * lineH;
+  readerEl.style.width = `${pageW}px`;
 }
-function relayout() {
-  const prevClientW = readerEl.clientWidth || 1;
-  const prevPage2 = Math.round(Math.abs(readerEl.scrollLeft) / prevClientW);
+function mountChapter(i) {
+  const ch = state.chapters[i];
+  if (ch.el) return;
+  const div = document.createElement("div");
+  div.className = "chapter";
+  div.textContent = getChapterText(i);
+  let nextSibling = null;
+  for (let j = i + 1; j < state.chapters.length; j++) {
+    if (state.chapters[j].el) {
+      nextSibling = state.chapters[j].el;
+      break;
+    }
+  }
+  readerEl.insertBefore(div, nextSibling);
+  const natural = div.offsetWidth;
+  const snapped = Math.max(pageW, Math.ceil(natural / pageW) * pageW);
+  div.style.width = `${snapped}px`;
+  ch.el = div;
+}
+function unmountChapter(i) {
+  const ch = state.chapters[i];
+  if (!ch.el) return;
+  ch.el.remove();
+  ch.el = null;
+}
+function windowRadius() {
+  return Math.max(1, getSettings().preloadChapters);
+}
+function refreshWindow(currentCh) {
+  const r = windowRadius();
+  const lo = Math.max(0, currentCh - r);
+  const hi = Math.min(state.chapters.length - 1, currentCh + r);
+  const curEl = state.chapters[currentCh].el;
+  const scrollLeftBefore = readerEl.scrollLeft;
+  const beforeOffsetLeft = curEl ? curEl.offsetLeft : 0;
+  for (let i = 0; i < state.chapters.length; i++) {
+    if ((i < lo || i > hi) && state.chapters[i].el) {
+      unmountChapter(i);
+    }
+  }
+  for (let i = lo; i <= hi; i++) {
+    if (!state.chapters[i].el) {
+      mountChapter(i);
+    }
+  }
+  const afterEl = state.chapters[currentCh].el;
+  const delta = afterEl.offsetLeft - beforeOffsetLeft;
+  if (delta !== 0) {
+    readerEl.scrollLeft = scrollLeftBefore - delta;
+  }
+}
+function onChapterChanged(i) {
+  highlightActiveChapter(i);
+  if (state.tts) state.tts.setSentences(splitSentences(getChapterText(i)));
+}
+function openBookLayout(chapterIdx, pageInCh) {
+  readerEl.innerHTML = "";
+  for (const ch of state.chapters) ch.el = null;
   fitPageToLines();
-  readerEl.scrollLeft = -(prevPage2 * readerEl.clientWidth);
+  state.currentChapterIndex = chapterIdx;
+  const r = windowRadius();
+  const lo = Math.max(0, chapterIdx - r);
+  const hi = Math.min(state.chapters.length - 1, chapterIdx + r);
+  for (let j = lo; j <= hi; j++) mountChapter(j);
+  const el = state.chapters[chapterIdx].el;
+  readerEl.scrollLeft = -(el.offsetLeft + pageInCh * pageW);
+  onChapterChanged(chapterIdx);
   updatePageInfo();
 }
+function goToChapter(i) {
+  if (i < 0 || i >= state.chapters.length) return;
+  openBookLayout(i, 0);
+  chapterPanel.classList.add("hidden");
+}
+function relayout() {
+  const curIdx = state.currentChapterIndex;
+  const curEl = state.chapters[curIdx]?.el;
+  const oldPageW = pageW || 1;
+  const page = curEl ? Math.round((Math.abs(readerEl.scrollLeft) - curEl.offsetLeft) / oldPageW) : 0;
+  fitPageToLines();
+  for (const ch of state.chapters) {
+    if (!ch.el) continue;
+    ch.el.style.width = "auto";
+    const natural = ch.el.offsetWidth;
+    ch.el.style.width = `${Math.max(pageW, Math.ceil(natural / pageW) * pageW)}px`;
+  }
+  const newCurEl = state.chapters[curIdx]?.el;
+  if (newCurEl) {
+    readerEl.scrollLeft = -(newCurEl.offsetLeft + page * pageW);
+  }
+  refreshWindow(curIdx);
+  updatePageInfo();
+}
+var lastSavedChapter = -1;
+var lastSavedPage = -1;
 function updatePageInfo() {
-  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
-  if (maxScroll <= 0) {
-    pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${state.chapters.length}  1/1`;
+  const ch = state.chapters[state.currentChapterIndex];
+  if (!ch || !ch.el || pageW <= 0) {
+    pageInfoEl.textContent = "";
     pageSlider.value = "0";
     pageSlider.max = "0";
-    savePosition();
     return;
   }
-  const scrollPos = Math.abs(readerEl.scrollLeft);
-  const pageWidth = readerEl.clientWidth;
-  const totalPages = Math.ceil(readerEl.scrollWidth / pageWidth);
-  const currentPage = Math.floor(scrollPos / pageWidth) + 1;
-  pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${state.chapters.length}  ${currentPage}/${totalPages}`;
-  pageSlider.max = String(totalPages - 1);
-  pageSlider.value = String(currentPage - 1);
-  savePosition();
-}
-function scrollToPage(pageIndex) {
-  readerEl.scrollLeft = -(pageIndex * readerEl.clientWidth);
+  const total = state.chapters.length;
+  const chPages = Math.max(1, Math.round(ch.el.offsetWidth / pageW));
+  const rawPage = Math.round((Math.abs(readerEl.scrollLeft) - ch.el.offsetLeft) / pageW);
+  const page = Math.max(0, Math.min(chPages - 1, rawPage));
+  pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${total}  ${page + 1}/${chPages}`;
+  pageSlider.max = String(chPages - 1);
+  pageSlider.value = String(page);
+  if (state.currentChapterIndex !== lastSavedChapter || page !== lastSavedPage) {
+    lastSavedChapter = state.currentChapterIndex;
+    lastSavedPage = page;
+    savePosition(state.currentChapterIndex, page);
+  }
 }
 function nextPage() {
-  const pageWidth = readerEl.clientWidth;
-  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
-  const atEnd = Math.abs(readerEl.scrollLeft) >= maxScroll - 2;
-  if (atEnd && state.currentChapterIndex + 1 < state.chapters.length) {
-    renderChapter(state.currentChapterIndex + 1);
-  } else {
-    readerEl.scrollBy({ left: -pageWidth, behavior: "smooth" });
-  }
+  if (pageW > 0) readerEl.scrollBy({ left: -pageW, behavior: "smooth" });
 }
 function prevPage() {
-  const pageWidth = readerEl.clientWidth;
-  const atStart = Math.abs(readerEl.scrollLeft) < 2;
-  if (atStart && state.currentChapterIndex > 0) {
-    renderChapter(state.currentChapterIndex - 1);
-    requestAnimationFrame(() => {
-      readerEl.scrollLeft = -(readerEl.scrollWidth - readerEl.clientWidth);
-      updatePageInfo();
-    });
-  } else {
-    readerEl.scrollBy({ left: pageWidth, behavior: "smooth" });
-  }
+  if (pageW > 0) readerEl.scrollBy({ left: pageW, behavior: "smooth" });
 }
-function goToChapter(index) {
-  if (index < 0 || index >= state.chapters.length) return;
-  renderChapter(index);
-  chapterPanel.classList.add("hidden");
+function findChapterAtScroll() {
+  const x = Math.abs(readerEl.scrollLeft);
+  const r = windowRadius();
+  const cur = state.currentChapterIndex;
+  const lo = Math.max(0, cur - r);
+  const hi = Math.min(state.chapters.length - 1, cur + r);
+  for (let i = lo; i <= hi; i++) {
+    const el = state.chapters[i].el;
+    if (!el) continue;
+    const left = el.offsetLeft;
+    if (x >= left && x < left + el.offsetWidth) return i;
+  }
+  return cur;
 }
 var chapterListDirty = true;
 function markChapterListDirty() {
@@ -460,13 +544,29 @@ function highlightActiveChapter(index) {
 }
 var lastTouchEnd = 0;
 function bindNavigationEvents() {
-  pageSlider.oninput = () => scrollToPage(parseInt(pageSlider.value, 10));
+  pageSlider.oninput = () => {
+    const p = parseInt(pageSlider.value, 10);
+    const ch = state.chapters[state.currentChapterIndex];
+    if (!ch || !ch.el) return;
+    readerEl.scrollLeft = -(ch.el.offsetLeft + p * pageW);
+  };
   $2("nav-prev").onclick = prevPage;
   $2("nav-next").onclick = nextPage;
-  readerEl.addEventListener("scroll", () => updatePageInfo());
+  readerEl.addEventListener("scroll", () => {
+    if (!state.currentBook) return;
+    const ch = findChapterAtScroll();
+    if (ch !== state.currentChapterIndex) {
+      state.currentChapterIndex = ch;
+      refreshWindow(ch);
+      onChapterChanged(ch);
+    }
+    updatePageInfo();
+  });
   const container = readerEl.parentElement;
   if (container && typeof ResizeObserver !== "undefined") {
-    const ro = new ResizeObserver(() => relayout());
+    const ro = new ResizeObserver(() => {
+      if (state.currentBook) relayout();
+    });
     ro.observe(container);
   }
   document.addEventListener("keydown", (e) => {
@@ -479,12 +579,6 @@ function bindNavigationEvents() {
       case "ArrowRight":
       case "PageUp":
         prevPage();
-        break;
-      case "Home":
-        readerEl.scrollLeft = 0;
-        break;
-      case "End":
-        readerEl.scrollLeft = -readerEl.scrollWidth;
         break;
     }
   });
@@ -522,6 +616,12 @@ function handleTapZone(x, y) {
     else if (x > 3 * w / 4) prevPage();
   }
 }
+function resetReader() {
+  readerEl.innerHTML = "";
+  for (const ch of state.chapters) ch.el = null;
+  lastSavedChapter = -1;
+  lastSavedPage = -1;
+}
 
 // src/app.ts
 var $3 = (id) => document.getElementById(id);
@@ -529,7 +629,6 @@ var bookSelector = $3("book-selector");
 var bookListEl = $3("book-list");
 var settingsPanel = $3("settings-panel");
 var chapterPanel2 = $3("chapter-panel");
-var readerEl2 = $3("reader");
 var bookTitleEl = $3("book-title");
 var fontSelect = $3("font-select");
 var ttsBar = $3("tts-bar");
@@ -568,7 +667,7 @@ async function openBook(book) {
     state.chapters = filenames.map((f) => {
       const base = f.replace(/\.txt$/i, "");
       const title = base.replace(/^\d+_/, "");
-      return { title, filename: f };
+      return { title, filename: f, el: null };
     });
     if (state.chapters.length === 0) throw new Error("ZIP \u4E2D\u627E\u4E0D\u5230\u7AE0\u7BC0\u6A94\u6848");
     markChapterListDirty();
@@ -576,7 +675,7 @@ async function openBook(book) {
     bookTitleEl.textContent = book.name;
     enterReadingMode();
     const saved = getSavedPosition();
-    renderChapter(saved?.chapter ?? 0);
+    openBookLayout(saved?.chapter ?? 0, saved?.page ?? 0);
     const settings = getSettings();
     state.tts = new AITextToSpeech(settings.tts, handleTTSState);
     state.tts.setSentences(splitSentences(getChapterText(state.currentChapterIndex)));
@@ -623,7 +722,7 @@ function bindEvents() {
     exitReadingMode();
     bookSelector.classList.remove("hidden");
     state.currentBook = null;
-    readerEl2.textContent = "";
+    resetReader();
   };
   const fontSizeInput = $3("font-size");
   const fontSizeLabel = $3("font-size-label");
@@ -632,6 +731,14 @@ function bindEvents() {
     fontSizeLabel.textContent = size + "px";
     document.documentElement.style.setProperty("--font-size", size + "px");
     updateSetting("fontSize", size);
+    relayout();
+  };
+  const preloadInput = $3("preload-chapters");
+  const preloadLabel = $3("preload-chapters-label");
+  preloadInput.oninput = () => {
+    const n = parseInt(preloadInput.value, 10);
+    preloadLabel.textContent = String(n);
+    updateSetting("preloadChapters", n);
     relayout();
   };
   const themeSelect = $3("theme-select");
@@ -672,7 +779,7 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $3("version");
-  versionEl.textContent = `v${"1.2.7"} (${"b57e52e"})`;
+  versionEl.textContent = `v${"1.2.8"} (${"a28275b"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", async () => {
     versionEl.textContent = "\u66F4\u65B0\u4E2D\u2026";

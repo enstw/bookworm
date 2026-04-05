@@ -6,6 +6,8 @@ export interface Book {
 export interface Chapter {
   title: string;
   filename: string;
+  /** DOM node when this chapter is mounted in the reader window; null otherwise. */
+  el: HTMLDivElement | null;
 }
 
 export interface TTSSettings {
@@ -20,11 +22,13 @@ export interface AppSettings {
   fontSize: number;
   theme: string;
   font: string;
+  /** How many chapters to keep mounted on each side of the current chapter. */
+  preloadChapters: number;
   tts: TTSSettings;
 }
 
 export interface ReadingPosition {
   book: string;
   chapter: number;
-  scrollLeft: number;
+  page: number;
 }

@@ -359,8 +359,12 @@ html:has(#book-selector:not(.hidden)) .tts-bar {
 
 .reader::-webkit-scrollbar { display: none; }
 
-.reader .page-column {
-  scroll-snap-align: start;
+.reader .chapter {
+  /* Each chapter is an independent block inside the vertical-rl reader.
+     In vertical-rl, block children stack right-to-left (first DOM child at
+     the right). Width is set dynamically after measuring natural content
+     width, rounded up to an integer multiple of pageW so every chapter
+     ends on a clean page boundary. */
   height: 100%;
 }
 

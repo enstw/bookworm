@@ -4,7 +4,7 @@ import { AITextToSpeech, splitSentences } from './tts';
 import { state, getChapterText } from './state';
 import { getSettings, updateSetting, applySettings } from './settings';
 import { showLoading, hideLoading, enterReadingMode, exitReadingMode, toggleFullscreen } from './ui';
-import { renderChapter, updatePageInfo, markChapterListDirty, ensureChapterListPopulated, bindNavigationEvents, relayout } from './navigation';
+import { openBookLayout, markChapterListDirty, ensureChapterListPopulated, bindNavigationEvents, relayout, resetReader } from './navigation';
 import { getSavedPosition } from './position';
 
 // fflate loaded from CDN
@@ -19,7 +19,6 @@ const bookSelector = $('book-selector');
 const bookListEl = $('book-list');
 const settingsPanel = $('settings-panel');
 const chapterPanel = $('chapter-panel');
-const readerEl = $('reader') as HTMLDivElement;
 const bookTitleEl = $('book-title');
 const fontSelect = $('font-select') as HTMLSelectElement;
 const ttsBar = $('tts-bar');
@@ -71,7 +70,7 @@ async function openBook(book: Book): Promise<void> {
     state.chapters = filenames.map(f => {
       const base = f.replace(/\.txt$/i, '');
       const title = base.replace(/^\d+_/, '');
-      return { title, filename: f };
+      return { title, filename: f, el: null };
     });
 
     if (state.chapters.length === 0) throw new Error('ZIP 中找不到章節檔案');
@@ -82,7 +81,7 @@ async function openBook(book: Book): Promise<void> {
     enterReadingMode();
 
     const saved = getSavedPosition();
-    renderChapter(saved?.chapter ?? 0);
+    openBookLayout(saved?.chapter ?? 0, saved?.page ?? 0);
 
     const settings = getSettings();
     state.tts = new AITextToSpeech(settings.tts, handleTTSState);
@@ -139,7 +138,7 @@ function bindEvents(): void {
     exitReadingMode();
     bookSelector.classList.remove('hidden');
     state.currentBook = null;
-    readerEl.textContent = '';
+    resetReader();
   };
 
   // Settings: font size
@@ -150,6 +149,16 @@ function bindEvents(): void {
     fontSizeLabel.textContent = size + 'px';
     document.documentElement.style.setProperty('--font-size', size + 'px');
     updateSetting('fontSize', size);
+    relayout();
+  };
+
+  // Settings: preload chapters (offline window size)
+  const preloadInput = $('preload-chapters') as HTMLInputElement;
+  const preloadLabel = $('preload-chapters-label');
+  preloadInput.oninput = () => {
+    const n = parseInt(preloadInput.value, 10);
+    preloadLabel.textContent = String(n);
+    updateSetting('preloadChapters', n);
     relayout();
   };
 
