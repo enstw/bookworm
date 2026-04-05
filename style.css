@@ -359,13 +359,32 @@ html:has(#book-selector:not(.hidden)) .tts-bar {
 
 .reader::-webkit-scrollbar { display: none; }
 
-.reader .chapter {
-  /* Each chapter is an independent block inside the vertical-rl reader.
-     In vertical-rl, block children stack right-to-left (first DOM child at
-     the right). Width is set dynamically after measuring natural content
-     width, rounded up to an integer multiple of pageW so every chapter
-     ends on a clean page boundary. */
+.reader .chapter,
+#reader-ghost .chapter {
+  /* Width is set dynamically after measuring natural content width, rounded
+     up to an integer multiple of pageW so every chapter ends on a clean
+     page boundary. The unfilled tail of the last page is left blank. */
   height: 100%;
+}
+
+/* Off-screen measurement container. Mirrors .reader's text styling so a
+   chapter div's offsetWidth is identical whether it lives here or inside
+   the real reader. Neighbor chapters live here until they're swapped in. */
+#reader-ghost {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: -99999px;
+  visibility: hidden;
+  pointer-events: none;
+  writing-mode: vertical-rl;
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+  font-family: var(--reader-font);
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 0 0 calc(12px + env(safe-area-inset-bottom)) 0;
+  margin-top: calc(-1 * env(safe-area-inset-top, 0px));
 }
 
 .reader .chapter-heading {

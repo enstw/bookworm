@@ -6,8 +6,6 @@ export interface Book {
 export interface Chapter {
   title: string;
   filename: string;
-  /** DOM node when this chapter is mounted in the reader window; null otherwise. */
-  el: HTMLDivElement | null;
 }
 
 export interface TTSSettings {

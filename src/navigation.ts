@@ -11,17 +11,36 @@ const pageSlider = $('page-slider') as HTMLInputElement;
 const chapterListEl = $('chapter-list');
 const chapterPanel = $('chapter-panel');
 
-// --- Layout state (module-level, computed by fitPageToLines) ---
+// --- Layout state ---
+// pageW/lineH are recomputed by fitPageToLines on every relayout.
 
 let pageW = 0;
 let lineH = 0;
 
-// --- Layout: snap page width to an integer multiple of line pitch ---
-// In vertical-rl, each "line" is a vertical column whose width equals the
-// computed line-height. We pin the reader's width (= one page) to
-// floor(available / lineH) * lineH so every page contains whole lines.
-// line-height is forced to an integer pixel value because `1.4 * 24 = 33.6`
-// causes sub-pixel drift that sliced glyphs after a few pages.
+// --- Ghost container ---
+// Off-screen element that holds pre-measured neighbor chapters. Styled
+// identically to .reader (same font, line-height, height, padding) so a
+// chapter div measures the same whether it lives in the ghost or the real
+// reader. Detached divs get moved into the reader on swap — no re-measure,
+// zero visible delay.
+
+let ghostEl: HTMLDivElement | null = null;
+const ghostCache = new Map<number, HTMLDivElement>();
+
+function ensureGhost(): void {
+  if (ghostEl) return;
+  const el = document.createElement('div');
+  el.id = 'reader-ghost';
+  el.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(el);
+  ghostEl = el;
+}
+
+// --- Page width: snap to integer multiple of line pitch ---
+// In vertical-rl, each "line" is a vertical column whose width = line-height.
+// Line-height is forced to an integer pixel value because fractional values
+// like 33.6 (= 1.4 * 24) cause sub-pixel drift across paginated scrolls and
+// slice glyphs at page edges.
 
 export function fitPageToLines(): void {
   const container = readerEl.parentElement;
@@ -31,97 +50,108 @@ export function fitPageToLines(): void {
   const cs = getComputedStyle(readerEl);
   const fontSize = parseFloat(cs.fontSize);
   lineH = Math.max(1, Math.round(fontSize * 1.4));
-  readerEl.style.lineHeight = `${lineH}px`;
   const linesPerPage = Math.max(1, Math.floor(available / lineH));
   pageW = linesPerPage * lineH;
+
+  readerEl.style.lineHeight = `${lineH}px`;
   readerEl.style.width = `${pageW}px`;
+  // Ghost must match so measurement reflects real layout
+  if (ghostEl) ghostEl.style.lineHeight = `${lineH}px`;
 }
 
-// --- Windowed chapter mounting ---
-//
-// Reader DOM contains only chapters inside the active window
-// [current - preload .. current + preload]. Each mounted chapter has its own
-// width rounded up to an integer multiple of pageW, so the last page of a
-// chapter is a whole page and the next chapter starts fresh on a page
-// boundary. Chapters outside the window don't exist in DOM at all.
+// --- Chapter build & cache ---
 
-function mountChapter(i: number): void {
-  const ch = state.chapters[i];
-  if (ch.el) return;
+function buildChapter(i: number): HTMLDivElement {
+  ensureGhost();
   const div = document.createElement('div');
   div.className = 'chapter';
+  div.dataset.ch = String(i);
   div.textContent = getChapterText(i);
 
-  // Insert in chapter-index order so DOM order == chapter order. In
-  // vertical-rl, first DOM child renders at the right (scrollLeft = 0).
-  let nextSibling: Element | null = null;
-  for (let j = i + 1; j < state.chapters.length; j++) {
-    if (state.chapters[j].el) {
-      nextSibling = state.chapters[j].el;
-      break;
-    }
-  }
-  readerEl.insertBefore(div, nextSibling);
-
-  // Measure natural block size (horizontal width in vertical-rl) and snap up.
+  // Measure in ghost so it doesn't affect the reader's current layout
+  ghostEl!.appendChild(div);
   const natural = div.offsetWidth;
   const snapped = Math.max(pageW, Math.ceil(natural / pageW) * pageW);
   div.style.width = `${snapped}px`;
-
-  ch.el = div;
+  return div;
 }
 
-function unmountChapter(i: number): void {
-  const ch = state.chapters[i];
-  if (!ch.el) return;
-  ch.el.remove();
-  ch.el = null;
+function getChapterEl(i: number): HTMLDivElement {
+  const cached = ghostCache.get(i);
+  if (cached) {
+    ghostCache.delete(i);
+    return cached;
+  }
+  return buildChapter(i);
 }
 
-/** How many chapters to keep mounted on each side of current. Minimum 1 so
- *  the user can always swipe across a chapter boundary without hitting an
- *  unmounted edge. */
-function windowRadius(): number {
-  return Math.max(1, getSettings().preloadChapters);
-}
-
-/** Rebuild the chapter window centered on currentCh, compensating scrollLeft
- *  for any DOM shift so the user's visual position doesn't jump. */
-function refreshWindow(currentCh: number): void {
-  const r = windowRadius();
-  const lo = Math.max(0, currentCh - r);
-  const hi = Math.min(state.chapters.length - 1, currentCh + r);
-
-  // Snapshot position BEFORE any DOM mutation. Reading offsetLeft forces
-  // layout; we only need one pre-mutation reading.
-  const curEl = state.chapters[currentCh].el;
-  const scrollLeftBefore = readerEl.scrollLeft;
-  const beforeOffsetLeft = curEl ? curEl.offsetLeft : 0;
-
-  // Unmount chapters outside window
-  for (let i = 0; i < state.chapters.length; i++) {
-    if ((i < lo || i > hi) && state.chapters[i].el) {
-      unmountChapter(i);
+function evictGhostOutsideWindow(i: number): void {
+  const r = getSettings().preloadChapters;
+  const lo = Math.max(0, i - r);
+  const hi = Math.min(state.chapters.length - 1, i + r);
+  for (const [idx, div] of ghostCache) {
+    if (idx < lo || idx > hi) {
+      div.remove();
+      ghostCache.delete(idx);
     }
   }
+}
 
-  // Mount chapters inside window that aren't mounted yet
-  for (let i = lo; i <= hi; i++) {
-    if (!state.chapters[i].el) {
-      mountChapter(i);
-    }
-  }
-
-  // Compensate scrollLeft: if chapters were added/removed before the
-  // current chapter in DOM order, the current chapter's offsetLeft shifted.
-  const afterEl = state.chapters[currentCh].el!;
-  const delta = afterEl.offsetLeft - beforeOffsetLeft;
-  if (delta !== 0) {
-    readerEl.scrollLeft = scrollLeftBefore - delta;
+function ensureNeighborsPreloaded(i: number): void {
+  const r = getSettings().preloadChapters;
+  const lo = Math.max(0, i - r);
+  const hi = Math.min(state.chapters.length - 1, i + r);
+  for (let j = lo; j <= hi; j++) {
+    if (j === i) continue;
+    if (ghostCache.has(j)) continue;
+    const el = buildChapter(j);
+    ghostCache.set(j, el);
   }
 }
 
-// --- Chapter change notification ---
+/** Called from app.ts when the preload slider changes: just prune and fill
+ *  the ghost cache to match the new window radius. No reader remount. */
+export function refreshPreloadWindow(): void {
+  if (!state.currentBook) return;
+  const i = state.currentChapterIndex;
+  evictGhostOutsideWindow(i);
+  ensureNeighborsPreloaded(i);
+}
+
+// --- Chapter swap (the one place that changes what's visible) ---
+
+/** Swap the active chapter. `page` is the page index to land on; pass -1 for
+ *  the last page (used when paging backward across a chapter boundary). */
+function showChapter(i: number, page: number): void {
+  if (i < 0 || i >= state.chapters.length) return;
+
+  // Stash the currently-visible chapter back into the ghost cache
+  const current = readerEl.firstElementChild as HTMLDivElement | null;
+  if (current && current.dataset.ch) {
+    const oldIdx = parseInt(current.dataset.ch, 10);
+    current.remove();
+    ghostCache.set(oldIdx, current);
+    ensureGhost();
+    ghostEl!.appendChild(current);
+  }
+
+  // Bring in (or build) the target chapter
+  const el = getChapterEl(i);
+  readerEl.appendChild(el);
+  state.currentChapterIndex = i;
+
+  // Scroll to target page within the chapter
+  const maxPage = Math.max(0, Math.round(el.offsetWidth / pageW) - 1);
+  const targetPage = page < 0 ? maxPage : Math.min(Math.max(0, page), maxPage);
+  readerEl.scrollLeft = -(targetPage * pageW);
+
+  // Keep the ghost cache in sync with the window
+  evictGhostOutsideWindow(i);
+  ensureNeighborsPreloaded(i);
+
+  onChapterChanged(i);
+  updatePageInfo();
+}
 
 function onChapterChanged(i: number): void {
   highlightActiveChapter(i);
@@ -130,64 +160,47 @@ function onChapterChanged(i: number): void {
 
 // --- Entry points ---
 
-/** Initial layout when opening a book. Clears any previous state and mounts
- *  the window around the starting chapter, scrolling to the given page. */
 export function openBookLayout(chapterIdx: number, pageInCh: number): void {
-  readerEl.innerHTML = '';
-  for (const ch of state.chapters) ch.el = null;
-
+  resetReader();
+  ensureGhost();
   fitPageToLines();
-
-  state.currentChapterIndex = chapterIdx;
-  const r = windowRadius();
-  const lo = Math.max(0, chapterIdx - r);
-  const hi = Math.min(state.chapters.length - 1, chapterIdx + r);
-  for (let j = lo; j <= hi; j++) mountChapter(j);
-
-  const el = state.chapters[chapterIdx].el!;
-  readerEl.scrollLeft = -(el.offsetLeft + pageInCh * pageW);
-
-  onChapterChanged(chapterIdx);
-  updatePageInfo();
+  showChapter(chapterIdx, pageInCh);
 }
 
-/** Jump to a specific chapter via chapter list. Tears down the current
- *  window and rebuilds around the target at page 0. */
 export function goToChapter(i: number): void {
   if (i < 0 || i >= state.chapters.length) return;
-  openBookLayout(i, 0);
+  showChapter(i, 0);
   chapterPanel.classList.add('hidden');
 }
 
-/** Called on font-size change, viewport resize, or font load. pageW/lineH
- *  may have changed, so all mounted chapter widths are stale. Re-measure
- *  and preserve the user's current {chapter, page} position. */
+/** Full relayout: font-size change, viewport resize, or font load. pageW and
+ *  lineH may have changed, so every cached chapter's width is stale. */
 export function relayout(): void {
-  const curIdx = state.currentChapterIndex;
-  const curEl = state.chapters[curIdx]?.el;
+  if (!state.currentBook) return;
+
+  const curEl = readerEl.firstElementChild as HTMLDivElement | null;
   const oldPageW = pageW || 1;
-  const page = curEl
-    ? Math.round((Math.abs(readerEl.scrollLeft) - curEl.offsetLeft) / oldPageW)
+  const oldPage = curEl
+    ? Math.round(Math.abs(readerEl.scrollLeft) / oldPageW)
     : 0;
 
   fitPageToLines();
 
-  // Re-measure each mounted chapter against the new pageW/lineH.
-  for (const ch of state.chapters) {
-    if (!ch.el) continue;
-    ch.el.style.width = 'auto';
-    const natural = ch.el.offsetWidth;
-    ch.el.style.width = `${Math.max(pageW, Math.ceil(natural / pageW) * pageW)}px`;
+  // Invalidate ghost cache wholesale — everything inside was measured at
+  // the old pageW/lineH.
+  if (ghostEl) ghostEl.innerHTML = '';
+  ghostCache.clear();
+
+  if (curEl) {
+    curEl.style.width = 'auto';
+    const natural = curEl.offsetWidth;
+    curEl.style.width = `${Math.max(pageW, Math.ceil(natural / pageW) * pageW)}px`;
+    const maxPage = Math.max(0, Math.round(curEl.offsetWidth / pageW) - 1);
+    const page = Math.min(oldPage, maxPage);
+    readerEl.scrollLeft = -(page * pageW);
   }
 
-  const newCurEl = state.chapters[curIdx]?.el;
-  if (newCurEl) {
-    readerEl.scrollLeft = -(newCurEl.offsetLeft + page * pageW);
-  }
-
-  // Apply any window-radius change (e.g. user just moved the preload slider).
-  refreshWindow(curIdx);
-
+  ensureNeighborsPreloaded(state.currentChapterIndex);
   updatePageInfo();
 }
 
@@ -197,23 +210,22 @@ let lastSavedChapter = -1;
 let lastSavedPage = -1;
 
 export function updatePageInfo(): void {
-  const ch = state.chapters[state.currentChapterIndex];
-  if (!ch || !ch.el || pageW <= 0) {
+  const curEl = readerEl.firstElementChild as HTMLDivElement | null;
+  if (!curEl || pageW <= 0) {
     pageInfoEl.textContent = '';
     pageSlider.value = '0';
     pageSlider.max = '0';
     return;
   }
   const total = state.chapters.length;
-  const chPages = Math.max(1, Math.round(ch.el.offsetWidth / pageW));
-  const rawPage = Math.round((Math.abs(readerEl.scrollLeft) - ch.el.offsetLeft) / pageW);
+  const chPages = Math.max(1, Math.round(curEl.offsetWidth / pageW));
+  const rawPage = Math.round(Math.abs(readerEl.scrollLeft) / pageW);
   const page = Math.max(0, Math.min(chPages - 1, rawPage));
 
   pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${total}  ${page + 1}/${chPages}`;
   pageSlider.max = String(chPages - 1);
   pageSlider.value = String(page);
 
-  // Persist only on actual page change to avoid hammering history.replaceState
   if (state.currentChapterIndex !== lastSavedChapter || page !== lastSavedPage) {
     lastSavedChapter = state.currentChapterIndex;
     lastSavedPage = page;
@@ -222,31 +234,32 @@ export function updatePageInfo(): void {
 }
 
 // --- Page navigation ---
+// Within a chapter, scrollBy handles pagination. At chapter boundaries we
+// swap the chapter div outright — no cross-chapter animation.
 
 export function nextPage(): void {
-  // vertical-rl: "next page" advances to the left (more negative scrollLeft)
-  if (pageW > 0) readerEl.scrollBy({ left: -pageW, behavior: 'smooth' });
+  if (pageW <= 0) return;
+  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
+  const atEnd = Math.abs(readerEl.scrollLeft) >= maxScroll - 2;
+  if (atEnd) {
+    if (state.currentChapterIndex + 1 < state.chapters.length) {
+      showChapter(state.currentChapterIndex + 1, 0);
+    }
+  } else {
+    readerEl.scrollBy({ left: -pageW, behavior: 'smooth' });
+  }
 }
 
 export function prevPage(): void {
-  if (pageW > 0) readerEl.scrollBy({ left: pageW, behavior: 'smooth' });
-}
-
-// --- Current-chapter detection from scrollLeft ---
-
-function findChapterAtScroll(): number {
-  const x = Math.abs(readerEl.scrollLeft);
-  const r = windowRadius();
-  const cur = state.currentChapterIndex;
-  const lo = Math.max(0, cur - r);
-  const hi = Math.min(state.chapters.length - 1, cur + r);
-  for (let i = lo; i <= hi; i++) {
-    const el = state.chapters[i].el;
-    if (!el) continue;
-    const left = el.offsetLeft;
-    if (x >= left && x < left + el.offsetWidth) return i;
+  if (pageW <= 0) return;
+  const atStart = Math.abs(readerEl.scrollLeft) < 2;
+  if (atStart) {
+    if (state.currentChapterIndex > 0) {
+      showChapter(state.currentChapterIndex - 1, -1);
+    }
+  } else {
+    readerEl.scrollBy({ left: pageW, behavior: 'smooth' });
   }
-  return cur;
 }
 
 // --- Chapter list UI ---
@@ -285,37 +298,25 @@ let lastTouchEnd = 0;
 export function bindNavigationEvents(): void {
   pageSlider.oninput = () => {
     const p = parseInt(pageSlider.value, 10);
-    const ch = state.chapters[state.currentChapterIndex];
-    if (!ch || !ch.el) return;
-    readerEl.scrollLeft = -(ch.el.offsetLeft + p * pageW);
+    if (pageW > 0) readerEl.scrollLeft = -(p * pageW);
   };
   $('nav-prev').onclick = prevPage;
   $('nav-next').onclick = nextPage;
 
-  // Scroll listener: detect chapter boundary crossings, refresh window,
-  // update page info. refreshWindow preserves the user's visual position so
-  // the scroll correction it issues doesn't cause re-entry loops.
+  // Within-chapter scrolling just updates page info; chapter boundaries are
+  // crossed explicitly via nextPage/prevPage/goToChapter, not by scrolling.
   readerEl.addEventListener('scroll', () => {
     if (!state.currentBook) return;
-    const ch = findChapterAtScroll();
-    if (ch !== state.currentChapterIndex) {
-      state.currentChapterIndex = ch;
-      refreshWindow(ch);
-      onChapterChanged(ch);
-    }
     updatePageInfo();
   });
 
-  // Resize observer: viewport / rotation / font changes require full relayout
+  // Viewport / rotation / font-load triggers full relayout
   const container = readerEl.parentElement;
   if (container && typeof ResizeObserver !== 'undefined') {
-    const ro = new ResizeObserver(() => {
-      if (state.currentBook) relayout();
-    });
+    const ro = new ResizeObserver(() => relayout());
     ro.observe(container);
   }
 
-  // Keyboard
   document.addEventListener('keydown', (e) => {
     if (!state.currentBook) return;
     switch (e.key) {
@@ -324,7 +325,6 @@ export function bindNavigationEvents(): void {
     }
   });
 
-  // Touch swipe & tap
   let touchStartX = 0;
   let touchStartY = 0;
   readerEl.addEventListener('touchstart', (e) => {
@@ -345,7 +345,6 @@ export function bindNavigationEvents(): void {
     }
   });
 
-  // Desktop click — skip if touch just fired
   readerEl.addEventListener('click', (e) => {
     if (Date.now() - lastTouchEnd < 300) return;
     handleTapZone(e.clientX, e.clientY);
@@ -363,11 +362,12 @@ function handleTapZone(x: number, y: number): void {
   }
 }
 
-// --- Reset (book close) ---
+// --- Reset ---
 
 export function resetReader(): void {
   readerEl.innerHTML = '';
-  for (const ch of state.chapters) ch.el = null;
+  if (ghostEl) ghostEl.innerHTML = '';
+  ghostCache.clear();
   lastSavedChapter = -1;
   lastSavedPage = -1;
 }

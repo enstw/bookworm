@@ -370,6 +370,16 @@ var chapterListEl = $2("chapter-list");
 var chapterPanel = $2("chapter-panel");
 var pageW = 0;
 var lineH = 0;
+var ghostEl = null;
+var ghostCache = /* @__PURE__ */ new Map();
+function ensureGhost() {
+  if (ghostEl) return;
+  const el = document.createElement("div");
+  el.id = "reader-ghost";
+  el.setAttribute("aria-hidden", "true");
+  document.body.appendChild(el);
+  ghostEl = el;
+}
 function fitPageToLines() {
   const container = readerEl.parentElement;
   if (!container) return;
@@ -378,117 +388,128 @@ function fitPageToLines() {
   const cs = getComputedStyle(readerEl);
   const fontSize = parseFloat(cs.fontSize);
   lineH = Math.max(1, Math.round(fontSize * 1.4));
-  readerEl.style.lineHeight = `${lineH}px`;
   const linesPerPage = Math.max(1, Math.floor(available / lineH));
   pageW = linesPerPage * lineH;
+  readerEl.style.lineHeight = `${lineH}px`;
   readerEl.style.width = `${pageW}px`;
+  if (ghostEl) ghostEl.style.lineHeight = `${lineH}px`;
 }
-function mountChapter(i) {
-  const ch = state.chapters[i];
-  if (ch.el) return;
+function buildChapter(i) {
+  ensureGhost();
   const div = document.createElement("div");
   div.className = "chapter";
+  div.dataset.ch = String(i);
   div.textContent = getChapterText(i);
-  let nextSibling = null;
-  for (let j = i + 1; j < state.chapters.length; j++) {
-    if (state.chapters[j].el) {
-      nextSibling = state.chapters[j].el;
-      break;
-    }
-  }
-  readerEl.insertBefore(div, nextSibling);
+  ghostEl.appendChild(div);
   const natural = div.offsetWidth;
   const snapped = Math.max(pageW, Math.ceil(natural / pageW) * pageW);
   div.style.width = `${snapped}px`;
-  ch.el = div;
+  return div;
 }
-function unmountChapter(i) {
-  const ch = state.chapters[i];
-  if (!ch.el) return;
-  ch.el.remove();
-  ch.el = null;
+function getChapterEl(i) {
+  const cached = ghostCache.get(i);
+  if (cached) {
+    ghostCache.delete(i);
+    return cached;
+  }
+  return buildChapter(i);
 }
-function windowRadius() {
-  return Math.max(1, getSettings().preloadChapters);
-}
-function refreshWindow(currentCh) {
-  const r = windowRadius();
-  const lo = Math.max(0, currentCh - r);
-  const hi = Math.min(state.chapters.length - 1, currentCh + r);
-  const curEl = state.chapters[currentCh].el;
-  const scrollLeftBefore = readerEl.scrollLeft;
-  const beforeOffsetLeft = curEl ? curEl.offsetLeft : 0;
-  for (let i = 0; i < state.chapters.length; i++) {
-    if ((i < lo || i > hi) && state.chapters[i].el) {
-      unmountChapter(i);
+function evictGhostOutsideWindow(i) {
+  const r = getSettings().preloadChapters;
+  const lo = Math.max(0, i - r);
+  const hi = Math.min(state.chapters.length - 1, i + r);
+  for (const [idx, div] of ghostCache) {
+    if (idx < lo || idx > hi) {
+      div.remove();
+      ghostCache.delete(idx);
     }
   }
-  for (let i = lo; i <= hi; i++) {
-    if (!state.chapters[i].el) {
-      mountChapter(i);
-    }
+}
+function ensureNeighborsPreloaded(i) {
+  const r = getSettings().preloadChapters;
+  const lo = Math.max(0, i - r);
+  const hi = Math.min(state.chapters.length - 1, i + r);
+  for (let j = lo; j <= hi; j++) {
+    if (j === i) continue;
+    if (ghostCache.has(j)) continue;
+    const el = buildChapter(j);
+    ghostCache.set(j, el);
   }
-  const afterEl = state.chapters[currentCh].el;
-  const delta = afterEl.offsetLeft - beforeOffsetLeft;
-  if (delta !== 0) {
-    readerEl.scrollLeft = scrollLeftBefore - delta;
+}
+function refreshPreloadWindow() {
+  if (!state.currentBook) return;
+  const i = state.currentChapterIndex;
+  evictGhostOutsideWindow(i);
+  ensureNeighborsPreloaded(i);
+}
+function showChapter(i, page) {
+  if (i < 0 || i >= state.chapters.length) return;
+  const current2 = readerEl.firstElementChild;
+  if (current2 && current2.dataset.ch) {
+    const oldIdx = parseInt(current2.dataset.ch, 10);
+    current2.remove();
+    ghostCache.set(oldIdx, current2);
+    ensureGhost();
+    ghostEl.appendChild(current2);
   }
+  const el = getChapterEl(i);
+  readerEl.appendChild(el);
+  state.currentChapterIndex = i;
+  const maxPage = Math.max(0, Math.round(el.offsetWidth / pageW) - 1);
+  const targetPage = page < 0 ? maxPage : Math.min(Math.max(0, page), maxPage);
+  readerEl.scrollLeft = -(targetPage * pageW);
+  evictGhostOutsideWindow(i);
+  ensureNeighborsPreloaded(i);
+  onChapterChanged(i);
+  updatePageInfo();
 }
 function onChapterChanged(i) {
   highlightActiveChapter(i);
   if (state.tts) state.tts.setSentences(splitSentences(getChapterText(i)));
 }
 function openBookLayout(chapterIdx, pageInCh) {
-  readerEl.innerHTML = "";
-  for (const ch of state.chapters) ch.el = null;
+  resetReader();
+  ensureGhost();
   fitPageToLines();
-  state.currentChapterIndex = chapterIdx;
-  const r = windowRadius();
-  const lo = Math.max(0, chapterIdx - r);
-  const hi = Math.min(state.chapters.length - 1, chapterIdx + r);
-  for (let j = lo; j <= hi; j++) mountChapter(j);
-  const el = state.chapters[chapterIdx].el;
-  readerEl.scrollLeft = -(el.offsetLeft + pageInCh * pageW);
-  onChapterChanged(chapterIdx);
-  updatePageInfo();
+  showChapter(chapterIdx, pageInCh);
 }
 function goToChapter(i) {
   if (i < 0 || i >= state.chapters.length) return;
-  openBookLayout(i, 0);
+  showChapter(i, 0);
   chapterPanel.classList.add("hidden");
 }
 function relayout() {
-  const curIdx = state.currentChapterIndex;
-  const curEl = state.chapters[curIdx]?.el;
+  if (!state.currentBook) return;
+  const curEl = readerEl.firstElementChild;
   const oldPageW = pageW || 1;
-  const page = curEl ? Math.round((Math.abs(readerEl.scrollLeft) - curEl.offsetLeft) / oldPageW) : 0;
+  const oldPage = curEl ? Math.round(Math.abs(readerEl.scrollLeft) / oldPageW) : 0;
   fitPageToLines();
-  for (const ch of state.chapters) {
-    if (!ch.el) continue;
-    ch.el.style.width = "auto";
-    const natural = ch.el.offsetWidth;
-    ch.el.style.width = `${Math.max(pageW, Math.ceil(natural / pageW) * pageW)}px`;
+  if (ghostEl) ghostEl.innerHTML = "";
+  ghostCache.clear();
+  if (curEl) {
+    curEl.style.width = "auto";
+    const natural = curEl.offsetWidth;
+    curEl.style.width = `${Math.max(pageW, Math.ceil(natural / pageW) * pageW)}px`;
+    const maxPage = Math.max(0, Math.round(curEl.offsetWidth / pageW) - 1);
+    const page = Math.min(oldPage, maxPage);
+    readerEl.scrollLeft = -(page * pageW);
   }
-  const newCurEl = state.chapters[curIdx]?.el;
-  if (newCurEl) {
-    readerEl.scrollLeft = -(newCurEl.offsetLeft + page * pageW);
-  }
-  refreshWindow(curIdx);
+  ensureNeighborsPreloaded(state.currentChapterIndex);
   updatePageInfo();
 }
 var lastSavedChapter = -1;
 var lastSavedPage = -1;
 function updatePageInfo() {
-  const ch = state.chapters[state.currentChapterIndex];
-  if (!ch || !ch.el || pageW <= 0) {
+  const curEl = readerEl.firstElementChild;
+  if (!curEl || pageW <= 0) {
     pageInfoEl.textContent = "";
     pageSlider.value = "0";
     pageSlider.max = "0";
     return;
   }
   const total = state.chapters.length;
-  const chPages = Math.max(1, Math.round(ch.el.offsetWidth / pageW));
-  const rawPage = Math.round((Math.abs(readerEl.scrollLeft) - ch.el.offsetLeft) / pageW);
+  const chPages = Math.max(1, Math.round(curEl.offsetWidth / pageW));
+  const rawPage = Math.round(Math.abs(readerEl.scrollLeft) / pageW);
   const page = Math.max(0, Math.min(chPages - 1, rawPage));
   pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${total}  ${page + 1}/${chPages}`;
   pageSlider.max = String(chPages - 1);
@@ -500,24 +521,27 @@ function updatePageInfo() {
   }
 }
 function nextPage() {
-  if (pageW > 0) readerEl.scrollBy({ left: -pageW, behavior: "smooth" });
+  if (pageW <= 0) return;
+  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
+  const atEnd = Math.abs(readerEl.scrollLeft) >= maxScroll - 2;
+  if (atEnd) {
+    if (state.currentChapterIndex + 1 < state.chapters.length) {
+      showChapter(state.currentChapterIndex + 1, 0);
+    }
+  } else {
+    readerEl.scrollBy({ left: -pageW, behavior: "smooth" });
+  }
 }
 function prevPage() {
-  if (pageW > 0) readerEl.scrollBy({ left: pageW, behavior: "smooth" });
-}
-function findChapterAtScroll() {
-  const x = Math.abs(readerEl.scrollLeft);
-  const r = windowRadius();
-  const cur = state.currentChapterIndex;
-  const lo = Math.max(0, cur - r);
-  const hi = Math.min(state.chapters.length - 1, cur + r);
-  for (let i = lo; i <= hi; i++) {
-    const el = state.chapters[i].el;
-    if (!el) continue;
-    const left = el.offsetLeft;
-    if (x >= left && x < left + el.offsetWidth) return i;
+  if (pageW <= 0) return;
+  const atStart = Math.abs(readerEl.scrollLeft) < 2;
+  if (atStart) {
+    if (state.currentChapterIndex > 0) {
+      showChapter(state.currentChapterIndex - 1, -1);
+    }
+  } else {
+    readerEl.scrollBy({ left: pageW, behavior: "smooth" });
   }
-  return cur;
 }
 var chapterListDirty = true;
 function markChapterListDirty() {
@@ -546,27 +570,17 @@ var lastTouchEnd = 0;
 function bindNavigationEvents() {
   pageSlider.oninput = () => {
     const p = parseInt(pageSlider.value, 10);
-    const ch = state.chapters[state.currentChapterIndex];
-    if (!ch || !ch.el) return;
-    readerEl.scrollLeft = -(ch.el.offsetLeft + p * pageW);
+    if (pageW > 0) readerEl.scrollLeft = -(p * pageW);
   };
   $2("nav-prev").onclick = prevPage;
   $2("nav-next").onclick = nextPage;
   readerEl.addEventListener("scroll", () => {
     if (!state.currentBook) return;
-    const ch = findChapterAtScroll();
-    if (ch !== state.currentChapterIndex) {
-      state.currentChapterIndex = ch;
-      refreshWindow(ch);
-      onChapterChanged(ch);
-    }
     updatePageInfo();
   });
   const container = readerEl.parentElement;
   if (container && typeof ResizeObserver !== "undefined") {
-    const ro = new ResizeObserver(() => {
-      if (state.currentBook) relayout();
-    });
+    const ro = new ResizeObserver(() => relayout());
     ro.observe(container);
   }
   document.addEventListener("keydown", (e) => {
@@ -618,7 +632,8 @@ function handleTapZone(x, y) {
 }
 function resetReader() {
   readerEl.innerHTML = "";
-  for (const ch of state.chapters) ch.el = null;
+  if (ghostEl) ghostEl.innerHTML = "";
+  ghostCache.clear();
   lastSavedChapter = -1;
   lastSavedPage = -1;
 }
@@ -667,7 +682,7 @@ async function openBook(book) {
     state.chapters = filenames.map((f) => {
       const base = f.replace(/\.txt$/i, "");
       const title = base.replace(/^\d+_/, "");
-      return { title, filename: f, el: null };
+      return { title, filename: f };
     });
     if (state.chapters.length === 0) throw new Error("ZIP \u4E2D\u627E\u4E0D\u5230\u7AE0\u7BC0\u6A94\u6848");
     markChapterListDirty();
@@ -739,7 +754,7 @@ function bindEvents() {
     const n = parseInt(preloadInput.value, 10);
     preloadLabel.textContent = String(n);
     updateSetting("preloadChapters", n);
-    relayout();
+    refreshPreloadWindow();
   };
   const themeSelect = $3("theme-select");
   themeSelect.onchange = () => {
@@ -779,7 +794,7 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $3("version");
-  versionEl.textContent = `v${"1.2.8"} (${"a28275b"})`;
+  versionEl.textContent = `v${"1.2.9"} (${"7a85991"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", async () => {
     versionEl.textContent = "\u66F4\u65B0\u4E2D\u2026";

@@ -4,7 +4,7 @@ import { AITextToSpeech, splitSentences } from './tts';
 import { state, getChapterText } from './state';
 import { getSettings, updateSetting, applySettings } from './settings';
 import { showLoading, hideLoading, enterReadingMode, exitReadingMode, toggleFullscreen } from './ui';
-import { openBookLayout, markChapterListDirty, ensureChapterListPopulated, bindNavigationEvents, relayout, resetReader } from './navigation';
+import { openBookLayout, markChapterListDirty, ensureChapterListPopulated, bindNavigationEvents, relayout, resetReader, refreshPreloadWindow } from './navigation';
 import { getSavedPosition } from './position';
 
 // fflate loaded from CDN
@@ -70,7 +70,7 @@ async function openBook(book: Book): Promise<void> {
     state.chapters = filenames.map(f => {
       const base = f.replace(/\.txt$/i, '');
       const title = base.replace(/^\d+_/, '');
-      return { title, filename: f, el: null };
+      return { title, filename: f };
     });
 
     if (state.chapters.length === 0) throw new Error('ZIP 中找不到章節檔案');
@@ -159,7 +159,7 @@ function bindEvents(): void {
     const n = parseInt(preloadInput.value, 10);
     preloadLabel.textContent = String(n);
     updateSetting('preloadChapters', n);
-    relayout();
+    refreshPreloadWindow();
   };
 
   // Settings: theme
