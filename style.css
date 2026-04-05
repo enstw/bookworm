@@ -277,13 +277,14 @@ html:has(#book-selector:not(.hidden)) .tts-bar {
 #chapter-list li:hover { background: var(--bg-secondary); }
 #chapter-list li.active { color: var(--accent); font-weight: bold; }
 
-/* === Reading Mode (immersive) === */
+/* === Reading Mode (immersive) ===
+   Slide chrome via transform only — fading opacity leaves Safari with a
+   cached paint of the toolbar background in the safe-area strip that never
+   repaints. A real transform forces recompositing so the reader bg shows. */
 .reading-mode .toolbar,
 .reading-mode .nav-bar,
 .reading-mode .tts-bar {
-  transform: translateY(0);
-  transition: opacity 0.25s ease, visibility 0.25s ease;
-  opacity: 0;
+  transition: transform 0.25s ease, visibility 0.25s ease;
   visibility: hidden;
   pointer-events: none;
 }
@@ -299,14 +300,12 @@ html:has(#book-selector:not(.hidden)) .tts-bar {
 
 .reading-mode.chrome-visible .toolbar,
 .reading-mode.chrome-visible .nav-bar {
-  opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: translateY(0);
 }
 
 .reading-mode.chrome-visible .tts-bar:not(.hidden) {
-  opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: translateY(0);
