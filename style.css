@@ -343,8 +343,7 @@ html:has(#book-selector:not(.hidden)) .tts-bar {
      of the line pitch so characters never straddle page boundaries */
   height: 100%;
   background: var(--bg);
-  padding: 0 0 calc(12px + env(safe-area-inset-bottom)) 0;
-  margin-top: calc(-1 * env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top) 0 calc(12px + env(safe-area-inset-bottom)) 0;
   writing-mode: vertical-rl;
   overflow-x: scroll;
   overflow-y: hidden;
@@ -383,8 +382,7 @@ html:has(#book-selector:not(.hidden)) .tts-bar {
   font-family: var(--reader-font);
   white-space: pre-wrap;
   word-break: break-all;
-  padding: 0 0 calc(12px + env(safe-area-inset-bottom)) 0;
-  margin-top: calc(-1 * env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top) 0 calc(12px + env(safe-area-inset-bottom)) 0;
 }
 
 .reader .chapter-heading {
