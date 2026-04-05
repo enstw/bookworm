@@ -33,12 +33,16 @@ export function renderChapter(index: number): void {
 export function fitPageToLines(): void {
   const container = readerEl.parentElement;
   if (!container) return;
-  const available = container.clientWidth;
+  const available = Math.floor(container.clientWidth);
   if (available <= 0) return;
   const cs = getComputedStyle(readerEl);
   const fontSize = parseFloat(cs.fontSize);
-  let lineH = parseFloat(cs.lineHeight);
-  if (!isFinite(lineH) || lineH < 5) lineH = fontSize * 1.4;
+  // Force an integer line pitch — `line-height: 1.4` computes to 33.6px at
+  // fontSize 24, and fractional pixels cause the rendered clientWidth to
+  // drift from our intended snap. After a few pages the drift exceeds a
+  // few pixels and glyphs get sliced. Snapping to integer px eliminates it.
+  const lineH = Math.max(1, Math.round(fontSize * 1.4));
+  readerEl.style.lineHeight = `${lineH}px`;
   const linesPerPage = Math.max(1, Math.floor(available / lineH));
   readerEl.style.width = `${linesPerPage * lineH}px`;
 }

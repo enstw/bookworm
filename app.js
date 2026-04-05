@@ -315,18 +315,15 @@ function toggleChrome() {
 }
 
 // src/position.ts
-var readerEl = document.getElementById("reader");
 function savePosition() {
   if (!state.currentBook) return;
   const params = new URLSearchParams();
   params.set("book", state.currentBook.file);
   params.set("ch", String(state.currentChapterIndex));
-  params.set("pos", String(Math.round(readerEl.scrollLeft)));
   history.replaceState(null, "", "#" + params.toString());
   localStorage.setItem("bookworm_position", JSON.stringify({
     book: state.currentBook.file,
-    chapter: state.currentChapterIndex,
-    scrollLeft: readerEl.scrollLeft
+    chapter: state.currentChapterIndex
   }));
 }
 function getSavedPosition() {
@@ -335,9 +332,8 @@ function getSavedPosition() {
     const params = new URLSearchParams(hash);
     const bookFile = params.get("book");
     const ch = params.get("ch");
-    const pos = params.get("pos");
     if (bookFile === state.currentBook?.file && ch != null) {
-      return { chapter: parseInt(ch, 10), scrollLeft: pos ? parseInt(pos, 10) : 0 };
+      return { chapter: parseInt(ch, 10) };
     }
   }
   try {
@@ -345,7 +341,7 @@ function getSavedPosition() {
     if (raw) {
       const pos = JSON.parse(raw);
       if (pos.book === state.currentBook?.file) {
-        return { chapter: pos.chapter, scrollLeft: pos.scrollLeft };
+        return { chapter: pos.chapter };
       }
     }
   } catch {
@@ -355,7 +351,7 @@ function getSavedPosition() {
 
 // src/navigation.ts
 var $2 = (id) => document.getElementById(id);
-var readerEl2 = $2("reader");
+var readerEl = $2("reader");
 var pageInfoEl = $2("page-info");
 var pageSlider = $2("page-slider");
 var chapterListEl = $2("chapter-list");
@@ -364,34 +360,34 @@ function renderChapter(index) {
   if (index < 0 || index >= state.chapters.length) return;
   state.currentChapterIndex = index;
   const text = getChapterText(index);
-  readerEl2.textContent = text;
+  readerEl.textContent = text;
   fitPageToLines();
-  readerEl2.scrollLeft = 0;
+  readerEl.scrollLeft = 0;
   updatePageInfo();
   highlightActiveChapter(index);
   if (state.tts) state.tts.setSentences(splitSentences(text));
 }
 function fitPageToLines() {
-  const container = readerEl2.parentElement;
+  const container = readerEl.parentElement;
   if (!container) return;
-  const available = container.clientWidth;
+  const available = Math.floor(container.clientWidth);
   if (available <= 0) return;
-  const cs = getComputedStyle(readerEl2);
+  const cs = getComputedStyle(readerEl);
   const fontSize = parseFloat(cs.fontSize);
-  let lineH = parseFloat(cs.lineHeight);
-  if (!isFinite(lineH) || lineH < 5) lineH = fontSize * 1.4;
+  const lineH = Math.max(1, Math.round(fontSize * 1.4));
+  readerEl.style.lineHeight = `${lineH}px`;
   const linesPerPage = Math.max(1, Math.floor(available / lineH));
-  readerEl2.style.width = `${linesPerPage * lineH}px`;
+  readerEl.style.width = `${linesPerPage * lineH}px`;
 }
 function relayout() {
-  const prevClientW = readerEl2.clientWidth || 1;
-  const prevPage2 = Math.round(Math.abs(readerEl2.scrollLeft) / prevClientW);
+  const prevClientW = readerEl.clientWidth || 1;
+  const prevPage2 = Math.round(Math.abs(readerEl.scrollLeft) / prevClientW);
   fitPageToLines();
-  readerEl2.scrollLeft = -(prevPage2 * readerEl2.clientWidth);
+  readerEl.scrollLeft = -(prevPage2 * readerEl.clientWidth);
   updatePageInfo();
 }
 function updatePageInfo() {
-  const maxScroll = readerEl2.scrollWidth - readerEl2.clientWidth;
+  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
   if (maxScroll <= 0) {
     pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${state.chapters.length}  1/1`;
     pageSlider.value = "0";
@@ -399,9 +395,9 @@ function updatePageInfo() {
     savePosition();
     return;
   }
-  const scrollPos = Math.abs(readerEl2.scrollLeft);
-  const pageWidth = readerEl2.clientWidth;
-  const totalPages = Math.ceil(readerEl2.scrollWidth / pageWidth);
+  const scrollPos = Math.abs(readerEl.scrollLeft);
+  const pageWidth = readerEl.clientWidth;
+  const totalPages = Math.ceil(readerEl.scrollWidth / pageWidth);
   const currentPage = Math.floor(scrollPos / pageWidth) + 1;
   pageInfoEl.textContent = `${state.currentChapterIndex + 1}/${state.chapters.length}  ${currentPage}/${totalPages}`;
   pageSlider.max = String(totalPages - 1);
@@ -409,29 +405,29 @@ function updatePageInfo() {
   savePosition();
 }
 function scrollToPage(pageIndex) {
-  readerEl2.scrollLeft = -(pageIndex * readerEl2.clientWidth);
+  readerEl.scrollLeft = -(pageIndex * readerEl.clientWidth);
 }
 function nextPage() {
-  const pageWidth = readerEl2.clientWidth;
-  const maxScroll = readerEl2.scrollWidth - readerEl2.clientWidth;
-  const atEnd = Math.abs(readerEl2.scrollLeft) >= maxScroll - 2;
+  const pageWidth = readerEl.clientWidth;
+  const maxScroll = readerEl.scrollWidth - readerEl.clientWidth;
+  const atEnd = Math.abs(readerEl.scrollLeft) >= maxScroll - 2;
   if (atEnd && state.currentChapterIndex + 1 < state.chapters.length) {
     renderChapter(state.currentChapterIndex + 1);
   } else {
-    readerEl2.scrollBy({ left: -pageWidth, behavior: "smooth" });
+    readerEl.scrollBy({ left: -pageWidth, behavior: "smooth" });
   }
 }
 function prevPage() {
-  const pageWidth = readerEl2.clientWidth;
-  const atStart = Math.abs(readerEl2.scrollLeft) < 2;
+  const pageWidth = readerEl.clientWidth;
+  const atStart = Math.abs(readerEl.scrollLeft) < 2;
   if (atStart && state.currentChapterIndex > 0) {
     renderChapter(state.currentChapterIndex - 1);
     requestAnimationFrame(() => {
-      readerEl2.scrollLeft = -(readerEl2.scrollWidth - readerEl2.clientWidth);
+      readerEl.scrollLeft = -(readerEl.scrollWidth - readerEl.clientWidth);
       updatePageInfo();
     });
   } else {
-    readerEl2.scrollBy({ left: pageWidth, behavior: "smooth" });
+    readerEl.scrollBy({ left: pageWidth, behavior: "smooth" });
   }
 }
 function goToChapter(index) {
@@ -467,8 +463,8 @@ function bindNavigationEvents() {
   pageSlider.oninput = () => scrollToPage(parseInt(pageSlider.value, 10));
   $2("nav-prev").onclick = prevPage;
   $2("nav-next").onclick = nextPage;
-  readerEl2.addEventListener("scroll", () => updatePageInfo());
-  const container = readerEl2.parentElement;
+  readerEl.addEventListener("scroll", () => updatePageInfo());
+  const container = readerEl.parentElement;
   if (container && typeof ResizeObserver !== "undefined") {
     const ro = new ResizeObserver(() => relayout());
     ro.observe(container);
@@ -485,20 +481,20 @@ function bindNavigationEvents() {
         prevPage();
         break;
       case "Home":
-        readerEl2.scrollLeft = 0;
+        readerEl.scrollLeft = 0;
         break;
       case "End":
-        readerEl2.scrollLeft = -readerEl2.scrollWidth;
+        readerEl.scrollLeft = -readerEl.scrollWidth;
         break;
     }
   });
   let touchStartX = 0;
   let touchStartY = 0;
-  readerEl2.addEventListener("touchstart", (e) => {
+  readerEl.addEventListener("touchstart", (e) => {
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
   });
-  readerEl2.addEventListener("touchend", (e) => {
+  readerEl.addEventListener("touchend", (e) => {
     lastTouchEnd = Date.now();
     const endX = e.changedTouches[0].clientX;
     const endY = e.changedTouches[0].clientY;
@@ -511,7 +507,7 @@ function bindNavigationEvents() {
       handleTapZone(endX, endY);
     }
   });
-  readerEl2.addEventListener("click", (e) => {
+  readerEl.addEventListener("click", (e) => {
     if (Date.now() - lastTouchEnd < 300) return;
     handleTapZone(e.clientX, e.clientY);
   });
@@ -533,7 +529,7 @@ var bookSelector = $3("book-selector");
 var bookListEl = $3("book-list");
 var settingsPanel = $3("settings-panel");
 var chapterPanel2 = $3("chapter-panel");
-var readerEl3 = $3("reader");
+var readerEl2 = $3("reader");
 var bookTitleEl = $3("book-title");
 var fontSelect = $3("font-select");
 var ttsBar = $3("tts-bar");
@@ -580,13 +576,7 @@ async function openBook(book) {
     bookTitleEl.textContent = book.name;
     enterReadingMode();
     const saved = getSavedPosition();
-    if (saved) {
-      renderChapter(saved.chapter);
-      readerEl3.scrollLeft = saved.scrollLeft;
-      updatePageInfo();
-    } else {
-      renderChapter(0);
-    }
+    renderChapter(saved?.chapter ?? 0);
     const settings = getSettings();
     state.tts = new AITextToSpeech(settings.tts, handleTTSState);
     state.tts.setSentences(splitSentences(getChapterText(state.currentChapterIndex)));
@@ -633,7 +623,7 @@ function bindEvents() {
     exitReadingMode();
     bookSelector.classList.remove("hidden");
     state.currentBook = null;
-    readerEl3.textContent = "";
+    readerEl2.textContent = "";
   };
   const fontSizeInput = $3("font-size");
   const fontSizeLabel = $3("font-size-label");
@@ -682,7 +672,7 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $3("version");
-  versionEl.textContent = `v${"1.2.5"} (${"0c1427b"})`;
+  versionEl.textContent = `v${"1.2.6"} (${"3b89950"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", async () => {
     versionEl.textContent = "\u66F4\u65B0\u4E2D\u2026";

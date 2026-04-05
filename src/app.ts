@@ -82,13 +82,7 @@ async function openBook(book: Book): Promise<void> {
     enterReadingMode();
 
     const saved = getSavedPosition();
-    if (saved) {
-      renderChapter(saved.chapter);
-      readerEl.scrollLeft = saved.scrollLeft;
-      updatePageInfo();
-    } else {
-      renderChapter(0);
-    }
+    renderChapter(saved?.chapter ?? 0);
 
     const settings = getSettings();
     state.tts = new AITextToSpeech(settings.tts, handleTTSState);
