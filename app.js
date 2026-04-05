@@ -656,7 +656,7 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $3("version");
-  versionEl.textContent = `v${"1.2.2"} (${"3c9c329"})`;
+  versionEl.textContent = `v${"1.2.3"} (${"0686dfb"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", () => location.reload());
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
