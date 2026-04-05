@@ -682,9 +682,20 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $3("version");
-  versionEl.textContent = `v${"1.2.4"} (${"328275d"})`;
+  versionEl.textContent = `v${"1.2.5"} (${"0c1427b"})`;
   versionEl.style.cursor = "pointer";
-  versionEl.addEventListener("click", () => location.reload());
+  versionEl.addEventListener("click", async () => {
+    versionEl.textContent = "\u66F4\u65B0\u4E2D\u2026";
+    try {
+      await Promise.all([
+        fetch("index.html", { cache: "reload" }),
+        fetch("app.js", { cache: "reload" }),
+        fetch("style.css", { cache: "reload" })
+      ]);
+    } catch {
+    }
+    location.reload();
+  });
   await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js");
   applySettings();
   bindEvents();

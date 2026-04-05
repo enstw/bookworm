@@ -211,7 +211,23 @@ async function init(): Promise<void> {
   const versionEl = $('version');
   versionEl.textContent = `v${__APP_VERSION__} (${__BUILD_HASH__})`;
   versionEl.style.cursor = 'pointer';
-  versionEl.addEventListener('click', () => location.reload());
+  // Force-fresh reload: prime the HTTP cache with new copies of the critical
+  // assets (bypassing any GitHub Pages edge cache window), then reload so the
+  // page picks them up. `cache: 'reload'` tells the browser to ignore its own
+  // cache for this request AND to update the cache with the response.
+  versionEl.addEventListener('click', async () => {
+    versionEl.textContent = '更新中…';
+    try {
+      await Promise.all([
+        fetch('index.html', { cache: 'reload' }),
+        fetch('app.js', { cache: 'reload' }),
+        fetch('style.css', { cache: 'reload' }),
+      ]);
+    } catch {
+      // Network hiccup — reload anyway, user can retry.
+    }
+    location.reload();
+  });
 
   await loadScript('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');
 
