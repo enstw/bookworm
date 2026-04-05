@@ -672,7 +672,7 @@ function bindEvents() {
 }
 async function init() {
   const versionEl = $3("version");
-  versionEl.textContent = `v${"1.2.6"} (${"3b89950"})`;
+  versionEl.textContent = `v${"1.2.7"} (${"b57e52e"})`;
   versionEl.style.cursor = "pointer";
   versionEl.addEventListener("click", async () => {
     versionEl.textContent = "\u66F4\u65B0\u4E2D\u2026";
