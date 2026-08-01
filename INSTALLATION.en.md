@@ -426,5 +426,5 @@ offers **return to previous position** to restore and resynchronize it.
 - Edge TTS uses an undocumented protocol and cannot be guaranteed forever.
 - Reader codes are not strong authentication and suit only a small trusted group.
 
-For the lower-level data contracts see [REQUIREMENTS.md](REQUIREMENTS.md), for the standing design
-decisions [DESIGN.md](DESIGN.md); implementation history and device investigations live in the git commit log.
+For the lower-level data contracts see [REQUIREMENTS.md](REQUIREMENTS.md); the standing design
+decisions, including the conclusions of the on-device investigations, are in [DESIGN.md](DESIGN.md).

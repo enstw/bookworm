@@ -413,5 +413,5 @@ Bookworm 採最後閱讀者勝出。同一讀者代號在另一台裝置讀得�
 - Edge TTS 使用未公開協定，不能保證永久可用。
 - 讀者代號不是強式驗證，只適用於小型可信任群體。
 
-更底層的資料合約見 [REQUIREMENTS.md](REQUIREMENTS.md)，現行設計決策見
-[DESIGN.md](DESIGN.md)，實作與真機調查見 git 提交記錄。
+更底層的資料合約見 [REQUIREMENTS.md](REQUIREMENTS.md)，現行設計決策
+（含真機調查的結論）見 [DESIGN.md](DESIGN.md)。

@@ -161,8 +161,7 @@ in the **[Installation & operations guide](INSTALLATION.en.md)**.
 - **Key identity model:** reader keys minted on `/admin` map to reader ids; `/<book-slug>` opens that book at this device's position.
 
 See [REQUIREMENTS.md](REQUIREMENTS.md) for the data contracts and v1 design,
-[DESIGN.md](DESIGN.md) for the standing engineering decisions, and the git
-commit log for implementation history.
+and [DESIGN.md](DESIGN.md) for the standing engineering decisions.
 
 ## Access and security boundary
 

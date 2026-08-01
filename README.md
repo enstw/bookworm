@@ -150,7 +150,7 @@ Bookworm 目前**不適合**需要這些功能的人：
   那本書與這台裝置的位置。
 
 詳細資料合約與 v1 設計見 [REQUIREMENTS.md](REQUIREMENTS.md)，現行工程決策見
-[DESIGN.md](DESIGN.md)，實作歷程見 git 提交記錄。
+[DESIGN.md](DESIGN.md)。
 
 ## 使用與安全邊界
 

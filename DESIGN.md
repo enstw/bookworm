@@ -3,8 +3,9 @@
 A private Chinese-first reader: one Cloudflare Worker (`src/worker.js`), a
 vanilla-JS PWA in `public/`, chapters in R2, reading positions in D1.
 
-The v1 contract lives in `REQUIREMENTS.md`. The git log is the engineering
-history — commit bodies carry the prose. The standing decisions below are the
+The v1 contract lives in `REQUIREMENTS.md`. The engineering history predates
+this repo's publication and lives in the owner's private archive; commit
+bodies carry the prose from here on. The standing decisions below are the
 ones that still govern the code: read the relevant one before reopening a
 decision in that subsystem.
 
