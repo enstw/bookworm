@@ -149,8 +149,9 @@ permanent book id, so a new slug only changes the URL—nothing moves, reading p
 old URL still resolves. GitHub Actions and a CLI are available for huge files and batch work.
 
 Deployment takes about fifteen minutes: fork the project, add three secrets, and run one GitHub Action.
-Permissions, publishing, custom domains, Push, local development, maintenance, and troubleshooting now live
-in the **[Installation & operations guide](INSTALLATION.en.md)**.
+The **[install & operations manual](INSTALLATION.en.md)** is written to be executed by an AI agent —
+hand it to the agent in your terminal and the human does three things in a browser; without an agent,
+the same commands run fine by hand.
 
 ## Technical outline
 

@@ -136,9 +136,9 @@ Bookworm 目前**不適合**需要這些功能的人：
 在一組固定的書號下，改代號只換網址：檔案不搬、閱讀進度不動，舊網址也還通得到。大型
 檔案或批次工作則可交給 GitHub Actions 或 CLI。
 
-部署本身約需 15 分鐘：fork 專案、設定三個 secret、執行一次 GitHub Actions。完整的
-步驟、權限設定、上書方式、推播、自訂網域、本機開發與疑難排解都已移到
-**[安裝與維護指南](INSTALLATION.md)**。
+部署本身約需 15 分鐘：fork 專案、設定三個 secret、執行一次 GitHub Actions。
+**[安裝與維護手冊](INSTALLATION.md)** 直接寫給 AI agent 執行 — 把它交給終端機裡的
+agent，人只需要做三件瀏覽器裡的事；沒有 agent，照著同樣的指令自己跑也行。
 
 ## 技術輪廓
 

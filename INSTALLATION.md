@@ -1,32 +1,63 @@
-# Bookworm 安裝與維護指南
+# Bookworm 安裝與維護手冊
 
-這份文件收納 Bookworm 的部署、上書、日常維護、本機開發與疑難排解。想先了解產品
-定位與特色，請回到 [README](README.md)。
+這份手冊寫給**替你安裝的 AI agent**。把整份檔案交給終端機裡的 agent（Claude Code、
+Codex⋯⋯），說「照 `INSTALLATION.md` 把 Bookworm 裝到我的帳戶」即可；標了 🧑 的步驟
+才需要人親自動手，其餘每一步都是 agent 能直接執行、也能自行驗證的指令。沒有 agent
+也沒關係 — 同樣的指令照順序自己跑，結果相同。
 
-最省事的安裝方式是 **fork 這個 repo，再讓 GitHub Actions 部署到你自己的 Cloudflare
-帳戶**。整個過程約 15 分鐘，不需要在本機安裝開發工具，Windows、macOS 與 Linux
-都可以。
+想先了解產品定位與特色，請回到 [README](README.md)。要改程式再讀
+[DESIGN.md](DESIGN.md)；安裝用不到它。
 
-## 安裝前準備
+## 分工
 
-- 一個免費的 [Cloudflare 帳號](https://dash.cloudflare.com/)。如果從未用過 R2，
-  先進入 R2 頁面啟用；Cloudflare 可能要求填寫付款資料，但免費額度內仍為 `$0`。
-- 一個 GitHub 帳號。
-- 一本你有權保存與使用的 `.txt` 書檔。Bookworm 不附書籍內容。
-- 一個密碼管理器，用來保存稍後產生的 `ADMIN_TOKEN`。
+🧑 **人要做的只有三件事**，都在瀏覽器裡：
 
-## 用 GitHub Actions 部署
+1. 準備一個免費的 [Cloudflare 帳號](https://dash.cloudflare.com/)，並進 R2 頁面啟用
+   一次（首次啟用可能要求付款資料，免費額度內仍為 `$0`）。
+2. 建立 Cloudflare API token（權限見第 2 步的表），抄下 Account ID，交給 agent —
+   或者自己執行貼 token 的那兩行指令。
+3. 部署完成後，把讀者鑰匙連結在手機上打開，加入主畫面。
 
-### 1. Fork 專案並啟用 Actions
+其餘 — fork、secrets、部署、驗證、產生鑰匙、上書 — agent 用 `gh` 與 `curl` 完成。
+另外準備一本你有權保存與使用的 `.txt` 書檔（Bookworm 不附書），和一個密碼管理器
+收 `ADMIN_TOKEN`。
 
-按 GitHub 頁面右上角的 **Fork**。進入自己的 fork 後，打開 **Actions** 分頁，按下
-「I understand my workflows, go ahead and enable them」。GitHub 預設會停用 fork
-帶來的 workflow，不先啟用就無法部署。
+## Agent 守則
 
-### 2. 建立 Cloudflare API token
+- **Secret 只走 stdin。** `gh secret set` 從 stdin 讀值；密鑰不寫進檔案、不放進
+  指令列參數、不出現在 commit 或公開記錄。Cloudflare token 建議由人自己貼（第 3 步）。
+- **一步一驗證。** 每一步都寫了預期結果，對不上就停在那一步查〈疑難排解〉，
+  不要重試到過為止。
+- **部署一律走 GitHub Actions。** 本機不需要 wrangler；裝好之後，push 到 `main`
+  就是部署。（完全不想用 Actions 的替代路徑在〈本機開發〉的 `deploy.sh`。）
 
-進入 Cloudflare 後台的 **My Profile → API Tokens → Create Token → Create Custom
-Token**。內建的「Edit Cloudflare Workers」樣板不包含 R2 與 D1，請自行加入以下權限：
+## 前置檢查
+
+```sh
+gh auth status        # 已登入 GitHub，scope 含 repo 與 workflow
+git --version && curl --version && openssl version
+```
+
+本機的 pnpm 與 Node 只有〈第一本書〉的 B 路徑與〈本機開發〉才需要。
+
+## 安裝
+
+### 1. Fork 並啟用 workflow
+
+```sh
+gh repo fork enstw/bookworm --clone=false
+FORK="$(gh api user -q .login)/bookworm"
+gh workflow enable deploy.yml --repo "$FORK"
+```
+
+GitHub 預設停用 fork 帶來的 workflow；`gh workflow enable` 等同網頁上那顆
+「I understand my workflows, go ahead and enable them」。`publish-book.yml` 與
+`push-test.yml` 之後用到再啟用。
+
+### 2. 🧑 建立 Cloudflare API token
+
+Cloudflare 後台 → **My Profile → API Tokens → Create Token → Create Custom Token**。
+內建的「Edit Cloudflare Workers」樣板不含 R2 與 D1，請照下表加權限：
 
 | 範圍 | 權限 | 等級 |
 | --- | --- | --- |
@@ -36,374 +67,263 @@ Token**。內建的「Edit Cloudflare Workers」樣板不包含 R2 與 D1，請�
 | Account | Account Settings | Read |
 | User | User Details | Read |
 
-在 **Account Resources** 選取自己的 Cloudflare 帳戶。兩個 Read 權限只用於部署前的
-`wrangler whoami` 驗證。
+**Account Resources** 選自己的帳戶。兩個 Read 權限只用於部署前的 `wrangler whoami`
+驗證。另外抄下 **Account ID**：後台 **Workers & Pages** 右側欄就有。
 
-另外記下 **Account ID**：Cloudflare 後台 → **Workers & Pages**，右側欄位即可看到。
+### 3. 設定三個 secret
 
-### 3. 在 GitHub 設定三個 secret
-
-進入自己 fork 的 **Settings → Secrets and variables → Actions → New repository
-secret**，新增：
-
-| Secret | 內容 |
-| --- | --- |
-| `CLOUDFLARE_API_TOKEN` | 上一步建立的 Cloudflare token |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |
-| `ADMIN_TOKEN` | 自己產生、至少 32 字元的隨機管理密鑰 |
-
-如果手邊有終端機，可以用 `openssl rand -hex 24` 產生 `ADMIN_TOKEN`。請先放進密碼
-管理器再貼到 GitHub：GitHub secret 是唯寫的，儲存後無法重新顯示原值。
-
-### 4. 執行第一次部署
-
-進入 **Actions → deploy → Run workflow**。workflow 會自動：
-
-1. 驗證 Cloudflare token。
-1. 建立 D1 資料庫 `bookworm`，並把 ID 寫入 `wrangler.jsonc`。
-1. 建立 R2 bucket `bookworm-books`。
-1. 套用 `schema.sql`。
-1. 準備瀏覽器端依賴並寫入 build 編號。
-1. 部署 Worker。
-1. 將 `ADMIN_TOKEN` 設為 Worker secret。
-1. 探測線上的 `/api/books`。
-
-完成後，執行摘要最上方會出現你的網址，例如：
-
-```text
-https://bookworm.<你的子網域>.workers.dev
-```
-
-打開後會先看到「需要鑰匙」的門 — 這是正常的：先到 `/admin` 產生第一把讀者鑰匙
-（見下文〈讀者鑰匙〉）。此後每次 push 到 `main` 都會自動部署；只修改 Markdown 時
-會略過部署。要取得上游更新，可在 fork 頁面按 **Sync fork**。
-
-## 放上第一本書
-
-### 從瀏覽器上傳
-
-前往：
-
-```text
-https://<你的伺服器>/admin
-```
-
-貼上 `ADMIN_TOKEN`，選取 `.txt` 或 `.zip`，檢查偵測到的書名、網址代稱與章節，再按
-上傳。管理密鑰會存在該瀏覽器的 `localStorage`，不必每次重填。
-
-解壓縮、編碼轉換、簡轉繁與切章都在瀏覽器內完成：
-
-- 輸入編碼支援 UTF-8、GBK、Big5 與 Shift_JIS。
-- 簡轉繁使用 OpenCC `cn→tw`，會處理字形與台灣詞彙。
-- 章節標題若未正確辨識，可自行輸入 regex，例如 `^第.+章`。
-- 同一個網址代稱再次上傳會原地覆蓋，既有閱讀進度保留。
-
-瀏覽器上傳最適合一般使用，也避免把書名與章節資訊留在公開的 GitHub Actions 記錄中。
-
-### 從 GitHub Actions 上書
-
-大型書檔或只有下載網址時，可使用 **Actions → publish book → Run workflow**。它支援：
-
-- `.txt`，或包含一個／多個 `.txt` 的 `.zip`。
-- 指定書名、網址代稱、編碼、簡轉繁與章節 regex。
-- `dry_run`：只切章並在摘要顯示結果，不上傳。
-
-先在 **Settings → Secrets and variables → Actions → Variables** 新增：
-
-| 類型 | 名稱 | 內容 |
-| --- | --- | --- |
-| Secret | `BOOKWORM_URL` | 你的 Bookworm 網址 |
-| Secret（選用） | `BOOK_SOURCE_URL` | 預設書檔網址 |
-| Secret（選用） | `BOOK_SOURCE_HEADER` | 下載來源需要的認證 header |
-
-> 公開 repo 的 Actions 輸入與執行記錄任何人都看得到，書名與章節名也可能出現在摘要。
-> 有版權或不想公開的內容，請用私有 fork 或瀏覽器 `/admin` 上傳。
-
-### 從本機 CLI 上書
-
-本機已完成[開發環境](#本機開發)後，可先切章再上傳：
+Cloudflare 的兩個值由 🧑 直接貼進終端機（`gh secret set` 從 stdin 讀，貼上後按
+Enter 再按 Ctrl-D），這樣它們不必經過與 agent 的對話：
 
 ```sh
-pnpm run split -- ~/books/mybook.txt --title "書名" --slug mybook
-pnpm run publish-book -- out/mybook \
-  --url https://<你的伺服器> --token "$ADMIN_TOKEN"
+gh secret set CLOUDFLARE_API_TOKEN --repo "$FORK"
+gh secret set CLOUDFLARE_ACCOUNT_ID --repo "$FORK"
 ```
 
-切好的內容位於 `out/<slug>/`，已被 gitignore。常用切章參數：
+`ADMIN_TOKEN` 是 Bookworm 自己的管理密鑰，由 agent 產生：
 
-- `--charset gbk`、`big5` 或 `shift_jis`：指定來源編碼，輸出一律為 UTF-8。
-- `--pattern '^第.+章'`：覆寫章節標題規則。
-- `--s2t`：使用 OpenCC `cn→tw` 轉換內文、標題與檔名。
-- 已切成 `NN_章名.txt` 的內容，可以直接將整個資料夾當成輸入。
+```sh
+ADMIN_TOKEN="$(openssl rand -hex 24)"
+echo "$ADMIN_TOKEN"   # 🧑 先抄進密碼管理器 — GitHub secret 是唯寫的，存了就看不回來
+printf '%s' "$ADMIN_TOKEN" | gh secret set ADMIN_TOKEN --repo "$FORK"
+```
 
-若偵測到的標題少於三個，切章器會依大小分段；過大的單章則會在行邊界繼續切開。
+### 4. 部署
 
-## 讀者鑰匙：第一次開書之前
+```sh
+gh workflow run deploy --repo "$FORK"
+RUN="$(gh run list --repo "$FORK" --workflow deploy --limit 1 --json databaseId -q '.[0].databaseId')"
+gh run watch "$RUN" --repo "$FORK" --exit-status
+```
 
-閱讀需要**讀者鑰匙**。部署完成後打開 `/admin`，在「讀者鑰匙」區產生第一把：
+（run 要一兩秒才會出現；`gh run list` 撈不到就再等一下。）workflow 會驗證 token、
+建立 D1 資料庫 `bookworm` 與 R2 bucket `bookworm-books`、套用 `schema.sql`、部署
+Worker、設好 secret，最後帶著 `ADMIN_TOKEN` 探測一次 `/api/books`。整趟大約兩三分鐘。
 
-1. 讀者代號留空（自動產生）或填一個你想要的短代號。
-2. 備註填裝置名稱（例如「我的 iPhone」），方便日後撤銷。
-3. 按**產生鑰匙** — 登入連結會自動複製，形式是 `https://<你的伺服器>/?key=…`。
+完成後從記錄裡撈出網址：
 
-把連結用 AirDrop 或訊息傳到要閱讀的裝置上打開，該裝置就完成登入，之後不需再輸入。
-一台裝置一把鑰匙；同一位讀者（同代號）可以有多把，進度與設定會跟著代號同步。
-裝置遺失時，回到 `/admin` 撤銷那把鑰匙即可 — 其他裝置不受影響。
+```sh
+URL="$(gh run view "$RUN" --repo "$FORK" --log | grep -m1 -oE 'https://[a-z0-9.-]+\.workers\.dev')"
+echo "$URL"
+```
 
-書籍網址的形式是 `https://<你的伺服器>/<書籍代稱>`（舊的
-`/<書籍代稱>/<讀者代號>` 連結仍可開啟，代號部分已不再使用）。
+預期形如 `https://bookworm.<你的子網域>.workers.dev`。此後每次 push 到 `main` 都會
+自動部署；只動 Markdown 的 push 會跳過。要取得上游更新見〈日常維護〉。
 
-在手機上選擇「加入主畫面」即可安裝成全螢幕 PWA。無論當時停在哪一頁，安裝後的
-入口一律是書架（manifest 的 `start_url`）— 書架記著每本書的進度，點進去就回到
-上次的位置。裝置登入完成後，App 也會主動提示一次安裝步驟。離線閱讀預設就是開
-的：翻開一本書，目前附近的章節與 App 外殼會自動留在裝置上；在書架上按某本書的
-⇣ 可以先存起來，再按一次則把那本書的離線內容刪掉。
+### 5. 驗證
 
-## 存取模型與安全
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' "$URL/api/books"          # 預期 401
+curl -s -H "authorization: Bearer $ADMIN_TOKEN" "$URL/api/books"   # 預期 {"books":[]}
+```
 
-書的內容、閱讀進度、語音朗讀都在讀者鑰匙後面：沒有有效鑰匙的請求一律 401。鑰匙
-由伺服器以 cookie 形式記在裝置上（一年效期，會自動修復），撤銷即失效；已存在裝置
-上的離線章節不受撤銷影響 — 撤銷擋的是伺服器，不是手機裡已有的東西。
+無鑰匙的 401 是對的：內容都在讀者鑰匙後面。用瀏覽器打開 `$URL` 會看到「需要鑰匙」
+的門，同一件事。
 
-維持開放的只有：App 外殼（程式碼本來就是公開的）、`/api/feedback`（改進建議，
-設計上就是無鑰匙讀取）與 `/api/testlog`（裝置診斷回報）。管理與上傳端點一律由
-`ADMIN_TOKEN` 保護，與讀者鑰匙互相獨立。
+### 6. 第一把讀者鑰匙
+
+閱讀需要**讀者鑰匙**，一台裝置一把。agent 直接產生：
+
+```sh
+curl -s -X POST "$URL/api/admin/readers" \
+  -H "authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
+  -d '{"label":"我的 iPhone"}'
+# 預期 {"ok":true,"key":"<32 位 hex>","user":"<自動產生的讀者代號>","label":"我的 iPhone"}
+```
+
+登入連結是 `$URL/?key=<key>`。🧑 用 AirDrop 或訊息把連結傳到閱讀裝置上打開 —
+裝置便完成登入、落在書架上，之後不需再輸入；App 也會提示一次「加入主畫面」，
+裝成全螢幕 PWA。
+
+- 同一位讀者（同 `user` 代號）可以有多把鑰匙，進度與設定跟著代號在裝置間同步。
+  幫第二台裝置產鑰匙時帶同一個代號：`-d '{"user":"<代號>","label":"iPad"}'`。
+- 裝置遺失就撤銷那把鑰匙，其他裝置不受影響：在 `/admin` 按撤銷，或
+  `curl -X DELETE "$URL/api/admin/readers/<key>" -H "authorization: Bearer $ADMIN_TOKEN"`。
+- 離線閱讀預設就是開的：翻開一本書，附近章節與 App 外殼自動留在裝置上；書架上按
+  某本書的 ⇣ 整本先存，再按一次刪掉那本書的離線內容。
+
+### 7. 第一本書
+
+上書不用重新部署，三條路選一條：
+
+**A. 瀏覽器上傳（🧑，最私密，免工具）** — 打開 `$URL/admin`，貼上 `ADMIN_TOKEN`，
+選 `.txt` 或 `.zip`，確認偵測到的書名、代稱與章節再上傳。解壓縮、編碼轉換
+（UTF-8／GBK／Big5／Shift_JIS）、OpenCC `cn→tw` 簡轉繁與切章都在瀏覽器內完成；
+章節辨識失敗可自填 regex（例如 `^第.+章`）。同代稱再傳一次是原地覆蓋，閱讀進度保留。
+
+**B. 本機 CLI（agent；需 [pnpm](https://pnpm.io/installation) 11 與 Node 22）** —
+
+```sh
+gh repo clone "$FORK" bookworm && cd bookworm && pnpm install
+pnpm run split -- ~/books/mybook.txt --title "書名" --slug mybook
+pnpm run publish-book -- out/mybook --url "$URL" --token "$ADMIN_TOKEN"
+```
+
+常用切章參數：`--charset gbk|big5|shift_jis`（輸出一律 UTF-8）、`--s2t`（OpenCC
+`cn→tw`，內文、標題、檔名一起轉）、`--pattern '^第.+章'`。標題匹配少於三個時改按
+大小分段，過大的單章在行邊界續切；已切成 `NN_章名.txt` 的資料夾可整個當輸入。
+切出的 `out/` 已被 gitignore。
+
+**C. GitHub Actions（免本機工具；記錄公開）** — 適合只有下載網址的大檔：
+
+```sh
+printf '%s' "$URL" | gh secret set BOOKWORM_URL --repo "$FORK"
+gh workflow enable publish-book.yml --repo "$FORK"
+gh workflow run "publish book" --repo "$FORK" \
+  -f source_url="https://example.com/book.txt" -f s2t=true -f dry_run=true
+```
+
+`dry_run=true` 只切章、把抓到的章節列在執行摘要裡；確認沒切錯再關掉重跑。
+⚠ 公開 repo 的 Actions 輸入與記錄任何人都看得到，書名與章節名會留在上面 —
+有版權或不想公開的內容走 A，或用私有 fork。
+
+安裝到此完成：書架在 `$URL`，管理在 `$URL/admin`。
 
 ## 選用設定
 
 ### 自訂網域
 
-在 Cloudflare 進入 **Workers → bookworm → Settings → Domains & Routes → Add**。
+🧑 在 Cloudflare 進入 **Workers → bookworm → Settings → Domains & Routes → Add**。
+只在後台加網域，**不要**把 `routes` 寫進 `wrangler.jsonc` — 部署 token 沒有 zone
+權限，寫了下次部署就失敗。
 
-如果部署 token 沒有 zone 權限，請只在後台加入網域，不要把 `routes` 寫進
-`wrangler.jsonc`，否則下次部署會失敗。
-
-讀者代號與離線快取都綁定 origin。更換網域後，每台裝置需要在新書架按 **更換**，
-重新輸入原本的讀者代號；伺服器上的閱讀進度會跟著代號保留。
+讀者鑰匙的 cookie 與離線快取都綁著 origin。換網域後，用原本的讀者代號重發鑰匙
+（`-d '{"user":"<代號>"}'`），把新連結在每台裝置上打開；伺服器上的進度跟著代號，
+不會丟。
 
 ### 新書推播
 
-Web Push 是選用功能。先在本機產生 VAPID 金鑰：
+Web Push 是選用功能，需要本機 clone 與 pnpm（見〈第一本書〉B）：
 
 ```sh
 pnpm exec node scripts/gen-vapid.mjs
+gh secret set VAPID_PRIVATE_JWK --repo "$FORK"    # 貼上指令印出的 private JWK
+printf '%s' "mailto:you@example.com" | gh secret set VAPID_SUBJECT --repo "$FORK"
+gh workflow run deploy --repo "$FORK"
 ```
 
-將輸出加入 GitHub repository secrets：
+讀者之後可在書架頁尾訂閱新書通知，旁邊的**測試**按鈕驗證裝置、瀏覽器與推播服務的
+整條路徑。要全鏈路實測，`push test` workflow 會上架一本測試書（真的發通知）再自動
+刪掉：
 
-| Secret | 內容 |
-| --- | --- |
-| `VAPID_PRIVATE_JWK` | 指令輸出的 private JWK |
-| `VAPID_SUBJECT` | 你的聯絡方式，例如 `mailto:you@example.com` |
+```sh
+gh workflow enable push-test.yml --repo "$FORK"
+gh workflow run "push test" --repo "$FORK"
+```
 
-重新執行 deploy workflow。讀者之後可在書架頁尾訂閱新書通知，並用旁邊的**測試**按鈕
-驗證裝置、瀏覽器與推播服務的整條路徑。
-
-iPhone 只有已加入主畫面的 PWA 會提供 `PushManager`；一般 Safari 分頁不會顯示訂閱
-選項。更換 VAPID 金鑰會使既有訂閱失效，需要讓讀者重新訂閱。
-
-圖示上的紅點（badge）不是通知的附帶效果 —— 要自己呼叫 Badging API。service worker
-收到推播時會呼叫 `setAppBadge()`，數字取自系統通知匣裡還留著幾則；下次打開 App
-（或從通知點進來）就清掉。同樣只有加到主畫面、且已允許通知的 App 才看得到；有沒有
-成功會寫進推播紀錄，用 `/api/testlog?page=push` 讀得回來。
+iPhone 只有已加入主畫面的 PWA 才有 `PushManager`，一般 Safari 分頁不會顯示訂閱
+選項。更換 VAPID 金鑰會使既有訂閱失效，需要重新訂閱。圖示紅點是 service worker
+收到推播時呼叫 `setAppBadge()` 畫上去的，下次打開 App 就清掉；有沒有成功會寫進
+推播紀錄，`curl "$URL/api/testlog?page=push&limit=5"` 讀得回來。
 
 ### 語音朗讀
 
 朗讀預設開啟，不需要 API key。Worker 使用 Microsoft Edge 的未公開朗讀協定，語音
-目前固定為 `zh-TW-HsiaoChenNeural`；聽過的 MP3 片段快取在 R2 的 `_tts/`。
-
-這個端點沒有穩定性承諾，若未來朗讀突然失效，應先檢查協定是否改變。語音快取目前
-不會自動淘汰，可在 R2 用量異常上升時檢查 `_tts/`。
+固定為 `zh-TW-HsiaoChenNeural`；聽過的 MP3 片段快取在 R2 的 `_tts/`。這個端點沒有
+穩定性承諾 — 朗讀突然失效時先查協定是否改變；語音快取不會自動淘汰，R2 用量異常
+上升時檢查 `_tts/`。
 
 ## 日常維護
 
 ### 更新 Bookworm
 
-在 GitHub fork 頁面按 **Sync fork**。同步到 `main` 後，deploy workflow 會自動執行；
-書籍與閱讀位置不會因部署而消失。
+```sh
+gh repo sync "$FORK" --source enstw/bookworm
+```
+
+同步到 `main` 後 deploy workflow 自動執行；書籍與閱讀位置不會因部署而消失。
 
 ### 強制更新手機上的舊介面
 
-書架頁尾的 build 編號旁有**重新整理**。它會清除 App 外殼快取與 service worker 後
-重新載入，但保留已下載的離線章節。
+書架頁尾 build 編號旁有**重新整理**：清掉 App 外殼快取與 service worker 後重新
+載入，已下載的離線章節保留。
 
-### 改書名、改網址代稱或刪書
+### 改書名、改代稱、刪書
 
-開啟 `/admin`（書架頁尾的**管理**就指向它），輸入 `ADMIN_TOKEN`。驗證後，頁面上半
-部列出書架上每一本書，各自可以：
+開啟 `$URL/admin`（書架頁尾的**管理**就指向它）。上半部列出書架上每一本書：改書名
+只動書目；改代稱只換網址 — 每本書實際存在一組永久書號（R2 的鍵前綴）底下，代稱
+只是指過去的名字，所以檔案不搬、語音快取不掉、進度不動，舊代稱也還通得到；刪除
+會連章節、語音快取與所有讀者的進度一起清掉，要打書籍代稱確認，無法復原。
 
-- **改書名**：只改書目裡的書名，章節與語音快取原封不動。
-- **改代號**：只換網址。每本書實際存在一組永久的書號（R2 的鍵前綴）底下，代號只是
-  指向書號的一個名字，所以改代號一個請求就好：檔案不搬、語音快取不掉、閱讀進度不
-  動，連舊代號都還通得到（舊書籤不會壞）。
-- **刪除**：章節、語音快取與所有讀者的閱讀位置一起清掉，無法復原；必須把書籍代稱
-  打進去才會執行。
+### 健康檢查與修復
 
-### 檢查與修復
+`/admin` 中段是兩顆按鈕：**健康檢查**只讀不寫，隨時可按，它說沒問題就是沒問題 —
+R2 的檔案才是事實，書架索引只是被檢查的對象之一。**修復**是這頁唯一會寫的按鈕，
+只處理剛剛檢查出來的那些：先重建書架索引（唯一把東西放回去的一步；索引與檔案
+對不上、或代稱撞號，都在這一步解決或現形），再刪掉誰都讀不到的東西，最後把同一個
+檢查再跑一次當證明。判準一句話：**書架上沒有的，就是誰都讀不到的** — 不必搶救，
+刪掉重傳就好。
 
-`/admin` 中段是兩顆按鈕，兩個階段：**健康檢查**先看，**修復**才動手 —— 像
-`brew doctor` 和 `brew doctor --fix` 分開。判準就一句話 ——
-**書架上沒有的，就是誰都讀不到的**，不必搶救，刪掉重傳就好。
-
-**健康檢查**只讀不寫，從頭到尾都是。它隨時可以按，而且不預設任何修復已經跑過：
-R2 的檔案才是事實，索引只是被檢查的東西之一，不是前提。所以它說沒問題就是沒問題 ——
-一句能相信的沉默，是它存在的意義。（它以前只能接在重建索引後面跑，那時一筆發現
-可能只是「索引還沒跟上」而不是「壞了」，於是它既不能單獨按，沉默也不值錢。）
-
-**修復**是這頁唯一會寫東西的按鈕，而且只處理剛剛檢查出來的那些。它會：先重建索引，
-再把讀不到的東西刪掉，最後把同一個檢查再跑一次當作證明。順序是有理由的 —— 重建
-索引是唯一把東西放回去而不是拿走的一步，也是其中兩種發現的完整解答。
-
-**重建索引**單獨沒有按鈕，因為它會寫：它是修復的第一步，別的地方都不需要它。書架是
-照著各書 `manifest.json` 建出來的索引，索引和實際檔案對不上時（或第一次升級到書號
-制時），按修復就會一起處理掉。它唯一會回報的是**代號撞號** —— 那要寫進資料庫才看得
-出來，也是健康檢查唯一看不到的問題。結果報在上半部的書單底下，因為它講的是書架。
-
-檢查與修復之間有個空窗：中間可能有人上傳了新書。所以每個會刪東西的請求都會自己再
-確認一次它憑什麼刪 —— 送出的前提（「這本書的檔案不見了」、「這本書缺章」、「這本
-書的書目讀不出來」）由伺服器對著 R2 重驗，對不上就回 409 拒絕，而不是照著一份可能
-過期的掃描結果動手。
-
-會被清掉的：
+每個會刪東西的請求都帶著自己的前提，由伺服器對著 R2 重驗，對不上回 409 — 檢查與
+修復之間就算有人上傳新書，也不會被一份過期的掃描誤刪。會整本刪掉的兩種發現
+（**書不完整**、**書目檔壞了**）會先列出清單、等按一次確認才動手 — 整本刪掉連該書
+所有人的閱讀進度一起清，重新上傳會拿到新書號。
 
 | 發現 | 意思 |
 |---|---|
-| 有檔案沒書目 | 某個書號底下有章節檔，但沒有 `manifest.json` —— 上傳或搬移中斷 |
-| 語音快取的書已不在 | `_tts/<書號>/` 的書早就刪了 —— 通常最占空間 |
-| 代號指向不存在的書 | 網址解得到、書卻不在 |
+| 有檔案沒書目 | 書號底下有章節檔但沒有 `manifest.json` — 上傳或搬移中斷 |
+| 語音快取的書已不在 | `_tts/<書號>/` 的書早就刪了 — 通常最占空間 |
+| 代稱指向不存在的書 | 網址解得到、書卻不在 |
 | 進度屬於不存在的書 | 沒有人能打開的書的閱讀進度 |
 | 桶子根目錄的雜物 | 不屬於任何書的物件 |
-| 書目沒列到的多餘檔案 | 書號底下有書目沒提到的檔案 —— 重新切章後留下的舊檔 |
-| 書不完整 | 書目列的章節檔，R2 裡少了或大小不符 —— 整本刪掉，重新上傳 |
-| 書目檔壞了，讀不出來 | `manifest.json` 在，但不是合法的 JSON —— 跟沒有一樣讀不到 |
+| 書目沒列到的多餘檔案 | 重新切章後留下的舊檔 |
+| 書不完整 | 書目列的章節檔在 R2 缺了或大小不符 — 整本刪掉重傳 |
+| 書目檔壞了 | `manifest.json` 不是合法 JSON — 跟沒有一樣讀不到 |
 
-「書不完整」是唯一會逐章比對的檢查：書架上的章數與字數都來自各書的 `manifest.json`
-—— 那是上傳端的說法，不是量出來的。這一項會把說法和桶子裡實際有的檔案對一次（有
-記錄位元組大小的書還會比大小）。缺章的書會整本清掉：讀者翻到一半撞牆比沒有這本書
-更糟，而且沒什麼好搶救的 —— 重新上傳就是了。（注意：整本刪掉會連同該書的閱讀進度
-一起清；重新上傳會拿到新的書號。）這一項也是唯一連書架沒收錄的書都會數的檢查 ——
-沒有索引列的書，正好就是沒人數過章節的那種。
+平常不用跑；上傳中斷、刪到一半、或搬家之後值得按一下檢查。修復後的複檢若還剩
+東西，那是 bug，照 bug 回報。
 
-「書目檔壞了」跟「有檔案沒書目」一樣讀不到：進書的每條路都要經過索引，而索引是照
-`manifest.json` 建的，讀不出來就沒有任何一條路進得去。它只能在真的去讀書目的那一
-輪被發現 —— 掃書那一輪只 HEAD 一下，而 HEAD 分不出好書目和壞書目。
+## 存取模型與安全
 
-會整本刪掉的兩種（**書不完整**、**書目檔壞了**）會先停下來問：其他東西早就沒人讀得
-到，刪了不會有人少東西，但一本書不一樣 —— 它還在書架上、還半能用，整本掃掉會連每個
-人讀到哪都一起沒了。所以修復會把要刪的書列出來，等按一次確認才動；取消就什麼都不動。
-
-只報告、不動手的：**書架索引漏掉**、**索引有書、檔案不見** —— 修復的第一步重建索引
-就處理掉了，不需要另外的動作；**不合法的書號前綴** 則是伺服器根本定址不到，要從
-Cloudflare R2 後台處理。
-
-修復完會再檢查一次確認。因為檢查是完整的，這一次跑出來的東西就是修復沒修好的 ——
-不是它挖出來的新問題，所以剩東西就是 bug，可以照 bug 講。平常不用跑；上傳中斷、
-刪到一半、或搬過家之後值得按一下檢查。
+書的內容、閱讀進度、語音朗讀都在讀者鑰匙後面：沒有有效鑰匙一律 401。鑰匙由伺服器
+以 cookie 記在裝置上（一年效期，會自動修復），撤銷即失效；已存在裝置上的離線章節
+不受撤銷影響 — 撤銷擋的是伺服器，不是手機裡已有的東西。維持開放的只有 App 外殼
+（程式碼本來就公開）、`/api/feedback` 與 `/api/testlog`。管理與上傳端點一律由
+`ADMIN_TOKEN` 保護，與讀者鑰匙互相獨立。讀者代號不是強式驗證，適用於小型可信任
+群體。
 
 ## 本機開發
 
-需要 [pnpm](https://pnpm.io/installation) 11 與其管理的 Node.js 22 以上環境。本機流程
-一律使用 pnpm；不需要 npm、npx、yarn 或 corepack。
+需要 pnpm 11 與其管理的 Node.js 22 以上環境；本機流程一律 pnpm，不需要 npm、npx、
+yarn 或 corepack。
 
 ```sh
-git clone https://github.com/<你>/bookworm.git
-cd bookworm
-pnpm install
+gh repo clone "$FORK" bookworm && cd bookworm && pnpm install
+cp .dev.vars.example .dev.vars
+pnpm run db:init:local
+pnpm run dev            # http://localhost:8787
+```
 
+測試（端對端需要 Chromium；TTS 串流另需 `ffmpeg`）：
+
+```sh
+pnpm test               # 或 test:push、test:tts、test:vertical、test:bg、
+                        #    test:admin、test:shelf、test:offline 單獨跑
+```
+
+不想用 GitHub Actions 的話，`deploy.sh` 在本機做一模一樣的部署：
+
+```sh
 cp .deploy.env.example .deploy.env
-# 填入 CLOUDFLARE_API_TOKEN、CLOUDFLARE_ACCOUNT_ID、ADMIN_TOKEN
+# 填 CLOUDFLARE_API_TOKEN、CLOUDFLARE_ACCOUNT_ID、ADMIN_TOKEN
 ./scripts/deploy.sh
 ```
 
-`.deploy.env` 已被 gitignore，切勿提交。`deploy.sh` 會建立或找到 D1、建立 R2、套用
-schema、部署 Worker 並設定 secret；它也會把你帳戶的 D1 `database_id` 寫進
-`wrangler.jsonc`，請將該變更提交到自己的 fork。
-
-若偏好逐步執行：
-
-```sh
-pnpm exec wrangler login
-pnpm exec wrangler d1 create bookworm
-# 把得到的 ID 寫入 wrangler.jsonc
-pnpm exec wrangler r2 bucket create bookworm-books
-pnpm run db:init
-pnpm exec wrangler secret put ADMIN_TOKEN
-pnpm run deploy
-```
-
-本機開發伺服器：
-
-```sh
-cp .dev.vars.example .dev.vars
-pnpm run db:init:local
-pnpm run dev
-```
-
-預設網址是 <http://localhost:8787>。
-
-### 測試
-
-```sh
-pnpm test
-```
-
-完整測試涵蓋推播加密與 API、書架管理、直排與背景切換、TTS 串流與離線行為。單獨
-執行時可使用：
-
-```sh
-pnpm run test:push
-pnpm run test:tts
-pnpm run test:vertical
-pnpm run test:bg
-pnpm run test:admin
-pnpm run test:shelf
-pnpm run test:offline
-```
-
-端對端測試需要 Chromium；TTS 串流測試另需 `PATH` 上有 `ffmpeg`。
+`.deploy.env` 已被 gitignore，切勿提交。`deploy.sh` 會把你帳戶的 D1 `database_id`
+寫進 `wrangler.jsonc`，請將那個變更提交到自己的 fork。
 
 ## 疑難排解
 
-### Actions 分頁是空的，或 workflow 無法執行
-
-Fork 帶來的 workflow 預設停用。到 Actions 分頁按一次「I understand my workflows,
-go ahead and enable them」。
-
-### `wrangler d1 create` 失敗，或顯示 R2 尚未啟用
-
-先到 Cloudflare 後台的 R2 頁面啟用服務，再重新執行 workflow。首次啟用可能要求付款
-資料，但不會改變免費額度。
-
-### 第一次部署要求設定 `workers.dev` 子網域
-
-新 Cloudflare 帳戶必須先選一個子網域。進入 **Workers & Pages → Add** 完成設定後，
-重新執行部署。
-
-### token 驗證立即失敗
-
-確認 token 同時具備 `Account Settings · Read` 與 `User Details · Read`，並在 Account
-Resources 包含正確帳戶。成功時 workflow 不會印出 `wrangler whoami` 的內容，以免
-公開 Actions 記錄洩漏 Cloudflare email。
-
-### 第一次部署完成，但探測回 404
-
-Worker 可能仍在傳播。等待幾秒後重新開啟執行摘要中的網址。
-
-### `pnpm install --frozen-lockfile` 在 CI 失敗
-
-若自己的 pnpm 設定含 `minimumReleaseAge`，剛發佈的依賴可能暫時無法安裝。稍後重建
-lockfile 並提交，或等待設定的時間窗結束。
-
-### 切章後只得到一個巨大章節
-
-來源標題不符合內建規則。用 `--pattern` 傳入能匹配標題行的 regex，或自行切成
-`NN_章名.txt` 後，把整個資料夾交給切章器。
-
-### 某台裝置跳到不正確的位置
-
-Bookworm 採最後閱讀者勝出。同一讀者代號在另一台裝置讀得更晚時，會以較新的時間戳
-為準。若同步位置與本機上次位置相差兩章以上，畫面會顯示**回到上次位置**，可一鍵恢復
-並重新同步。
+| 症狀 | 處置 |
+|---|---|
+| `gh workflow run` 回 404 或 workflow 停用 | Fork 的 Actions 還沒啟用：`gh api -X PUT "repos/$FORK/actions/permissions" -F enabled=true`，再 `gh workflow enable deploy.yml --repo "$FORK"` |
+| 部署在 `d1 create` 失敗，或說 R2 未啟用 | 🧑 到 Cloudflare 後台 R2 頁啟用一次（可能要求付款資料，免費額度不變），重跑 workflow |
+| 第一次部署要求 `workers.dev` 子網域 | 🧑 新帳戶要先選子網域：**Workers & Pages → Add** 完成後重跑 |
+| token 驗證立即失敗 | token 要同時有 `Account Settings · Read` 與 `User Details · Read`，且 Account Resources 含正確帳戶。成功時 workflow 故意不印 `wrangler whoami` — 公開記錄會洩漏 Cloudflare email |
+| 部署完成但探測回 404 | Worker 還在傳播，等幾秒重試 |
+| CI 在 `pnpm install --frozen-lockfile` 失敗 | 自己的 pnpm 設定含 `minimumReleaseAge` 時，剛發佈的依賴會暫時裝不了；稍後重建 lockfile 提交，或等時間窗過 |
+| 切章只得到一個巨大章節 | 用 `--pattern` 傳能匹配標題行的 regex，或先切成 `NN_章名.txt` 再把資料夾餵給切章器 |
+| 某台裝置跳到不對的位置 | 最後閱讀者勝出；同步位置與本機相差兩章以上時畫面會出現**回到上次位置**，一鍵恢復 |
 
 ## 已知限制
 

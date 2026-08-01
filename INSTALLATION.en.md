@@ -1,32 +1,65 @@
-# Bookworm installation & operations
+# Bookworm install & operations manual
 
-This guide covers deployment, book publishing, routine maintenance, local development, and troubleshooting.
-For the product story and feature overview, return to the [README](README.en.md).
+This manual is written for **the AI agent installing Bookworm for you**. Hand the whole file to the
+agent in your terminal (Claude Code, Codex, …) and say "follow `INSTALLATION.md` and install Bookworm
+into my accounts"; only the steps marked 🧑 need a human's hands, and every other step is a command the
+agent can run and verify by itself. No agent? The same commands run fine by hand, in order, with the
+same result.
 
-The easiest route is to **fork this repository and let GitHub Actions deploy it into your own Cloudflare
-account**. It takes about fifteen minutes, requires no local development tools, and works the same from
-Windows, macOS, or Linux.
+For the product story and feature overview, return to the [README](README.en.md). Read
+[DESIGN.md](DESIGN.md) before changing code; installing does not need it.
 
-## Before you begin
+## Who does what
 
-- A free [Cloudflare account](https://dash.cloudflare.com/). If you have never used R2, open its dashboard
-  once to activate it. Cloudflare may request billing details; usage within the free allowance remains `$0`.
-- A GitHub account.
-- A `.txt` book that you have the right to store and use. Bookworm ships no content.
-- A password manager for the `ADMIN_TOKEN` you will create below.
+🧑 **The human does exactly three things**, all in a browser:
 
-## Deploy with GitHub Actions
+1. Have a free [Cloudflare account](https://dash.cloudflare.com/) and open the R2 page once to activate
+   it (first activation may ask for billing details; usage within the free allowance stays `$0`).
+2. Create a Cloudflare API token (permission table in step 2), copy the Account ID, and hand both to
+   the agent — or run the two token-pasting commands yourself.
+3. After deployment, open the reader-key link on the phone and add the app to the Home Screen.
 
-### 1. Fork the project and enable Actions
+Everything else — fork, secrets, deployment, verification, key minting, publishing — the agent does
+with `gh` and `curl`. Also have ready: a `.txt` book you have the right to store and use (Bookworm
+ships no content), and a password manager for the `ADMIN_TOKEN`.
 
-Click **Fork** in the top-right corner of the GitHub page. In your fork, open **Actions** and click
-“I understand my workflows, go ahead and enable them.” GitHub disables workflows inherited by a fork until
-you explicitly enable them.
+## Rules for the agent
 
-### 2. Create a Cloudflare API token
+- **Secrets travel by stdin only.** `gh secret set` reads stdin; never write a secret into a file, a
+  command-line argument, a commit, or a public log. The Cloudflare token is best pasted by the human
+  (step 3).
+- **Verify every step.** Each step states its expected result; on a mismatch, stop there and consult
+  Troubleshooting instead of retrying until it passes.
+- **Deploy through GitHub Actions, always.** No local wrangler is needed; once installed, pushing to
+  `main` is deploying. (The no-Actions alternative is `deploy.sh` under Local development.)
 
-Open **My Profile → API Tokens → Create Token → Create Custom Token** in Cloudflare. The built-in “Edit
-Cloudflare Workers” template does not include R2 and D1, so grant these exact permissions:
+## Preflight
+
+```sh
+gh auth status        # logged in to GitHub, scopes include repo and workflow
+git --version && curl --version && openssl version
+```
+
+Local pnpm and Node are needed only for path B of "The first book" and for Local development.
+
+## Install
+
+### 1. Fork and enable workflows
+
+```sh
+gh repo fork enstw/bookworm --clone=false
+FORK="$(gh api user -q .login)/bookworm"
+gh workflow enable deploy.yml --repo "$FORK"
+```
+
+GitHub disables workflows inherited by a fork; `gh workflow enable` is the CLI equivalent of the
+"I understand my workflows, go ahead and enable them" button. Enable `publish-book.yml` and
+`push-test.yml` later, when they are used.
+
+### 2. 🧑 Create a Cloudflare API token
+
+In Cloudflare: **My Profile → API Tokens → Create Token → Create Custom Token**. The built-in "Edit
+Cloudflare Workers" template does not include R2 and D1, so grant exactly:
 
 | Scope | Permission | Level |
 | --- | --- | --- |
@@ -36,395 +69,282 @@ Cloudflare Workers” template does not include R2 and D1, so grant these exact 
 | Account | Account Settings | Read |
 | User | User Details | Read |
 
-Under **Account Resources**, include your Cloudflare account. The two Read permissions are used only by
-the pre-deployment `wrangler whoami` check.
+Under **Account Resources**, include your account. The two Read permissions exist only for the
+pre-deployment `wrangler whoami` check. Also copy the **Account ID** from the sidebar under
+**Workers & Pages**.
 
-Also copy your **Account ID** from the sidebar under **Workers & Pages**.
+### 3. Add the three secrets
 
-### 3. Add three GitHub secrets
-
-In your fork, open **Settings → Secrets and variables → Actions → New repository secret** and add:
-
-| Secret | Value |
-| --- | --- |
-| `CLOUDFLARE_API_TOKEN` | The Cloudflare token from the previous step |
-| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare Account ID |
-| `ADMIN_TOKEN` | A random admin key of at least 32 characters |
-
-If a terminal is available, `openssl rand -hex 24` makes a suitable `ADMIN_TOKEN`. Save it in your password
-manager before pasting it into GitHub: repository secrets are write-only and cannot be displayed again.
-
-### 4. Run the first deployment
-
-Open **Actions → deploy → Run workflow**. The workflow will:
-
-1. Verify the Cloudflare token.
-1. Create the `bookworm` D1 database and write its ID to `wrangler.jsonc`.
-1. Create the `bookworm-books` R2 bucket.
-1. Apply `schema.sql`.
-1. Prepare browser dependencies and stamp the build number.
-1. Deploy the Worker.
-1. install `ADMIN_TOKEN` as a Worker secret.
-1. Probe the live `/api/books` endpoint.
-
-The run summary will show your URL, similar to:
-
-```text
-https://bookworm.<your-subdomain>.workers.dev
-```
-
-Opening it shows a locked door asking for a key — that is expected: mint your first reader key on `/admin`
-first (see “Reader keys” below). Future pushes to `main` deploy automatically;
-Markdown-only changes are skipped. Use **Sync fork** on GitHub to pull upstream updates.
-
-## Publish the first book
-
-### Upload in the browser
-
-Visit:
-
-```text
-https://<your-server>/admin
-```
-
-Paste `ADMIN_TOKEN`, choose a `.txt` or `.zip`, inspect the detected title, slug, and chapters, then upload.
-The key is kept in that browser's `localStorage`, so it only needs to be entered once.
-
-Decompression, charset conversion, Simplified-to-Traditional conversion, and chapter splitting all run
-inside the browser:
-
-- Input encodings include UTF-8, GBK, Big5, and Shift_JIS.
-- S→T uses OpenCC `cn→tw`, converting Taiwan vocabulary as well as glyphs.
-- If headings are missed, provide a regex such as `^第.+章`.
-- Uploading the same slug again replaces the book in place and keeps existing reading positions.
-
-Browser upload is the best default and avoids placing book and chapter titles in a public Actions log.
-
-### Publish with GitHub Actions
-
-For a large source or a remote download URL, use **Actions → publish book → Run workflow**. It accepts:
-
-- a `.txt`, or a `.zip` containing one or more `.txt` files;
-- optional title, slug, charset, S→T conversion, and chapter-heading regex; and
-- a `dry_run` option that only splits and reports the result.
-
-First add these under **Settings → Secrets and variables → Actions**:
-
-| Type | Name | Value |
-| --- | --- | --- |
-| Secret | `BOOKWORM_URL` | Your Bookworm base URL |
-| Optional secret | `BOOK_SOURCE_URL` | Default source-book URL |
-| Optional secret | `BOOK_SOURCE_HEADER` | Authentication header required by the source |
-
-> Inputs and logs in a public repository are visible to everyone, including book and chapter names. Use a
-> private fork or browser upload for copyrighted or sensitive material.
-
-### Publish from the local CLI
-
-After setting up the [development environment](#local-development), split and upload a book with:
+The two Cloudflare values are pasted by 🧑 directly into the terminal (`gh secret set` reads stdin:
+paste, press Enter, then Ctrl-D), so they never pass through the conversation with the agent:
 
 ```sh
-pnpm run split -- ~/books/mybook.txt --title "Book title" --slug mybook
-pnpm run publish-book -- out/mybook \
-  --url https://<your-server> --token "$ADMIN_TOKEN"
+gh secret set CLOUDFLARE_API_TOKEN --repo "$FORK"
+gh secret set CLOUDFLARE_ACCOUNT_ID --repo "$FORK"
 ```
 
-Generated chapters land under `out/<slug>/`, which is gitignored. Useful splitter options:
+`ADMIN_TOKEN` is Bookworm's own administration key; the agent mints it:
 
-- `--charset gbk`, `big5`, or `shift_jis`: select the source encoding; output is always UTF-8.
-- `--pattern '^第.+章'`: override the chapter-heading expression.
-- `--s2t`: run OpenCC `cn→tw` over body text, titles, and filenames.
-- A directory of existing `NN_chapter-title.txt` files can be used directly as input.
+```sh
+ADMIN_TOKEN="$(openssl rand -hex 24)"
+echo "$ADMIN_TOKEN"   # 🧑 store it in the password manager first — GitHub secrets are write-only
+printf '%s' "$ADMIN_TOKEN" | gh secret set ADMIN_TOKEN --repo "$FORK"
+```
 
-If fewer than three headings match, the splitter falls back to size-based parts. Oversized chapters are
-split again at line boundaries.
+### 4. Deploy
 
-## Reader keys: before the first book opens
+```sh
+gh workflow run deploy --repo "$FORK"
+RUN="$(gh run list --repo "$FORK" --workflow deploy --limit 1 --json databaseId -q '.[0].databaseId')"
+gh run watch "$RUN" --repo "$FORK" --exit-status
+```
 
-Reading requires a **reader key**. After deploying, open `/admin` and mint the first one under
-“Reader keys”:
+(The run takes a second or two to appear; retry `gh run list` if it comes back empty.) The workflow
+verifies the token, creates the `bookworm` D1 database and the `bookworm-books` R2 bucket, applies
+`schema.sql`, deploys the Worker, installs the secrets, and finally probes `/api/books` with the
+`ADMIN_TOKEN`. The whole run takes two to three minutes.
 
-1. Leave the reader id empty (one is minted) or type a short id of your own.
-2. Put the device's name in the note (“my iPhone”) so it can be revoked by name later.
-3. Press **Mint a key** — the sign-in link is copied automatically, shaped `https://<your-server>/?key=…`.
+Then pull the URL out of the log:
 
-AirDrop or message that link to the reading device and open it there; the device is signed in for good.
-One key per device; one reader id can hold several keys, and positions and settings sync through the id.
-Lose a device — revoke its key on `/admin`; every other device is untouched.
+```sh
+URL="$(gh run view "$RUN" --repo "$FORK" --log | grep -m1 -oE 'https://[a-z0-9.-]+\.workers\.dev')"
+echo "$URL"
+```
 
-A book URL has the form `https://<your-server>/<book-slug>` (legacy `/<book-slug>/<reader-code>` links
-still open; the trailing code is ignored now).
+Expect something like `https://bookworm.<your-subdomain>.workers.dev`. From here on, every push to
+`main` deploys automatically; Markdown-only pushes are skipped. Pulling upstream updates is under
+Routine maintenance.
 
-Choose “Add to Home Screen” on the phone to install the full-screen PWA. Whichever page you install from,
-the app opens at the shelf (the manifest's `start_url`) — the shelf remembers every book's progress, and one
-tap resumes where you left off. The app also offers the install steps once, right after a device enrolls.
-Offline reading is on by default: opening a book keeps its nearby chapters and the app shell on the device.
-Tap ⇣ on a book's card on the shelf to stock it in advance, and tap it again to drop it.
+### 5. Verify
 
-## Access model and security
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' "$URL/api/books"          # expect 401
+curl -s -H "authorization: Bearer $ADMIN_TOKEN" "$URL/api/books"   # expect {"books":[]}
+```
 
-Book content, positions, settings and narration all sit behind the reader key: a request without a live key
-answers 401. The key is kept on the device as a server-set cookie (one year, self-repairing) and dies with
-revocation; chapters already cached on a device survive it — revocation fences the server, not the phone.
+The keyless 401 is correct: content sits behind the reader key. Opening `$URL` in a browser shows a
+locked door asking for a key — same thing.
 
-Still open by design: the app shell (the code is public anyway), `/api/feedback` (the improvement-notes
-queue, keyless by design) and `/api/testlog` (device diagnostics). Publishing and administration remain
-protected by `ADMIN_TOKEN`, independent of reader keys.
+### 6. The first reader key
+
+Reading requires a **reader key**, one per device. The agent mints it directly:
+
+```sh
+curl -s -X POST "$URL/api/admin/readers" \
+  -H "authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
+  -d '{"label":"my iPhone"}'
+# expect {"ok":true,"key":"<32 hex chars>","user":"<minted reader id>","label":"my iPhone"}
+```
+
+The sign-in link is `$URL/?key=<key>`. 🧑 AirDrop or message the link to the reading device and open
+it there — the device is signed in for good and lands on the shelf; the app also offers the
+"Add to Home Screen" steps once, installing the full-screen PWA.
+
+- One reader (one `user` id) can hold several keys; positions and settings sync through the id. Mint
+  the second device's key with the same id: `-d '{"user":"<id>","label":"iPad"}'`.
+- Lose a device — revoke its key and every other device is untouched: on `/admin`, or
+  `curl -X DELETE "$URL/api/admin/readers/<key>" -H "authorization: Bearer $ADMIN_TOKEN"`.
+- Offline reading is on by default: opening a book keeps its nearby chapters and the app shell on the
+  device; tap ⇣ on a book's shelf card to stock the whole book, tap again to drop it.
+
+### 7. The first book
+
+Publishing never redeploys. Three paths; pick one:
+
+**A. Browser upload (🧑, most private, no tools)** — open `$URL/admin`, paste `ADMIN_TOKEN`, choose a
+`.txt` or `.zip`, inspect the detected title, slug and chapters, upload. Decompression, charset
+conversion (UTF-8/GBK/Big5/Shift_JIS), OpenCC `cn→tw` conversion and chapter splitting all run inside
+the browser; if headings are missed, provide a regex such as `^第.+章`. Re-uploading the same slug
+replaces the book in place and keeps reading positions.
+
+**B. Local CLI (agent; needs [pnpm](https://pnpm.io/installation) 11 and Node 22)** —
+
+```sh
+gh repo clone "$FORK" bookworm && cd bookworm && pnpm install
+pnpm run split -- ~/books/mybook.txt --title "Book title" --slug mybook
+pnpm run publish-book -- out/mybook --url "$URL" --token "$ADMIN_TOKEN"
+```
+
+Useful splitter options: `--charset gbk|big5|shift_jis` (output is always UTF-8), `--s2t` (OpenCC
+`cn→tw` over body, titles and filenames), `--pattern '^第.+章'`. Fewer than three heading matches falls
+back to size-based parts, and oversized chapters split again at line boundaries; a directory of
+existing `NN_title.txt` files works as input directly. The generated `out/` is gitignored.
+
+**C. GitHub Actions (no local tools; public logs)** — for a large file that only exists at a URL:
+
+```sh
+printf '%s' "$URL" | gh secret set BOOKWORM_URL --repo "$FORK"
+gh workflow enable publish-book.yml --repo "$FORK"
+gh workflow run "publish book" --repo "$FORK" \
+  -f source_url="https://example.com/book.txt" -f s2t=true -f dry_run=true
+```
+
+`dry_run=true` only splits and lists the detected chapters in the run summary; rerun without it once
+they look right. ⚠ Inputs and logs of a public repository are visible to everyone, book and chapter
+titles included — use path A or a private fork for copyrighted or sensitive material.
+
+The install is complete: the shelf is at `$URL`, administration at `$URL/admin`.
 
 ## Optional configuration
 
 ### Custom domain
 
-In Cloudflare, open **Workers → bookworm → Settings → Domains & Routes → Add**.
+🧑 In Cloudflare: **Workers → bookworm → Settings → Domains & Routes → Add**. Add the domain in the
+dashboard only — do **not** put `routes` into `wrangler.jsonc`; the deploy token has no zone
+permissions, so the next deployment would fail.
 
-If the deployment token has no zone permissions, add the domain only in the dashboard. Do not add `routes`
-to `wrangler.jsonc`, or the next deployment will fail.
-
-Reader codes and offline caches are origin-bound. After changing domains, use **change** on every device to
-re-enter the previous reader code; the server-side positions remain attached to that code.
+Reader-key cookies and offline caches are bound to the origin. After a domain change, re-mint keys
+with the original reader ids (`-d '{"user":"<id>"}'`) and open the new links on each device; server-side
+positions follow the id and survive.
 
 ### New-book Push notifications
 
-Web Push is optional. Generate a VAPID key locally:
+Web Push is optional and needs a local clone with pnpm (see path B above):
 
 ```sh
 pnpm exec node scripts/gen-vapid.mjs
+gh secret set VAPID_PRIVATE_JWK --repo "$FORK"    # paste the printed private JWK
+printf '%s' "mailto:you@example.com" | gh secret set VAPID_SUBJECT --repo "$FORK"
+gh workflow run deploy --repo "$FORK"
 ```
 
-Add the output as GitHub repository secrets:
+Readers can then subscribe in the shelf footer; the adjacent **test** button checks the whole
+device/browser/push-service path. For a full end-to-end rehearsal, the `push test` workflow publishes
+a throwaway book to production (a real notification) and deletes it again:
 
-| Secret | Value |
-| --- | --- |
-| `VAPID_PRIVATE_JWK` | The private JWK printed by the command |
-| `VAPID_SUBJECT` | Your contact, such as `mailto:you@example.com` |
+```sh
+gh workflow enable push-test.yml --repo "$FORK"
+gh workflow run "push test" --repo "$FORK"
+```
 
-Run the deploy workflow again. Readers can then subscribe in the library footer and use the adjacent test
-button to check the complete device/browser/push-service path.
-
-On iPhone, `PushManager` is available only to an installed home-screen PWA, not an ordinary Safari tab.
-Rotating the VAPID key invalidates existing subscriptions, so readers must subscribe again.
-
-The red dot on the app icon is not a side effect of showing a notification — the app has to ask, through
-the Badging API. The service worker calls `setAppBadge()` when a push lands, counting whatever the system
-still has in the tray, and opening the app (or tapping the notification) clears it. Same requirements:
-installed to the Home Screen, notifications allowed. Whether it worked goes into the push log, readable
-with `/api/testlog?page=push`.
+On iPhone, only an installed Home-Screen PWA gets `PushManager`; an ordinary Safari tab shows no
+subscribe option. Rotating the VAPID key invalidates existing subscriptions. The red dot on the app
+icon is the service worker calling `setAppBadge()` when a push lands, cleared on the next open;
+whether it worked lands in the push log — `curl "$URL/api/testlog?page=push&limit=5"` reads it back.
 
 ### Narration
 
-Narration is enabled by default and requires no API key. The Worker speaks Microsoft's undocumented Edge
-TTS protocol with `zh-TW-HsiaoChenNeural`; generated MP3 chunks are cached under `_tts/` in R2.
-
-The endpoint has no stability guarantee. If narration stops working in the future, check for protocol changes
-first. Audio cache entries do not currently expire, so inspect `_tts/` if R2 use grows unexpectedly.
+Narration is on by default and needs no API key. The Worker speaks Microsoft's undocumented Edge TTS
+protocol with `zh-TW-HsiaoChenNeural`; generated MP3 chunks are cached under `_tts/` in R2. The
+endpoint carries no stability promise — if narration suddenly stops, check for protocol changes first;
+the audio cache never expires on its own, so inspect `_tts/` if R2 use grows unexpectedly.
 
 ## Routine maintenance
 
 ### Update Bookworm
 
-Click **Sync fork** on GitHub. Once the changes reach `main`, deployment runs automatically. Books and reading
-positions survive application deployments.
+```sh
+gh repo sync "$FORK" --source enstw/bookworm
+```
 
-### Force-refresh stale phone UI
+Once the sync reaches `main`, the deploy workflow runs by itself; books and reading positions survive
+deployments.
 
-The library footer has a **refresh** control beside the build ID. It discards the app-shell cache and service
-worker, then reloads while keeping downloaded offline chapters.
+### Force-refresh a stale phone UI
 
-### Retitle, change a slug, or delete a book
+The shelf footer has a **refresh** control beside the build ID: it discards the app-shell cache and
+service worker and reloads, keeping downloaded offline chapters.
 
-Open `/admin` (the library footer's **manage** link points at it) and enter `ADMIN_TOKEN`. Once the key
-checks out, the top of the page lists every book on the shelf, each with:
+### Retitle, re-slug, or delete a book
 
-- **edit:** the title and the slug in one form. A title change rewrites metadata only, leaving chapters and
-  the audio cache alone. A slug change only changes the URL: every book actually lives under a permanent
-  book id (its R2 key prefix) and the slug is just a name pointing at it, so re-slugging is one request —
-  no files move, the audio cache survives, reading positions are untouched, and the old slug keeps
-  resolving, so existing bookmarks still work.
-- **delete:** chapters, cached audio, and every reader's position, after you type the slug to confirm. There
-  is no undo.
+Open `$URL/admin` (the shelf footer's **manage** link points at it). The top of the page lists every
+book on the shelf: a retitle rewrites metadata only; a re-slug only changes the URL — every book lives
+under a permanent book id (its R2 key prefix) and the slug is just a name pointing at it, so nothing
+moves, the audio cache survives, positions stay put, and the old slug keeps resolving; a delete takes
+chapters, cached audio and every reader's position with it, asks you to type the slug to confirm, and
+has no undo.
 
-### Check and repair
+### Health check and repair
 
-Halfway down `/admin` are two buttons and two phases: **Health check** looks, **Repair** acts — think
-`brew doctor` and `brew doctor --fix` kept apart. The rule is one sentence: **if the shelf does not know
-about it, nothing can read it** — no point rescuing it, delete and upload again.
+Halfway down `/admin` are two buttons. **Health check** only reads, is safe to press at any time, and
+when it says nothing is wrong, nothing is — the files in R2 are the truth, and the shelf index is just
+one of the things being checked. **Repair** is the only button on the page that writes, and it only
+acts on what the check just found: it first rebuilds the shelf index (the one step that puts something
+back; index/file disagreements and slug collisions are resolved or surfaced here), then deletes what
+nothing can reach, then runs the same check again as proof. The rule is one sentence: **if the shelf
+does not know about it, nothing can read it** — no rescuing, delete and upload again.
 
-**Health check** only reads, all the way down. It is safe to press at any time, and it assumes no repair
-has run: the files in R2 are the truth, and the index is one of the things being checked against them,
-never a premise. So when it says nothing is wrong, nothing is — a silence you can trust is the whole
-reason it exists. (It used to run only after an index rebuild, which meant a finding could mean "the
-index is behind" rather than "this is broken" — so it could not be run on its own, and its silence was
-worth nothing.)
-
-**Repair** is the only button on this page that writes, and it only ever acts on what the check just
-found. It rebuilds the index, then deletes what nothing can reach, then runs the same check again as
-proof. That order has a reason: the rebuild is the one step that puts something back rather than taking
-it away, and it is the complete fix for two of the findings.
-
-**Rebuilding the index** has no button of its own, because it writes: it is step one of a repair and
-nothing else needs it. The shelf is an index built from each book's `manifest.json`, so if the index and
-the bucket ever disagree (or once, when upgrading to book ids), Repair is what handles it. The one thing
-it reports is a **slug collision** — that only shows itself when the row is written, and it is the only
-problem the health check cannot see. It reports under the book list at the top of the page, because what
-it has to say is about the shelf.
-
-There is a window between checking and repairing — somebody may publish a book in it. So every request
-that deletes something re-checks what it is acting on: the premise it was sent with ("this book's files
-are gone", "this book is missing chapters", "this book's manifest will not parse") is verified against R2
-server-side, and a mismatch gets a 409 instead of a sweep on the strength of a stale scan.
-
-What gets deleted:
+Every deleting request carries its own premise, re-verified server-side against R2, answering 409 on a
+mismatch — a book published between check and repair cannot be swept on the strength of a stale scan.
+The two findings that delete a whole book (**incomplete book**, **manifest will not parse**) list the
+books first and wait for one confirming press — a whole-book sweep takes every reader's position with
+it, and a fresh upload gets a new book id.
 
 | Finding | What it means |
 |---|---|
-| Files with no manifest | Chapter files under a book id with no `manifest.json` — an upload or move that stopped early |
-| Audio cache for a book that is gone | `_tts/<book-id>/` outliving its book — usually the biggest one |
+| Files with no manifest | Chapter files under a book id with no `manifest.json` — an interrupted upload or move |
+| Audio cache for a gone book | `_tts/<book-id>/` outliving its book — usually the biggest one |
 | Slug pointing at a missing book | A URL that resolves to nothing |
-| Bookmarks for a missing book | Reading positions nobody can open |
+| Positions for a missing book | Reading positions nobody can open |
 | Loose object at the bucket root | Something that belongs to no book |
-| Files the manifest does not name | Objects under a book id its manifest never mentions — leftovers from an earlier split |
-| Incomplete book | The manifest names chapter files R2 does not have, or has at the wrong size — the whole book goes; upload it again |
-| The manifest will not parse | `manifest.json` is there and is not valid JSON — as unreadable as having none |
+| Files the manifest does not name | Leftovers from an earlier split |
+| Incomplete book | The manifest names chapters R2 lacks or has at the wrong size — the whole book goes; upload again |
+| Manifest will not parse | `manifest.json` is not valid JSON — as unreadable as having none |
 
-The incomplete-book check is the only chapter-level one. A shelf entry's chapter count and character
-total come from that book's `manifest.json` — the uploader's claim, not a measurement — so this compares
-the claim against what the bucket actually holds (and, for books whose manifest records byte sizes,
-against the sizes too). A book missing chapters is deleted whole: a reader hitting a wall halfway is
-worse than the book not being there, and there is nothing to salvage — upload it again. (Note that
-deleting takes that book's reading positions with it, and a fresh upload gets a new book id.) It is also
-the only check that counts chapters for books the shelf has never heard of — which are exactly the books
-nobody has ever counted.
+Not a routine job: worth a check after an interrupted upload or delete, or a migration. If the
+post-repair re-check still reports something, that is a bug — report it as one.
 
-A manifest that will not parse is as unreachable as having none: every route into a book goes through the
-index, the index is built from that file, and if it cannot be read there is no route at all. It can only
-be found by the pass that actually reads the manifest — the book sweep only HEADs it, and a HEAD cannot
-tell a book from a broken one.
+## Access model and security
 
-The two that delete a whole book (**incomplete book**, **the manifest will not parse**) stop and ask
-first. Everything else was already unreachable, so nobody loses what they could not open — but a book is
-different: it is on the shelf, it half works, and sweeping it takes every reader's place in it. So Repair
-lists the books it is about to take and waits for one press. Cancel and nothing at all happens.
-
-Reported but not touched: **missing from the shelf index** and **indexed, but the files are gone**, both
-of which the rebuild in step one already fixes with no separate action, and **prefix outside the id
-alphabet**, which the server cannot address at all — handle that one in the Cloudflare R2 dashboard.
-
-Repair checks again afterwards to confirm. Because the check is complete, whatever comes back that time
-is what the repair failed to clear — not something it uncovered — so a leftover is a bug and can be
-reported as one. Not a routine job: worth a check after an interrupted upload or delete, or a move.
+Book content, positions and narration sit behind the reader key: without a live key, 401. The key is a
+server-set cookie on the device (one year, self-repairing) and dies with revocation; chapters already
+cached on the device survive it — revocation fences the server, not the phone. Open by design: the app
+shell (the code is public anyway), `/api/feedback` and `/api/testlog`. Administration and publishing
+stay behind `ADMIN_TOKEN`, independent of reader keys. Reader ids are not strong authentication and
+suit only a small trusted group.
 
 ## Local development
 
-Use [pnpm](https://pnpm.io/installation) 11 with its managed Node.js 22-or-newer environment. The local
-workflow is pnpm-only; npm, npx, yarn, and corepack are unnecessary.
+Use pnpm 11 with its managed Node.js 22-or-newer environment; the local workflow is pnpm-only — no
+npm, npx, yarn, or corepack.
 
 ```sh
-git clone https://github.com/<you>/bookworm.git
-cd bookworm
-pnpm install
+gh repo clone "$FORK" bookworm && cd bookworm && pnpm install
+cp .dev.vars.example .dev.vars
+pnpm run db:init:local
+pnpm run dev            # http://localhost:8787
+```
 
+Tests (end-to-end needs a Chromium; TTS streaming also needs `ffmpeg`):
+
+```sh
+pnpm test               # or test:push, test:tts, test:vertical, test:bg,
+                        #    test:admin, test:shelf, test:offline individually
+```
+
+To skip GitHub Actions entirely, `deploy.sh` performs the identical deployment locally:
+
+```sh
 cp .deploy.env.example .deploy.env
-# Fill CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, and ADMIN_TOKEN
+# fill CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, ADMIN_TOKEN
 ./scripts/deploy.sh
 ```
 
-`.deploy.env` is gitignored and must never be committed. `deploy.sh` creates or finds D1, creates R2, applies
-the schema, deploys the Worker, and installs secrets. It also writes your D1 `database_id` to `wrangler.jsonc`;
-commit that change to your fork.
-
-To run the Cloudflare steps manually:
-
-```sh
-pnpm exec wrangler login
-pnpm exec wrangler d1 create bookworm
-# Copy the returned ID into wrangler.jsonc
-pnpm exec wrangler r2 bucket create bookworm-books
-pnpm run db:init
-pnpm exec wrangler secret put ADMIN_TOKEN
-pnpm run deploy
-```
-
-Start a local development server with:
-
-```sh
-cp .dev.vars.example .dev.vars
-pnpm run db:init:local
-pnpm run dev
-```
-
-The default URL is <http://localhost:8787>.
-
-### Tests
-
-```sh
-pnpm test
-```
-
-The full suite covers Push crypto and APIs, shelf administration, vertical layout, background behavior,
-TTS streaming, and offline use. Individual commands include:
-
-```sh
-pnpm run test:push
-pnpm run test:tts
-pnpm run test:vertical
-pnpm run test:bg
-pnpm run test:admin
-pnpm run test:shelf
-pnpm run test:offline
-```
-
-End-to-end tests require Chromium; TTS streaming also requires `ffmpeg` on `PATH`.
+`.deploy.env` is gitignored; never commit it. `deploy.sh` writes your account's D1 `database_id` into
+`wrangler.jsonc` — commit that change to your fork.
 
 ## Troubleshooting
 
-### Actions is empty or a workflow will not run
-
-GitHub disables inherited workflows in a fork. Open Actions and click “I understand my workflows, go ahead
-and enable them.”
-
-### `wrangler d1 create` fails, or R2 is not enabled
-
-Open the R2 page in Cloudflare and activate it once, then rerun the workflow. Initial activation may request
-billing details without changing the free allowance.
-
-### First deployment asks for a `workers.dev` subdomain
-
-A new Cloudflare account must choose one. Complete that step under **Workers & Pages → Add**, then deploy again.
-
-### Token verification fails immediately
-
-Confirm that the token has both `Account Settings · Read` and `User Details · Read`, with the correct account
-included under Account Resources. Successful runs intentionally suppress `wrangler whoami` output so a public
-Actions log does not reveal the Cloudflare email address.
-
-### The first post-deployment probe returns 404
-
-The Worker may still be propagating. Wait a few seconds and reopen the URL from the run summary.
-
-### CI fails at `pnpm install --frozen-lockfile`
-
-If your pnpm configuration has `minimumReleaseAge`, a newly released dependency can remain temporarily
-unavailable. Rebuild and commit the lockfile later, or wait for that window to pass.
-
-### Splitting produces one enormous chapter
-
-The source headings did not match the built-in patterns. Pass a matching regex with `--pattern`, or split the
-source into `NN_chapter-title.txt` files and feed the directory to the splitter.
-
-### One device jumps to an unexpected place
-
-Bookworm uses last-read-wins. If the same reader code was used later on another device, its newer timestamp
-wins. When a synchronized position differs by at least two chapters from the last local position, the reader
-offers **return to previous position** to restore and resynchronize it.
+| Symptom | Fix |
+|---|---|
+| `gh workflow run` answers 404 or "workflow disabled" | The fork's Actions are still off: `gh api -X PUT "repos/$FORK/actions/permissions" -F enabled=true`, then `gh workflow enable deploy.yml --repo "$FORK"` |
+| Deploy fails at `d1 create`, or says R2 is not enabled | 🧑 open the R2 page in the Cloudflare dashboard once to activate it (may ask for billing details; the free allowance is unchanged), rerun the workflow |
+| First deployment asks for a `workers.dev` subdomain | 🧑 a new account must choose one: **Workers & Pages → Add**, then rerun |
+| Token verification fails immediately | The token needs both `Account Settings · Read` and `User Details · Read`, with the right account under Account Resources. Successful runs intentionally suppress `wrangler whoami` — a public log would leak the Cloudflare email |
+| Deploy succeeded but the probe answers 404 | The Worker is still propagating; wait a few seconds and retry |
+| CI fails at `pnpm install --frozen-lockfile` | With `minimumReleaseAge` in your pnpm config, a freshly released dependency is temporarily uninstallable; rebuild and commit the lockfile later, or wait out the window |
+| Splitting produces one enormous chapter | Pass a heading-matching regex with `--pattern`, or pre-split into `NN_title.txt` files and feed the directory to the splitter |
+| A device jumps to a wrong position | Last-read-wins; when the synced position is ≥ 2 chapters from the local one, the reader shows **return to previous position** for a one-tap restore |
 
 ## Known limitations
 
-- Only plain text is accepted directly. EPUB, PDF, and comics need a converter that emits Bookworm chapters
-  and a manifest.
-- Each `(book, reader)` stores one position; there is no furthest-read marker, annotation, highlight, or search.
-- The interface is bilingual, but narration, typography, splitting, and line-breaking remain Chinese-first.
+- Only plain text is accepted directly. EPUB, PDF and comics need a converter that emits Bookworm
+  chapters and a manifest.
+- Each `(book, reader)` stores one position; no furthest-read marker, annotation, highlight, or search.
+- The interface is bilingual, but narration, typography, splitting and line-breaking remain
+  Chinese-first.
 - Edge TTS uses an undocumented protocol and cannot be guaranteed forever.
-- Reader codes are not strong authentication and suit only a small trusted group.
+- Reader ids are not strong authentication and suit only a small trusted group.
 
 For the lower-level data contracts see [REQUIREMENTS.md](REQUIREMENTS.md); the standing design
-decisions, including the conclusions of the on-device investigations, are in [DESIGN.md](DESIGN.md).
+decisions, including the on-device investigations, are in [DESIGN.md](DESIGN.md).
