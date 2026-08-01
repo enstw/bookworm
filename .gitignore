@@ -1,0 +1,11 @@
+node_modules/
+.pnpm-store/
+.wrangler/
+.dev.vars
+.deploy.env
+out/
+books/
+_book/
+.DS_Store
+public/vendor/
+.gstack/

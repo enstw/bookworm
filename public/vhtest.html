@@ -1,0 +1,209 @@
+<!doctype html>
+<!-- TEMPORARY diagnostic page (linked from the library footer): on-device
+     viewport experiments for the 直排 reader — viewport-unit resolution and
+     the top-edge allocation (how close to the island the first glyph should
+     sit). The page-turn lab moved to its own page, /pgtest — paging and
+     viewport sizing are separate questions.
+     Self-contained; delete this file and the library link once settled. -->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>vh 測試 · Bookworm</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body { background: #f6efdc; color: #2c2620; }
+    body { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+    main { padding: calc(env(safe-area-inset-top) + 8px) 12px 12px;
+      margin-right: 4.6rem; /* keep clear of the strip */ }
+    h1 { font-size: 14px; margin-bottom: 6px; }
+    h1 a { font-weight: 400; }
+    td { padding: 0 8px 0 0; white-space: nowrap; }
+    td:last-child { font-weight: 700; }
+    .btns { margin: 10px 0 6px; display: flex; flex-wrap: wrap; gap: 4px;
+      align-items: center; }
+    .btns b { width: 100%; }
+    button { font: inherit; padding: 7px 9px; border: 1px solid #a05e2a;
+      background: #fffdf8; border-radius: 6px; }
+    button.on { background: #a05e2a; color: #fff; }
+    a { color: #a05e2a; }
+    #note { color: #8d8478; margin: 6px 0; }
+    /* strategy strip: a 直排 column on the right whose height is the selected
+       strategy — the thick red bottom edge shows how far that unit reaches,
+       and its top padding is the selected 頂端 allocation (first glyph vs
+       the island) */
+    #strip { position: fixed; top: 0; right: 0; width: 4.2rem; height: 100dvh;
+      background: rgba(160, 94, 42, 0.12); border-left: 1px solid #a05e2a;
+      border-bottom: 5px solid #c0392b; writing-mode: vertical-rl;
+      font-size: 18px; line-height: 1.7; overflow: hidden; padding: 4px;
+      z-index: 1; }
+    /* marker lines: where each unit ends, measured from the viewport top */
+    .mark { position: fixed; left: 0; right: 0; height: 0;
+      border-top: 2px solid; pointer-events: none; z-index: 2; }
+    .mark b { position: absolute; bottom: 2px;
+      font: 700 10px ui-monospace, Menlo, monospace;
+      background: rgba(255, 253, 248, 0.9); padding: 0 3px; }
+    /* measurement probes: in-flow, invisible, one per unit */
+    #probes div { position: absolute; left: -9999px; width: 10px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>viewport 測試 <a href="/">← 回書架</a> · <a href="/pgtest">翻頁測試</a></h1>
+  <table><tbody id="out"></tbody></table>
+  <div class="btns" id="btns"><b>直條高度（底邊）</b></div>
+  <div class="btns" id="topbtns"><b>直條頂端（第一個字離島多近）</b></div>
+  <p id="note">右側直條：紅色粗底邊＝所選高度策略的「畫面底部」；
+    第一個字的起點＝所選頂端策略（拿它對照瀏海／靈動島）。<br>
+    橫細線＝各單位底部位置；scr 線＝ screen.height（實體螢幕底）。</p>
+</main>
+
+<div id="probes"></div>
+<div id="strip"></div>
+<script>
+"use strict";
+// readout uploads: each distinct readout also POSTs to /api/testlog, so the
+// laptop can `curl /api/testlog?page=vhtest` instead of trading screenshots;
+// the dedupe absorbs the 1 s re-render loop, offline losses don't matter
+const upload = (() => {
+  let last = "";
+  let device = "";
+  try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
+  return (data) => {
+    if (!data || data === last) return;
+    last = data;
+    const body = JSON.stringify({ page: "vhtest", device, data });
+    try {
+      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
+        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+    } catch { /* offline is fine */ }
+  };
+})();
+
+const UNITS = ["100vh", "100dvh", "100svh", "100lvh"];
+const COLORS = { "100vh": "#2980b9", "100dvh": "#c0392b", "100svh": "#27ae60",
+  "100lvh": "#8e44ad", scr: "#111" };
+const probes = document.getElementById("probes");
+for (const u of UNITS) {
+  const d = document.createElement("div");
+  d.dataset.unit = u;
+  d.style.height = u;
+  probes.append(d);
+}
+const inset = document.createElement("div");
+inset.style.cssText = "position:absolute;left:-9999px;width:10px;" +
+  "padding:env(safe-area-inset-top) env(safe-area-inset-right) " +
+  "env(safe-area-inset-bottom) env(safe-area-inset-left)";
+probes.append(inset);
+
+const strip = document.getElementById("strip");
+const FILL = "直排頂端與底部邊界測試".repeat(12);
+// strip strategies: the units above, the two non-unit ways to size a fixed
+// element to the viewport, and the reader's adaptive formula (claims the
+// band below a short top-aligned standalone viewport, no-op elsewhere)
+const CALC = "calc(100dvh + min(env(safe-area-inset-top, 0px), 100vh - 100dvh))";
+const STRATS = [...UNITS, "fixed inset", "vv px", "dvh+top"];
+let strat = "dvh+top"; // what the reader ships today
+const btns = document.getElementById("btns");
+for (const s of STRATS) {
+  const b = document.createElement("button");
+  b.textContent = s;
+  b.onclick = () => { strat = s; render(); };
+  btns.append(b);
+}
+
+// top-edge allocations: candidate padding-tops for the reader's first glyph.
+// 現行 = what the reader ships (1.2rem + full inset); the rest move the first
+// glyph progressively closer to the island. All env()-relative — no fixed
+// device numbers — so each collapses sanely when the inset is 0.
+const TOPS = {
+  "現行 1.2rem+inset": "calc(1.2rem + env(safe-area-inset-top, 0px))",
+  "inset": "env(safe-area-inset-top, 0px)",
+  "inset−0.4rem": "max(0.6rem, calc(env(safe-area-inset-top, 0px) - 0.4rem))",
+  "inset×0.75": "max(0.6rem, calc(env(safe-area-inset-top, 0px) * 0.75))",
+  "inset×0.6": "max(0.6rem, calc(env(safe-area-inset-top, 0px) * 0.6))",
+  "inset×0.5": "max(0.6rem, calc(env(safe-area-inset-top, 0px) * 0.5))",
+};
+let topStrat = "inset−0.4rem"; // picked on-device 2026-07-27; now in app.css
+const topbtns = document.getElementById("topbtns");
+for (const t of Object.keys(TOPS)) {
+  const b = document.createElement("button");
+  b.textContent = t;
+  b.onclick = () => { topStrat = t; render(); };
+  topbtns.append(b);
+}
+
+function applyStrat() {
+  strip.style.height = ""; strip.style.bottom = "";
+  if (strat === "fixed inset") strip.style.bottom = "0";
+  else if (strat === "vv px")
+    strip.style.height = (visualViewport ? visualViewport.height : innerHeight) + "px";
+  else if (strat === "dvh+top") strip.style.height = CALC;
+  else strip.style.height = strat;
+  strip.style.paddingTop = TOPS[topStrat];
+}
+
+function render() {
+  applyStrat();
+  for (const b of btns.querySelectorAll("button")) b.classList.toggle("on", b.textContent === strat);
+  for (const b of topbtns.querySelectorAll("button")) b.classList.toggle("on", b.textContent === topStrat);
+
+  const cs = getComputedStyle(inset);
+  const vals = {};
+  for (const d of probes.children) if (d.dataset.unit) vals[d.dataset.unit] = d.offsetHeight;
+  const standalone = matchMedia("(display-mode: standalone)").matches || !!navigator.standalone;
+  const rows = [
+    ["mode", standalone ? "standalone（已安裝）" : "browser"],
+    ["screen", screen.width + " × " + screen.height],
+    ["inner", innerWidth + " × " + innerHeight],
+    ...UNITS.map((u) => [u, vals[u] + "px（差 " + (screen.height - vals[u]) + "）"]),
+    ["safe-area top/bottom", parseFloat(cs.paddingTop) + " / " + parseFloat(cs.paddingBottom)],
+    // 左右 insets only show up in landscape, and whether iOS reports them
+    // symmetrically decides how the reader's 頁邊距 0 can behave there
+    ["safe-area left/right", parseFloat(cs.paddingLeft) + " / " + parseFloat(cs.paddingRight)],
+    ["方向", (matchMedia("(orientation: landscape)").matches ? "橫" : "直") +
+      " · angle " + (screen.orientation?.angle ?? "—") +
+      " · " + (screen.orientation?.type ?? "—")],
+    ["strip 高", strip.clientHeight + "px"],
+    ["strip 頂端留白", Math.round(parseFloat(getComputedStyle(strip).paddingTop)) + "px（" + topStrat + "）"],
+    ["UA", navigator.userAgent.replace(/^Mozilla\/5\.0 \([^)]*\)\s*/, "").slice(0, 60)],
+  ];
+  document.getElementById("out").replaceChildren(...rows.map(([k, v]) => {
+    const tr = document.createElement("tr");
+    for (const t of [k, String(v)]) {
+      const td = document.createElement("td");
+      td.textContent = t;
+      tr.append(td);
+    }
+    return tr;
+  }));
+
+  document.querySelectorAll(".mark").forEach((m) => m.remove());
+  const lines = [...UNITS.map((u) => [u, vals[u]]), ["scr", screen.height]];
+  lines.forEach(([name, v], i) => {
+    const m = document.createElement("div");
+    m.className = "mark";
+    m.style.borderColor = COLORS[name];
+    m.style.top = (v - 2) + "px";
+    const b = document.createElement("b");
+    b.textContent = name + " " + v;
+    b.style.color = COLORS[name];
+    b.style.left = (2 + (i % 5) * 62) + "px"; // stagger equal-value labels
+    m.append(b);
+    document.body.append(m);
+  });
+
+  strip.textContent = "頂●" + FILL;
+  upload(rows.map(([k, v]) => k + " " + v).join("\n"));
+}
+
+addEventListener("resize", render);
+addEventListener("orientationchange", () => setTimeout(render, 300));
+visualViewport?.addEventListener("resize", render);
+setInterval(render, 1000); // insets can settle late on iOS
+render();
+
+</script>
+</body>
+</html>

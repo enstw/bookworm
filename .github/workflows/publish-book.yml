@@ -1,0 +1,177 @@
+# 上架一本書，本機不用裝任何東西。
+#
+# 手動觸發（Actions → publish book → Run workflow）。runner 去把書抓下來、切章、
+# 上傳到你的 Worker，用的是跟本機一模一樣的 scripts/split-book.mjs 和
+# scripts/publish-book.mjs，所以 Windows / macOS / Linux 都不挑，連 Node 都不用裝。
+#
+# 需要的設定：
+#   secret  ADMIN_TOKEN        上傳用的密鑰（部署時已經設過了）
+#   secret  BOOKWORM_URL       你的伺服器網址，例如 https://<你的名字>.workers.dev
+#   secret  BOOK_SOURCE_URL    （選配）書檔網址；填了就不必每次貼在輸入欄
+#   secret  BOOK_SOURCE_HEADER （選配）抓檔要帶的 header，例如
+#                              "Authorization: Bearer xxx"
+#
+# ⚠ 公開 repo 的 Actions 記錄和輸入欄任何人都看得到，書名和章節名會留在上面。
+#   有版權或不想公開的書，請改用私有 fork 跑，或直接用手機開 /admin 上傳。
+name: publish book
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "書檔網址（.txt，或裝著 .txt 的 .zip）。留空則用 BOOK_SOURCE_URL secret"
+        required: false
+      title:
+        description: "書名（留空就用檔名）"
+        required: false
+      slug:
+        description: "網址代稱（留空自動產生；沿用舊代稱就是原地覆蓋，書籤會留著）"
+        required: false
+      charset:
+        description: "原始編碼"
+        type: choice
+        options: [utf-8, gbk, big5, shift_jis]
+        default: utf-8
+      s2t:
+        description: "簡體轉繁體（OpenCC cn→tw）"
+        type: boolean
+        default: false
+      pattern:
+        description: "章節標題 regex，偵測失敗時才填，例如 ^第.+章"
+        required: false
+      dry_run:
+        description: "只切章不上傳，先確認章節抓得對"
+        type: boolean
+        default: false
+      server_url:
+        description: "伺服器網址（留空則用 BOOKWORM_URL 這個 repo secret）"
+        required: false
+
+# 兩本書同時上傳會互相搶 R2 的寫入配額，排隊比較穩
+concurrency:
+  group: publish-book
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 公開 repo 的提醒
+        if: ${{ !github.event.repository.private }}
+        run: |
+          echo "::warning::這個 repo 是公開的，本次執行的輸入和記錄（含書名、章節名）任何人都看得到。有版權的書請改用私有 fork，或用 /admin 從瀏覽器上傳。"
+
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # --s2t 會 import opencc-js，它是 devDependency，所以照樣要裝
+      - run: pnpm install --frozen-lockfile
+
+      - name: 抓書檔
+        env:
+          SOURCE_URL: ${{ inputs.source_url || secrets.BOOK_SOURCE_URL }}
+          SOURCE_HEADER: ${{ secrets.BOOK_SOURCE_HEADER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SOURCE_URL:-}" ]; then
+            echo "::error::沒有來源：填 source_url，或設一個 BOOK_SOURCE_URL secret"
+            exit 1
+          fi
+          # _book, NOT src — src/ is the Worker source in this repo
+          mkdir -p _book
+          # -L 跟著轉址走：雲端硬碟那類分享連結都會先轉一次
+          ARGS=(--fail --silent --show-error --location)
+          if [ -n "${SOURCE_HEADER:-}" ]; then ARGS+=(--header "$SOURCE_HEADER"); fi
+          curl "${ARGS[@]}" "$SOURCE_URL" --output _book/download.bin
+          # 檔名決定 split-book 沒給 --title 時的預設書名，所以沿用網址上的名字
+          NAME="$(basename "${SOURCE_URL%%\?*}")"
+          case "$NAME" in ""|*/*) NAME="book" ;; esac
+          echo "SRC_NAME=$NAME" >> "$GITHUB_ENV"
+          ls -l _book/download.bin
+
+      - name: 解開並認出輸入
+        run: |
+          set -euo pipefail
+          if [ "$(file -b --mime-type _book/download.bin)" = "application/zip" ]; then
+            unzip -q -o _book/download.bin -d _book/unpacked
+            mapfile -t TXTS < <(find _book/unpacked -type f -iname '*.txt' | sort)
+            if [ "${#TXTS[@]}" -eq 0 ]; then
+              echo "::error::zip 裡面沒有 .txt"
+              exit 1
+            fi
+            # 一個大 .txt 就直接餵檔案；一堆 NN_章名.txt 就餵它們所在的資料夾，
+            # split-book.mjs 兩種都吃
+            if [ "${#TXTS[@]}" -eq 1 ]; then
+              SRC="${TXTS[0]}"
+            else
+              SRC="$(dirname "${TXTS[0]}")"
+              echo "zip 裡有 ${#TXTS[@]} 個 .txt，當成已經切好的書"
+            fi
+          else
+            SRC="_book/${SRC_NAME%.txt}.txt"
+            mv _book/download.bin "$SRC"
+          fi
+          echo "SRC=$SRC" >> "$GITHUB_ENV"
+
+      - name: 切章
+        env:
+          IN_TITLE: ${{ inputs.title }}
+          IN_SLUG: ${{ inputs.slug }}
+          IN_PATTERN: ${{ inputs.pattern }}
+        run: |
+          set -euo pipefail
+          ARGS=("$SRC" --charset "${{ inputs.charset }}")
+          if [ -n "$IN_TITLE" ];   then ARGS+=(--title "$IN_TITLE"); fi
+          if [ -n "$IN_SLUG" ];    then ARGS+=(--slug "$IN_SLUG"); fi
+          if [ -n "$IN_PATTERN" ]; then ARGS+=(--pattern "$IN_PATTERN"); fi
+          if [ "${{ inputs.s2t }}" = "true" ]; then ARGS+=(--s2t); fi
+          node scripts/split-book.mjs "${ARGS[@]}"
+          OUT="$(find out -mindepth 1 -maxdepth 1 -type d | head -1)"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+
+      - name: 切出來長什麼樣
+        run: |
+          set -euo pipefail
+          M="$OUT/manifest.json"
+          {
+            echo "### $(jq -r .title "$M")"
+            echo
+            echo "- 代稱：\`$(jq -r .slug "$M")\`"
+            echo "- 章數：$(jq -r '.chapters | length' "$M")"
+            echo "- 總字數：$(jq -r .totalChars "$M")"
+            echo
+            echo "章節標題抓成這樣："
+            jq -r '[.chapters[0:3][].title, "…", .chapters[-1].title][]' "$M" | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上傳
+        if: ${{ !inputs.dry_run }}
+        env:
+          # 走環境變數而不是 --token：命令列會出現在記錄裡，環境變數不會
+          BOOKWORM_ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          SERVER: ${{ inputs.server_url || secrets.BOOKWORM_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVER:-}" ]; then
+            echo "::error::不知道要傳去哪：填 server_url，或設一個 BOOKWORM_URL repo secret"
+            exit 1
+          fi
+          if [ -z "${BOOKWORM_ADMIN_TOKEN:-}" ]; then
+            echo "::error::少了 ADMIN_TOKEN secret"
+            exit 1
+          fi
+          node scripts/publish-book.mjs "$OUT" --url "$SERVER"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          # secret 遮罩只蓋 log，不蓋 summary — 網址別寫進去
+          echo "已上傳，路徑：/$(jq -r .slug "$OUT/manifest.json")/" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 只是試切
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**dry run — 沒有上傳。** 章節看起來對的話，把 dry_run 關掉再跑一次。" >> "$GITHUB_STEP_SUMMARY"

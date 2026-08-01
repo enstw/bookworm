@@ -1,0 +1,531 @@
+:root {
+  --font-size: 24px;
+  --bg: #f7f2e9;
+  --fg: #2c2620;
+  --muted: #8d8478;
+  --card: #fffdf8;
+  --border: #e4dccd;
+  --accent: #a05e2a;
+  --bar-bg: rgba(247, 242, 233, 0.92);
+}
+
+/* paper colors (背景顏色) — light-reading only; these must stay ABOVE the
+   dark blocks so an active dark theme wins over a picked paper color */
+:root[data-bg="light-brown"]  { --bg: #f6efdc; --bar-bg: rgba(246, 239, 220, 0.92); }
+:root[data-bg="mid-brown"]    { --bg: #e5d099; --bar-bg: rgba(229, 208, 153, 0.92); }
+:root[data-bg="gold-brown"]   { --bg: #e0cb97; --bar-bg: rgba(224, 203, 151, 0.92); }
+:root[data-bg="dark-brown"]   { --bg: #cfba9f; --bar-bg: rgba(207, 186, 159, 0.92); }
+:root[data-bg="snow-white"]   { --bg: #ffffff; --bar-bg: rgba(255, 255, 255, 0.92); }
+:root[data-bg="pink"]         { --bg: #f9d9da; --bar-bg: rgba(249, 217, 218, 0.92); }
+:root[data-bg="light-orange"] { --bg: #fbe7cf; --bar-bg: rgba(251, 231, 207, 0.92); }
+:root[data-bg="light-yellow"] { --bg: #ffffdd; --bar-bg: rgba(255, 255, 221, 0.92); }
+:root[data-bg="light-green"]  { --bg: #e0fedc; --bar-bg: rgba(224, 254, 220, 0.92); }
+:root[data-bg="light-cyan"]   { --bg: #e0fefe; --bar-bg: rgba(224, 254, 254, 0.92); }
+:root[data-bg="light-blue"]   { --bg: #deebfc; --bar-bg: rgba(222, 235, 252, 0.92); }
+:root[data-bg="light-purple"] { --bg: #dfdefd; --bar-bg: rgba(223, 222, 253, 0.92); }
+:root[data-bg="magenta"]      { --bg: #fae0fd; --bar-bg: rgba(250, 224, 253, 0.92); }
+
+:root[data-theme="dark"] {
+  --bg: #17181c;
+  --fg: #c9c5bc;
+  --muted: #7d7a72;
+  --card: #1f2126;
+  --border: #2e3138;
+  --accent: #d29a63;
+  --bar-bg: rgba(23, 24, 28, 0.92);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --bg: #17181c;
+    --fg: #c9c5bc;
+    --muted: #7d7a72;
+    --card: #1f2126;
+    --border: #2e3138;
+    --accent: #d29a63;
+    --bar-bg: rgba(23, 24, 28, 0.92);
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* 6.4 MB CJK face: font-display swap renders fallback serifs immediately,
+   the browser caches the woff2 after the first visit */
+@font-face {
+  font-family: "ENS Font";
+  src: url("/fonts/ENSFont.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  /* keep pan/pinch but drop double-tap zoom — rapid page-taps must not zoom */
+  touch-action: manipulation;
+  font-family: "ENS Font", Georgia, "Songti TC", "Noto Serif CJK TC", "Source Han Serif TC", serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+code {
+  font-family: ui-monospace, Menlo, monospace;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.3em;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.linklike {
+  color: var(--accent);
+  text-decoration: underline;
+  padding: 0;
+}
+
+/* The app mark, where a 📖 emoji used to stand. A pseudo-element rather than
+   an <img> on purpose: admin.html's applyI18n() assigns node.textContent on
+   every [data-i18n] node when the language changes, which would throw away a
+   child element — a ::before survives it. Sized in em so one rule serves the
+   1.5rem library heading, the 1.3rem admin heading and the 0.9rem toolbar
+   button, each getting a mark in proportion to the text beside it. */
+.brand::before {
+  content: "";
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  margin-inline-end: 0.35em;
+  vertical-align: -0.2em;
+  background: url("/icons/mark.png") center / contain no-repeat;
+}
+
+/* in the toolbar the mark IS the button; nothing follows it */
+.iconbtn.brand::before { margin-inline-end: 0; }
+
+/* ---------- top bar ---------- */
+
+/* Both bars are overlays (fixed, hidden by default — tap the middle of the
+   screen to toggle) so showing them never reflows or shifts the text. */
+
+:root:not([data-bars]) .topbar,
+:root:not([data-bars]) .botnav { display: none; }
+
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  /* the top inset matters in the installed (standalone) PWA, where the
+     status bar is translucent and content draws under the notch */
+  padding: max(0.4rem, env(safe-area-inset-top)) max(0.6rem, env(safe-area-inset-right)) 0.4rem max(0.6rem, env(safe-area-inset-left));
+  background: var(--bar-bg);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.titles { flex: 1; min-width: 0; line-height: 1.25; }
+.btitle { font-size: 0.75rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctitle { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.iconbtn {
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.iconbtn:hover { background: var(--card); }
+.iconbtn.active { color: var(--accent); background: var(--card); }
+
+/* A 390 px phone has to hold ten controls AND the title. The buttons never
+   shrink (a clipped glyph is worse than a clipped word), so at phone widths
+   they give up their side padding instead — otherwise .titles is squeezed
+   to a single character and the 章節標題 reads as one stray glyph. */
+@media (max-width: 430px) {
+  .topbar {
+    gap: 0.1rem;
+    padding-left: max(0.35rem, env(safe-area-inset-left));
+    padding-right: max(0.35rem, env(safe-area-inset-right));
+  }
+  .topbar .iconbtn { padding: 0.35rem 0.28rem; }
+}
+
+/* ---------- content ---------- */
+
+/* padding-top IS the reading band's top in 橫排 (applyGrid reads it and
+   anchors the page grid to it, so every landing puts a line boundary
+   exactly there). The bottom used to reserve 3.5rem for the bottom nav —
+   the bars are transient overlays, so that was a page's worth of dead
+   space; it now only clears the home indicator, same call as 直排. */
+#content {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: calc(1.2rem + env(safe-area-inset-top)) 1.2rem max(0.8rem, env(safe-area-inset-bottom));
+  font-size: var(--font-size);
+  line-height: calc(4 / 3); /* 行距（行間空白）= 字號的 1/3 */
+}
+
+/* 橫排 lines START at the left edge, which is exactly where the island sits
+   in landscape — 1.2rem is not enough to clear it */
+@media (orientation: landscape) {
+  #content { padding-left: max(1.2rem, env(safe-area-inset-left)); }
+}
+
+/* --pitch (set by applyGrid in 直排) makes the paragraph gap exactly one
+   column, so the line grid's phase never drifts; horizontal reading has no
+   grid and falls back to the em values */
+#content p {
+  margin: 0;
+  margin-block-end: var(--pitch, 1em);
+  text-align: justify;
+  overflow-wrap: break-word;
+}
+
+/* Same size as the body text, bold + accent colored (user 07-28: "just use
+   a bold font title with different color in the same font size to simplify
+   the math"). A 1.25em head needs its own line-height and its own margin
+   quantization — at equal size the heading sits on the body grid for free. */
+.chapter-head {
+  font-size: 1em;
+  margin: 0;
+  margin-block-end: var(--pitch, 1.2em);
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* ---------- vertical reading (直排) ----------
+   The writing mode goes on #content, which is the horizontal scroll
+   container (start = right edge, scrollLeft runs 0 → negative) — the
+   document itself must NEVER scroll: iOS Safari mispositions position:fixed
+   overlays while the document scrolls horizontally, letting the bars ride
+   off-screen with the text. Keeping the fixed chrome in a non-scrolling
+   horizontal-tb document sidesteps that entirely. :has(#content) keeps the
+   library page normal while the toggle is on. */
+
+:root[data-vertical]:has(#content),
+:root[data-vertical]:has(#content) body {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* The page box (整頁模式, graded on-device via /pagedtest): #pagebox owns
+   the margins and CLIPS, #content inside it is exactly N×pitch wide, so a
+   column that would straddle the page edge is physically unrenderable —
+   before this, the scroller painted through its own padding and a sliver of
+   the next page's first column peeked in. 頁邊距 is 0 (user 07-28); the
+   safe-area insets remain as the landscape floor, and the few pixels
+   avail − N×pitch leave over become an even margin via the centering. */
+[data-vertical] #pagebox {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+/* Landscape: the horizontal safe-area insets appear (they are 0 in portrait
+   on this phone) and at 頁邊距 0 they cost several columns — user report
+   07-28. Only the side with the Dynamic Island actually needs one, and on
+   this phone in landscape that is the LEFT (user, same day), so the right
+   inset is dropped and the left kept. iOS reports the pair symmetrically,
+   which is why the wasted side has to be picked here rather than by env()
+   alone; /vhtest prints both insets and screen.orientation.angle if this
+   ever needs to follow the rotation direction instead. */
+@media (orientation: landscape) {
+  [data-vertical] #pagebox { padding-right: 0; }
+}
+
+[data-vertical] #content {
+  writing-mode: vertical-rl;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  /* scroll anchoring re-applies a page turn's delta on this flipped-axis
+     scroller (doubled turns on iOS, which ignores this property — pageScroll
+     guards there); opt out where the engine honors it */
+  overflow-anchor: none;
+  /* width comes from applyGrid (N×pitch) — the page IS the scrollport */
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  /* the bars are transient overlays, so no need to keep clear of them; the
+     bottom deliberately eats into the home-indicator inset — reserving the
+     full inset + 1.2rem left a ~2-glyph dead band under every column in the
+     installed PWA, and the indicator pill only grazes the bottom center.
+     Top: inset − 0.4rem puts the first glyph just under the island without
+     overlapping it (picked on-device via the /vhtest 頂端 strip; ×0.75
+     already collided) and collapses to 0.6rem wherever the inset is 0.
+     No horizontal padding: it would paint outside the page box. */
+  padding: max(0.6rem, calc(env(safe-area-inset-top) - 0.4rem)) 0 max(0.6rem, calc(env(safe-area-inset-bottom) * 0.5));
+}
+
+/* Installed-app quirk (iOS): after some launches the standalone web view is
+   top-aligned with the physical screen (env safe-area-inset-top = 62) while
+   dvh still reports a viewport 62pt short — and the band BELOW the layout
+   viewport is painted and visible, i.e. claimable reading space at the
+   bottom. Other launches of the same install sit below the status bar
+   instead (env top = 0, dvh correct). The min() term makes this exactly
+   self-adapting: it adds the top inset only when vh exceeds dvh by at least
+   that much, and is a no-op where dvh already spans the full screen
+   (Android edge-to-edge standalone). Browsers keep pure dvh — Safari's and
+   Brave's toolbars need dvh's dynamic tracking. */
+@media (display-mode: standalone) {
+  :root[data-vertical]:has(#content),
+  :root[data-vertical]:has(#content) body,
+  [data-vertical] #pagebox {
+    height: calc(100dvh + min(env(safe-area-inset-top, 0px), 100vh - 100dvh));
+  }
+  /* bottom-anchored chrome hugs the physical screen edge, not the short
+     layout viewport that fixed positioning resolves against */
+  [data-vertical] .botnav {
+    transform: translateY(min(env(safe-area-inset-top, 0px), 100vh - 100dvh));
+  }
+  [data-vertical] .playerbar,
+  [data-vertical] .jumpnote {
+    transform: translate(-50%, min(env(safe-area-inset-top, 0px), 100vh - 100dvh));
+  }
+}
+
+/* ---------- bottom nav ---------- */
+
+.botnav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem max(1rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  background: var(--bar-bg);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+}
+
+.botnav button {
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+.botnav button:disabled { opacity: 0.35; cursor: default; }
+
+.progress {
+  font-size: 0.8rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.syncdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  background: transparent;
+}
+.syncdot.ok { background: #7fa06a; }
+.syncdot.pending { background: #cfa03f; }
+.syncdot.err { background: #c0564f; }
+
+/* ---------- audio player ---------- */
+
+.playerbar {
+  position: fixed;
+  bottom: calc(3.6rem + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.55rem;
+  background: var(--bar-bg);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  white-space: nowrap;
+}
+
+/* with the botnav hidden the player can sit at the bottom edge */
+:root:not([data-bars]) .playerbar {
+  bottom: calc(0.8rem + env(safe-area-inset-bottom));
+}
+
+.player-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  min-width: 5.5rem;
+  text-align: center;
+}
+
+/* ---------- bookmark jump notice ---------- */
+
+.jumpnote {
+  position: fixed;
+  bottom: calc(0.8rem + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: min(94vw, 32rem);
+  padding: 0.5rem 0.4rem 0.5rem 0.8rem;
+  background: var(--bar-bg);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 0.85rem;
+}
+
+.jumpnote-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jumpnote .linklike { white-space: nowrap; }
+
+/* ---------- table of contents ---------- */
+
+.toc {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(20rem, 85vw);
+  z-index: 20;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
+}
+
+.toc[hidden] { display: none; }
+
+.toc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: max(0.6rem, env(safe-area-inset-top)) 0.6rem 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.toc-list { overflow-y: auto; flex: 1; }
+
+.toc-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toc-item:hover { background: var(--bg); }
+.toc-item.current { color: var(--accent); font-weight: 600; }
+
+/* ---------- library ---------- */
+
+.library {
+  max-width: 36rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.2rem;
+}
+
+.library h1 { font-size: 1.5rem; }
+
+/* the install guide (renderInstallGuide) */
+.library h2 { font-size: 1.1rem; margin: 1.5rem 0 0.4rem; }
+.guide-steps { margin: 1rem 0; padding-left: 1.4rem; line-height: 2; }
+
+/* the key gate (renderKeyGate): one field, thumb-sized on a phone */
+#keyForm { display: flex; gap: 0.6rem; margin: 1rem 0; }
+#keyForm input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  color: var(--fg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.book-list { display: grid; gap: 0.8rem; margin: 1.5rem 0; }
+
+.book-row { position: relative; }
+
+.book-card {
+  display: block;
+  /* the end padding is the ⇣'s column: the title must not run under it */
+  padding: 1rem 3.6rem 1rem 1.2rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: inherit;
+  text-decoration: none;
+}
+.book-card:hover { border-color: var(--accent); }
+.book-title { font-size: 1.05rem; margin-bottom: 0.25rem; }
+
+/* The ⇣ sits ON the card but outside its <a> — sized to the 44 px iOS asks
+   for, because on a phone this is a thumb target and not a tooltip. */
+.shelf-offline {
+  position: absolute;
+  top: 0.5rem;
+  inset-inline-end: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+/* .iconbtn.active paints the background var(--card) — which IS the card here,
+   so on the shelf the saved state is the accent plus a ring of it */
+.shelf-offline.active { color: var(--accent); background: none; border: 1px solid var(--accent); }
+.shelf-offline.busy { animation: shelf-pulse 1.1s ease-in-out infinite; }
+@keyframes shelf-pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .shelf-offline.busy { animation: none; opacity: 0.45; }
+}
+
+/* reading progress: thin bar + exact percent, scannable across books */
+.book-progress { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+.book-progress .bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.book-progress .fill { height: 100%; border-radius: 2px; background: var(--accent); }
+.book-progress span { font-size: 0.75rem; color: var(--muted); }

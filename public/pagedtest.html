@@ -1,0 +1,486 @@
+<!doctype html>
+<!-- TEMPORARY diagnostic page (linked as「整頁測試」from the library
+     footer): PoC of the paged-grid reading mode (user proposal 2026-07-28)
+     — no line may ever be sliced. N (onscreen lines per page) is the
+     integer primitive:
+
+       pitch = floor(span / N)   INTEGER px — the phone's testlog proved iOS
+                                 snaps line advances to whole pixels, so a
+                                 fractional pitch creeps ~2px/page and lets
+                                 the next page's first column peek in
+       字級  = pitch × ¾         (行距 = 字號的 1/3, reader parity; ⅓行
+                                 toggle gives ×⅔)
+
+     The page box is a hard clip: #pagewrap holds the margins and hides
+     overflow, #pager is exactly N × pitch wide — a sliced column is
+     physically unrenderable, the leftover px joins the margins. Line-height
+     is set in px (children inherit), the paragraph gap is one pitch, the
+     chapter title is SAME-SIZE bold+color (user: simplify the math — no
+     off-grid head, nothing to quantize). Page k = scrollLeft −k·step by
+     arithmetic, forward = backward. Free scrolling is page-or-nothing:
+     pan freely, on settle it snaps to the nearest page point.
+
+     No onscreen log — an automatic test runs on load (rerun via 自動測試):
+     typography audit, 3 forward landings, 3 back to exactly 0, N± reflow,
+     snap, overlap mode, seam chars; the ✓/✗ report renders once and
+     uploads to /api/testlog (page=pagedtest). Manual buttons stay for
+     feel and are silent. Self-contained; delete with the library link. -->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>整頁測試 · Bookworm</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body { background: #f6efdc; color: #2c2620; }
+    body { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+    main { padding: calc(env(safe-area-inset-top) + 8px) 12px 6px; }
+    h1 { font-size: 14px; margin-bottom: 6px; }
+    h1 a { font-weight: 400; }
+    .btns { margin: 6px 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    button { font: inherit; padding: 7px 9px; border: 1px solid #a05e2a;
+      background: #fffdf8; border-radius: 6px; }
+    a { color: #a05e2a; }
+    #pgstat { font-weight: 700; margin: 4px 12px 0; }
+    #pgres { font: 11px/1.5 ui-monospace, Menlo, monospace; margin: 6px 12px;
+      white-space: pre-wrap; }
+    /* the page box: wrapper owns margins + CLIPS at the page boundary —
+       content in the margins can never render, sliced or not */
+    #pagewrap { width: 100vw; overflow: hidden; display: flex;
+      justify-content: center;
+      /* --pgm toggles 頁邊距 0 ↔ 1.5rem; the safe-area floor keeps landscape
+         text clear of the notch either way */
+      padding: 0 max(var(--pgm, 0px), env(safe-area-inset-right)) 0 max(var(--pgm, 0px), env(safe-area-inset-left));
+      background: #fffdf8; border-top: 1px solid #a05e2a;
+      border-bottom: 1px solid #a05e2a; }
+    /* the pager is EXACTLY N·pitch wide (set by applyGrid) — its border box
+       is the clip; no horizontal padding so scrollport ≡ page */
+    #pager { writing-mode: vertical-rl; overflow-x: auto; overflow-y: hidden;
+      overscroll-behavior-x: contain; height: 60vh; padding: 0.6rem 0;
+      font-family: "ENS Font", Georgia, "Songti TC", "Noto Serif", serif;
+      text-align: justify; }
+    #pager p { margin: 0; margin-block-end: var(--pitch, 32px); }
+    #pager .num { color: #a05e2a; font-weight: 700; }
+    /* same-size title: bold + color only — inherently on-grid */
+    #pager h2 { margin: 0; margin-block-end: var(--pitch, 32px);
+      font-size: 1em; font-weight: 700; color: #a05e2a; }
+    /* the span ruler: draws exactly what applyGrid BELIEVES — span (blue),
+       page box N×pitch (green) with a tick per pitch — so the eye can
+       verify the math against the real columns just below */
+    #ruler { position: relative; height: 34px; width: 100vw; }
+    #ruler div { position: absolute; font: 9px/1 ui-monospace, monospace;
+      white-space: nowrap; }
+    #ruler .span { top: 2px; height: 13px; background: rgba(41, 128, 185, 0.25);
+      border-left: 2px solid #2980b9; border-right: 2px solid #2980b9;
+      color: #1b5e86; padding: 2px 0 0 3px; }
+    #ruler .page { top: 18px; height: 15px; background: rgba(39, 174, 96, 0.22);
+      border-left: 2px solid #27ae60; border-right: 2px solid #27ae60;
+      color: #14713c; padding: 3px 0 0 3px; }
+    #ruler .tick { top: 18px; height: 15px; width: 0;
+      border-left: 1px solid rgba(39, 174, 96, 0.75); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>整頁測試 <a href="/">← 回書架</a> · <a href="/pgtest">翻頁測試</a></h1>
+  <div class="btns">
+    <button id="pgPrev">◀ 前頁</button>
+    <button id="pgNext">次頁 ▶</button>
+    <button id="pgFew">行數−（字大）</button>
+    <button id="pgMore">行數＋（字小）</button>
+    <button id="pgOv">重疊: 0行</button>
+    <button id="pgSnap">吸附: 開</button>
+    <button id="pgRatio">行距: ⅓字</button>
+    <button id="pgMargin">邊距: 0</button>
+    <button id="pgAuto">自動測試</button>
+  </div>
+  <div id="pgstat"></div>
+  <div id="pgres">整頁模式：每頁固定 N 行、整數 pitch、頁框硬裁切（被切的行畫不出
+來）。載入後自動跑檢測；手動按鈕只管手感，不印讀數。</div>
+</main>
+<div id="ruler"></div>
+<div id="pagewrap"><div id="pager"></div></div>
+<script>
+"use strict";
+
+// the reader's real font, lifted from app.css so glyph metrics match
+fetch("/app.css").then((r) => r.text()).then((css) => {
+  const faces = css.match(/@font-face\s*\{[^}]*\}/g) || [];
+  const st = document.createElement("style");
+  st.textContent = faces.join("\n");
+  document.head.append(st);
+}).catch(() => {});
+
+const upload = (() => {
+  let last = "";
+  let device = "";
+  try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
+  return (data) => {
+    if (!data || data === last) return;
+    last = data;
+    const body = JSON.stringify({ page: "pagedtest", device, data });
+    try {
+      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
+        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+    } catch { /* offline is fine */ }
+  };
+})();
+
+const wrap = document.getElementById("pagewrap");
+const pager = document.getElementById("pager");
+const pgres = document.getElementById("pgres");
+const pgstat = document.getElementById("pgstat");
+const S = "話說天下大勢分久必合合久必分周末七國分爭併入於秦及秦滅之後" +
+  "楚漢分爭又併入於漢其致亂之由殆始於桓靈二帝，推其致亂之由。";
+{
+  const h = document.createElement("h2");
+  h.textContent = "第一回 整頁翻頁測試";
+  pager.append(h);
+  let off = 0;
+  for (let i = 1; i <= 60; i++) {
+    const p = document.createElement("p");
+    const n = document.createElement("span");
+    n.className = "num";
+    n.textContent = "【" + i + "】";
+    p.append(n, S.repeat([1, 3, 2, 5, 1, 4][i % 6]));
+    p.dataset.off = off;
+    off += p.textContent.length;
+    pager.append(p);
+  }
+}
+
+// --- the grid (integer pitch — iOS snaps line advances to whole px) ---
+
+let N = 10;        // onscreen lines per page — THE primitive
+let RATIO = 3 / 4; // 字級 = pitch × RATIO; ¾ ⇒ 行距=字號/3 (reader), ⅔ ⇒ 行距=字號/2
+let ov = 0;        // overlap lines carried across the seam (0 or 1)
+let pitch = 0, fs = 0, step = 0, leftover = 0;
+
+// the engine's real line advance, read back from adjacent line rects —
+// with integer pitch this must equal pitch exactly
+function measurePitch() {
+  const p = pager.querySelector("p:nth-of-type(2)"); // a long one, many lines
+  const range = document.createRange();
+  range.selectNodeContents(p);
+  const lefts = [...range.getClientRects()]
+    .filter((r) => r.width && r.height)
+    .map((r) => r.left)
+    .sort((a, b) => b - a);
+  const diffs = [];
+  for (let i = 1; i < lefts.length; i++) {
+    const d = lefts[i - 1] - lefts[i];
+    if (d > 1) diffs.push(d); // same-column fragments (the【n】span) diff ≈ 0
+  }
+  diffs.sort((a, b) => a - b);
+  return diffs.length
+    ? diffs[Math.floor(diffs.length / 2)]
+    : parseFloat(getComputedStyle(pager).lineHeight);
+}
+
+function applyGrid() {
+  const wcs = getComputedStyle(wrap);
+  const avail = wrap.clientWidth - parseFloat(wcs.paddingLeft) - parseFloat(wcs.paddingRight);
+  pitch = Math.max(8, Math.floor(avail / N));
+  leftover = avail - N * pitch; // joins the centered margins
+  fs = pitch * RATIO;
+  pager.style.width = N * pitch + "px";
+  pager.style.fontSize = fs.toFixed(2) + "px";
+  pager.style.lineHeight = pitch + "px";
+  pager.style.setProperty("--pitch", pitch + "px");
+  // on-grid safety pass: any block whose outer block-size strays off the
+  // grid gets its end margin bumped to the next multiple (outer size from
+  // width+margins, not positions, so the pass is safe while it mutates)
+  for (const b of pager.children) {
+    b.style.marginBlockEnd = ""; // back to the stylesheet's one-pitch gap
+    const bcs = getComputedStyle(b);
+    const mEnd = parseFloat(bcs.marginLeft); // vertical-rl: block-end = left
+    const outer = b.getBoundingClientRect().width + mEnd + parseFloat(bcs.marginRight);
+    const rem = outer % pitch;
+    if (rem > 0.5 && pitch - rem > 0.5)
+      b.style.marginBlockEnd = (mEnd + (pitch - rem)).toFixed(2) + "px";
+  }
+  step = (N - ov) * pitch;
+  pgstat.textContent = "N" + N + " 行/頁 · pitch " + pitch + "px · 字級 " +
+    fs.toFixed(2) + "px · 頁寬 " + N * pitch + " · 步距 " + step +
+    " · 邊剩 " + leftover.toFixed(1) + "px · 邊距 " +
+    Math.round(parseFloat(wcs.paddingLeft)) + "px";
+  drawRuler();
+}
+
+// draw what applyGrid believes onto the ruler strip: the span between the
+// page margins, the N·pitch page box centered in it, one tick per pitch —
+// verify by eye that the real columns below sit between the ticks
+const ruler = document.getElementById("ruler");
+function drawRuler() {
+  const rr = ruler.getBoundingClientRect();
+  const wr = wrap.getBoundingClientRect();
+  const pr = pager.getBoundingClientRect();
+  const wcs = getComputedStyle(wrap);
+  const sL = wr.left + parseFloat(wcs.paddingLeft) - rr.left;
+  const sR = wr.right - parseFloat(wcs.paddingRight) - rr.left;
+  ruler.replaceChildren();
+  const seg = (cls, left, width, label) => {
+    const d = document.createElement("div");
+    d.className = cls;
+    d.style.left = left.toFixed(1) + "px";
+    d.style.width = width.toFixed(1) + "px";
+    if (label) d.textContent = label;
+    ruler.append(d);
+  };
+  seg("span", sL, sR - sL, "span " + (sR - sL).toFixed(1) + "px");
+  seg("page", pr.left - rr.left, pr.width,
+    "頁 " + N + "×" + pitch + "=" + N * pitch + "px");
+  for (let i = 0; i <= N; i++) seg("tick", pr.left - rr.left + i * pitch, 0);
+}
+
+// --- page points & gliding (native smooth, absolute targets only) ---
+
+let k = 0;          // current page index
+let gliding = null; // { target, until } — our own smooth scroll in flight
+function glide(target) {
+  const g = { target, until: Date.now() + 2000 };
+  gliding = g;
+  pager.scrollTo({ left: target, behavior: "smooth" });
+  setTimeout(() => { if (gliding === g) gliding = null; }, 2100);
+}
+const minLeft = () => pager.clientWidth - pager.scrollWidth;
+const pagePoint = (kk) => Math.max(minLeft(), Math.min(0, -kk * step));
+
+function turn(d) { // manual buttons: silent, feel only
+  if (testing) return;
+  const kNew = Math.max(0, k + d);
+  const target = pagePoint(kNew);
+  k = kNew;
+  if (Math.abs(target - pager.scrollLeft) > 1) glide(target);
+}
+
+// --- free scrolling demoted to page-or-nothing: snap on settle ---
+
+let snapOn = true;
+let lastPan = 0;
+let snapTimer = 0;
+pager.addEventListener("scroll", () => {
+  if (gliding) {
+    if (Math.abs(pager.scrollLeft - gliding.target) <= 1 || Date.now() > gliding.until)
+      gliding = null;
+    return;
+  }
+  lastPan = Date.now();
+  clearTimeout(snapTimer);
+  snapTimer = setTimeout(trySnap, 170);
+}, { passive: true });
+
+function trySnap() {
+  if (!snapOn || gliding) return;
+  if (Date.now() - lastPan < 150) { snapTimer = setTimeout(trySnap, 170); return; }
+  const kk = Math.max(0, Math.round(-pager.scrollLeft / step));
+  const target = pagePoint(kk);
+  k = kk;
+  if (Math.abs(pager.scrollLeft - target) > 1) glide(target);
+}
+
+// --- instruments (used by the automatic test only) ---
+
+function charAt(x, y) {
+  const r = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+  if (!r) return null;
+  const p = r.startContainer.parentElement?.closest("p[data-off]");
+  return p ? Number(p.dataset.off) + r.startOffset : null;
+}
+
+function edgeChars() {
+  const pr = pager.getBoundingClientRect();
+  const top = pr.top + parseFloat(getComputedStyle(pager).paddingTop) + 14;
+  let last = null;
+  for (let x = pr.left + pitch / 4; x < pr.right; x += pitch / 4) {
+    const v = charAt(x, top);
+    if (v !== null) { last = v; break; }
+  }
+  const first = charAt(pr.right - pitch / 2, top);
+  return { first, last };
+}
+
+// grid health at rest: line rects straddling the page box edges (>1px on
+// both sides = a column the clip would slice) and the first column's
+// deviation from the grid (mod pitch — a paragraph gap on the boundary
+// makes a page legitimately open with a blank column)
+function gridCheck() {
+  const pr = pager.getBoundingClientRect();
+  const edgeR = pr.right;
+  const edgeL = pr.left;
+  let first = null, cutR = 0, cutL = 0;
+  for (const b of pager.children) {
+    const bb = b.getBoundingClientRect();
+    if (bb.right < edgeL - pitch || bb.left > edgeR + pitch || !bb.width) continue;
+    const range = document.createRange();
+    range.selectNodeContents(b);
+    for (const r of range.getClientRects()) {
+      if (!r.width || !r.height) continue;
+      if (r.left < edgeR - 1 && r.right > edgeR + 1) cutR++;
+      else if (r.right <= edgeR + 1 && (first === null || r.right > first)) first = r.right;
+      if (r.left < edgeL - 1 && r.right > edgeL + 1) cutL++;
+    }
+  }
+  let dev = null;
+  if (first !== null) {
+    const m = (((edgeR - first) % pitch) + pitch) % pitch;
+    dev = Math.min(m, pitch - m);
+  }
+  return { dev, cutR, cutL };
+}
+
+// --- the automatic test ---
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let testing = false;
+
+async function autoTest() {
+  if (testing) return null;
+  testing = true;
+  const res = [];
+  const check = (name, ok, detail) => { res.push({ name, ok: !!ok, detail }); };
+  const land = (kk) => {
+    const target = pagePoint(kk);
+    const g = gridCheck();
+    const ok = Math.abs(pager.scrollLeft - target) <= 1 &&
+      g.cutR === 0 && g.cutL === 0 && g.dev !== null && g.dev <= 3;
+    return { ok, detail: "定 " + Math.round(pager.scrollLeft) + "/目標 " + Math.round(target) +
+      " 偏 " + (g.dev === null ? "—" : g.dev.toFixed(1)) + " 切 " + g.cutR + "/" + g.cutL };
+  };
+  try {
+    k = 0; pager.scrollLeft = 0; await sleep(250);
+    applyGrid(); await sleep(250);
+
+    // 1. font/span math, per THIS device: integer pitch, page = N·pitch,
+    // engine line advance == pitch, every block a pitch multiple
+    const measured = measurePitch();
+    check("整數格", pitch === Math.floor(pitch) && leftover >= 0 && leftover < N,
+      "pitch " + pitch + " 字級 " + fs.toFixed(2) + " 邊剩 " + leftover.toFixed(1));
+    check("行距實測", Math.abs(measured - pitch) <= 0.25,
+      "引擎 " + measured.toFixed(3) + " vs " + pitch);
+    let off = 0;
+    for (const b of pager.children) {
+      const bcs = getComputedStyle(b);
+      const outer = b.getBoundingClientRect().width +
+        parseFloat(bcs.marginLeft) + parseFloat(bcs.marginRight);
+      const rem = outer % pitch;
+      if (Math.min(rem, pitch - rem) > 0.5) off++;
+    }
+    check("區塊在格", off === 0, off + " 個不在格上");
+
+    // 2. page 0 clean, then three forward landings
+    const g0 = gridCheck();
+    check("首頁", g0.cutR === 0 && g0.cutL === 0, "切 " + g0.cutR + "/" + g0.cutL);
+    let seamOk = true, seamDetail = "";
+    const colChars = Math.max(4, Math.round((pager.clientHeight -
+      2 * parseFloat(getComputedStyle(pager).paddingTop)) / fs));
+    for (let p = 1; p <= 3; p++) {
+      const before = edgeChars();
+      k = p; glide(pagePoint(p)); await sleep(1500);
+      const l = land(p);
+      check("次頁" + p, l.ok, l.detail);
+      const after = edgeChars();
+      if (after.first != null && before.last != null) {
+        const skip = after.first - before.last;
+        const want = ov ? Math.abs(skip) <= 2 : skip >= 1 && skip <= colChars * 2;
+        if (!want) seamOk = false;
+        seamDetail += (seamDetail ? " " : "") + skip;
+      }
+    }
+    check("接縫字數", seamOk, seamDetail + "（一行約 " + colChars + " 字）");
+
+    // 3. three back — must return to exactly 0
+    for (let p = 2; p >= 0; p--) { k = p; glide(pagePoint(p)); await sleep(1500); }
+    check("回到 0", Math.abs(pager.scrollLeft) <= 1, "定 " + pager.scrollLeft.toFixed(1));
+
+    // 4. N±: reflow keeps the grid, a turn still lands
+    const N0 = N;
+    N = N0 + 1; applyGrid(); await sleep(250);
+    k = 1; glide(pagePoint(1)); await sleep(1500);
+    const lr = land(1);
+    check("行數＋反推", lr.ok && leftover >= 0 && leftover < N,
+      "N" + N + " pitch " + pitch + " 字級 " + fs.toFixed(2) + "；" + lr.detail);
+    N = N0; applyGrid(); k = 0; pager.scrollLeft = 0; await sleep(400);
+
+    // 5. free-scroll snap: park mid-page, expect the nearest page point
+    pager.scrollLeft = -1.4 * step;
+    await sleep(2600);
+    const ls = land(Math.round(1.4));
+    check("吸附", snapOn ? ls.ok : true, ls.detail + (snapOn ? "" : "（吸附關，略過）"));
+
+    // 6. overlap mode: one shared line across the seam
+    ov = 1; applyGrid();
+    k = 0; pager.scrollLeft = 0; await sleep(400);
+    const b1 = edgeChars();
+    k = 1; glide(pagePoint(1)); await sleep(1500);
+    const lo = land(1);
+    const a1 = edgeChars();
+    const oskip = a1.first != null && b1.last != null ? a1.first - b1.last : null;
+    check("重疊一行", lo.ok && step === (N - 1) * pitch &&
+      (oskip === null || Math.abs(oskip) <= 2),
+      "步距 " + step + " 接縫 " + oskip);
+    ov = 0; applyGrid(); k = 0; pager.scrollLeft = 0;
+  } catch (e) {
+    check("例外", false, String(e && e.message || e));
+  }
+  testing = false;
+
+  const fails = res.filter((r) => !r.ok).length;
+  const report = (fails ? "✗ " + fails + " 項未過" : "✓ 全部通過") + "\n" +
+    res.map((r) => (r.ok ? "✓ " : "✗ ") + r.name + "  " + r.detail).join("\n");
+  pgres.textContent = report;
+  const standalone = matchMedia("(display-mode: standalone)").matches || !!navigator.standalone;
+  upload((standalone ? "PWA" : "browser") + " " + innerWidth + "×" + innerHeight +
+    "\n" + pgstat.textContent + "\n" + report);
+  return res;
+}
+
+// --- controls ---
+
+document.getElementById("pgNext").onclick = () => turn(1);
+document.getElementById("pgPrev").onclick = () => turn(-1);
+const reGrid = () => {
+  if (testing) return;
+  applyGrid();
+  k = Math.max(0, Math.round(-pager.scrollLeft / step));
+  pager.scrollLeft = pagePoint(k); // land the reflowed text back on-grid
+};
+document.getElementById("pgFew").onclick = () => { N = Math.max(4, N - 1); reGrid(); };
+document.getElementById("pgMore").onclick = () => { N = Math.min(40, N + 1); reGrid(); };
+document.getElementById("pgOv").onclick = (e) => {
+  ov = 1 - ov;
+  e.target.textContent = "重疊: " + ov + "行";
+  reGrid();
+};
+document.getElementById("pgSnap").onclick = (e) => {
+  snapOn = !snapOn;
+  e.target.textContent = "吸附: " + (snapOn ? "開" : "關");
+};
+document.getElementById("pgRatio").onclick = (e) => {
+  RATIO = RATIO === 3 / 4 ? 2 / 3 : 3 / 4;
+  e.target.textContent = "行距: " + (RATIO === 3 / 4 ? "⅓字" : "⅓行");
+  reGrid();
+};
+let margin0 = true; // user proposal 07-28: page margin = 0, span = full screen
+document.getElementById("pgMargin").onclick = (e) => {
+  margin0 = !margin0;
+  document.documentElement.style.setProperty("--pgm", margin0 ? "0px" : "1.5rem");
+  e.target.textContent = "邊距: " + (margin0 ? "0" : "24");
+  reGrid();
+};
+document.getElementById("pgAuto").onclick = () => { if (!testing) autoTest(); };
+
+addEventListener("resize", () => { if (!testing) reGrid(); });
+
+// init: N from what font 24 would give on this viewport, then auto-run
+{
+  const wcs = getComputedStyle(wrap);
+  const avail = wrap.clientWidth - parseFloat(wcs.paddingLeft) - parseFloat(wcs.paddingRight);
+  N = Math.max(4, Math.round(avail / 32));
+  applyGrid();
+  setTimeout(autoTest, 400);
+}
+</script>
+</body>
+</html>

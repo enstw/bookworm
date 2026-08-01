@@ -1,0 +1,30 @@
+{
+  "name": "bookworm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/vendor.mjs && wrangler dev",
+    "deploy": "node scripts/vendor.mjs && wrangler deploy",
+    "vendor": "node scripts/vendor.mjs",
+    "db:init": "wrangler d1 execute bookworm --remote --file=schema.sql",
+    "db:init:local": "wrangler d1 execute bookworm --local --file=schema.sql",
+    "split": "node scripts/split-book.mjs",
+    "publish-book": "node scripts/publish-book.mjs",
+    "test": "node scripts/test-slug.mjs && node scripts/test-worker-pool.mjs && node scripts/test-push-crypto.mjs && node scripts/test-auth-e2e.mjs && node scripts/test-push-api-e2e.mjs && node scripts/test-shelf-admin-e2e.mjs && node scripts/test-vertical-e2e.mjs && node scripts/test-bg-e2e.mjs && node scripts/test-tts-stream-e2e.mjs && node scripts/test-tts-stream-e2e.mjs chain",
+    "test:push": "node scripts/test-push-crypto.mjs && node scripts/test-push-api-e2e.mjs",
+    "test:tts": "node scripts/test-tts-core.mjs",
+    "test:tts-stream": "node scripts/test-tts-stream-e2e.mjs",
+    "test:vertical": "node scripts/test-vertical-e2e.mjs",
+    "test:bg": "node scripts/test-bg-e2e.mjs",
+    "test:admin": "node scripts/test-admin-e2e.mjs",
+    "test:shelf": "node scripts/test-shelf-admin-e2e.mjs",
+    "test:auth": "node scripts/test-auth-e2e.mjs",
+    "test:slug": "node scripts/test-slug.mjs",
+    "test:offline": "node scripts/test-offline-e2e.mjs"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.3",
+    "opencc-js": "^1.4.1",
+    "wrangler": "^4.114.0"
+  }
+}

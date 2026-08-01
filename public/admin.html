@@ -1,0 +1,1043 @@
+<!doctype html>
+<!-- zh-Hant is the shipped default; i18n.js rewrites lang when a device picks English -->
+<html lang="zh-Hant" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light dark">
+  <title>Bookworm · 管理</title>
+  <script src="/i18n.js"></script>
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/app.css">
+  <style>
+    .wrap { max-width: 34rem; margin: 0 auto; padding: 1.2rem 1rem 4rem; }
+    h1 { font-size: 1.3rem; }
+    section {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1rem; margin: 1rem 0;
+    }
+    label { display: block; margin: 0.7rem 0 0.25rem; color: var(--muted); font-size: 0.85rem; }
+    input[type="text"], input[type="password"], select, textarea {
+      font: inherit; color: inherit; width: 100%;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.5rem 0.7rem;
+    }
+    textarea { resize: vertical; }
+    input[type="file"] { width: 100%; }
+    .btn {
+      display: inline-block; margin-top: 0.9rem; padding: 0.55rem 1.2rem;
+      border: 1px solid var(--accent); border-radius: 8px; color: var(--accent);
+      font-size: 1rem;
+    }
+    .btn:disabled { opacity: 0.4; }
+    .btn.primary { background: var(--accent); color: var(--bg); }
+    .row { display: flex; gap: 0.6rem; align-items: center; }
+    .row > * { flex: 1; }
+    progress { width: 100%; height: 0.6rem; accent-color: var(--accent); }
+    #log { white-space: pre-wrap; font-size: 0.85rem; }
+    .ok { color: #3d8b3d; }
+    .err { color: #b04a3a; }
+    ul.preview { padding-left: 1.2rem; margin: 0.4rem 0; font-size: 0.9rem; }
+    a { color: var(--accent); }
+    h2 { font-size: 1rem; margin: 0 0 0.6rem; }
+
+    /* one row per book, its editor folded away until asked for */
+    .book { border-top: 1px solid var(--border); padding: 0.7rem 0; }
+    .book:first-of-type { border-top: 0; padding-top: 0; }
+    .book-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+    .book-head .name { flex: 1 1 8rem; }
+    .book-head code { font-size: 0.8rem; }
+    .book-head .linklike { flex: 0 0 auto; }
+    .danger { color: #b04a3a; }
+    .panel { margin-top: 0.6rem; }
+    .panel .btn { margin-top: 0.6rem; margin-right: 0.5rem; }
+    .msg { margin-top: 0.5rem; font-size: 0.85rem; }
+    .hint { color: var(--muted); font-size: 0.8rem; margin: 0.4rem 0 0; }
+    #diag a { margin-right: 0.9rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- .brand is an attribute, so applyI18n's textContent assignment leaves
+         the mark's ::before alone when the language changes -->
+    <h1 class="brand" data-i18n="admin.h1">管理</h1>
+    <!-- everything that needs the key lives here; / is for reading -->
+    <a class="linklike" href="/?shelf" data-i18n="admin.toShelf">← 回書架</a>
+    ·
+    <button class="linklike" id="langBtn"></button>
+
+    <section id="auth">
+      <label for="token" data-i18n="admin.token">管理密鑰（ADMIN_TOKEN）</label>
+      <input type="password" id="token" autocomplete="off" placeholder="Bearer token">
+      <button class="btn" id="saveToken" data-i18n="admin.verify">驗證並儲存</button>
+      <div id="authMsg" class="small"></div>
+    </section>
+
+    <section id="books" hidden>
+      <h2 data-i18n="admin.booksH">書架上的書</h2>
+      <div id="bookList"></div>
+      <!-- outcomes that outlive the row they came from (a delete removes it),
+           and where 清理 reports what its index rebuild put back -->
+      <div id="booksMsg" class="msg"></div>
+    </section>
+
+    <!-- 讀者鑰匙: who gets to read. A key IS the identity — minted here,
+         carried to a device as a /?key= link (AirDrop / iMessage), revoked
+         here when a device is lost. Several keys can share one reader id:
+         one key per DEVICE, so revoking a phone never logs out the rest. -->
+    <section id="readers" hidden>
+      <h2 data-i18n="rd.h">讀者鑰匙</h2>
+      <p class="hint" data-i18n="rd.hint">每台裝置一把鑰匙。把連結傳到裝置上打開就完成登入；裝置遺失就撤銷那把鑰匙。同一位讀者（同代號）可以有多把鑰匙。</p>
+      <div id="readerList"></div>
+      <div class="row">
+        <div>
+          <label for="rdUser" data-i18n="rd.user">讀者代號（留空自動產生）</label>
+          <input type="text" id="rdUser" autocomplete="off">
+        </div>
+        <div>
+          <label for="rdLabel" data-i18n="rd.label">備註（哪台裝置）</label>
+          <input type="text" id="rdLabel" autocomplete="off">
+        </div>
+      </div>
+      <button class="btn primary" id="rdCreate" data-i18n="rd.create">產生鑰匙</button>
+      <div id="rdMsg" class="msg"></div>
+    </section>
+
+    <section id="pick" hidden>
+      <h2 data-i18n="admin.uploadH">上傳新書</h2>
+      <label for="file" data-i18n="admin.file">書檔（.txt 或 .zip 內含一個大 .txt）</label>
+      <input type="file" id="file" accept=".txt,.zip,text/plain,application/zip">
+
+      <div class="row">
+        <div>
+          <label for="title" data-i18n="admin.bookTitle">書名</label>
+          <input type="text" id="title">
+        </div>
+        <div>
+          <label for="slug" data-i18n="admin.slug">網址代稱（slug）</label>
+          <input type="text" id="slug">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="charset" data-i18n="admin.charset">編碼</label>
+          <select id="charset">
+            <option value="utf-8" selected>UTF-8</option>
+            <option value="gb18030">GBK / GB18030</option>
+            <option value="big5">Big5</option>
+            <option value="shift_jis">Shift_JIS</option>
+          </select>
+        </div>
+        <div>
+          <label for="s2t" data-i18n="admin.s2t">簡→繁轉換</label>
+          <select id="s2t">
+            <!-- default to converting: sources are often mixed (mostly
+                 Traditional with stray Simplified), which auto-detect misses -->
+            <option value="yes" selected data-i18n="admin.s2tYes">轉換（預設）</option>
+            <option value="auto" data-i18n="admin.s2tAuto">自動偵測</option>
+            <option value="no" data-i18n="admin.s2tNo">不轉換</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="pattern" data-i18n="admin.pattern">章節標題 regex（偵測失敗時才需要）</label>
+      <input type="text" id="pattern" placeholder="^第.+章">
+
+      <button class="btn primary" id="analyze" disabled data-i18n="admin.analyze">分析章節</button>
+    </section>
+
+    <section id="review" hidden>
+      <div id="summary"></div>
+      <ul class="preview" id="chapterPreview"></ul>
+      <button class="btn primary" id="upload" data-i18n="admin.upload">上傳</button>
+      <progress id="bar" value="0" max="1" hidden></progress>
+      <div id="log"></div>
+    </section>
+
+    <!-- Two phases, two buttons. 健康檢查 reads and reports; 修復 rebuilds the
+         index and deletes what nothing can reach. Checking is the safe half and
+         gets to be pressed on its own; 修復 stays dark until a check has found
+         something for it to do. -->
+    <section id="house" hidden>
+      <h2 data-i18n="clean.h">檢查與修復</h2>
+      <p class="hint" data-i18n="clean.hint">先檢查，有問題再修。檢查只讀不寫，隨時可以按。修復會重建索引，再把讀不到的東西刪掉 —— 書架上沒有的，就是誰都讀不到的，不必搶救，刪掉重傳就好。</p>
+      <button class="btn" id="checkBtn" data-i18n="clean.check">健康檢查</button>
+      <button class="btn danger" id="fixBtn" disabled data-i18n="clean.fix">修復</button>
+      <div id="auditMsg" class="msg"></div>
+      <!-- filled in when 修復 is about to delete a book whole, before it has
+           touched anything. Above the list, so it does not need scrolling past
+           the findings to be seen. -->
+      <div id="auditConfirm" class="panel" hidden></div>
+      <div id="auditList"></div>
+    </section>
+
+    <!-- 改進建議: the owner's suggestion inbox for the AI. Written here (the
+         phone is where ideas strike), read back by a dev agent with a plain
+         unauthenticated GET /api/feedback — no key to hand over. Deleted by
+         nobody: schema.sql empties the table on every deploy, so shipping
+         the fix is what clears its note, and no delete button is needed. -->
+    <section id="fb" hidden>
+      <h2 data-i18n="fb.h">改進建議</h2>
+      <p class="hint" data-i18n="fb.hint">隨手記下想改進的地方。AI 開工時會從 GET /api/feedback 讀取（不需密鑰）；建議做完部署上線，這裡就自動清空 — 還讀得到的，就是還沒做的。</p>
+      <textarea id="fbBody" rows="3" maxlength="2000"></textarea>
+      <button class="btn primary" id="fbSend" data-i18n="fb.send">張貼</button>
+      <div id="fbMsg" class="msg"></div>
+      <div id="fbList"></div>
+    </section>
+
+    <!-- On-device diagnostics, moved off the library footer: they are for
+         whoever runs the server, not for whoever reads on it. Born temporary,
+         kept on purpose — every paging fix so far started from one of these
+         readouts. (bare paths, not .html — the assets layer 307s .html to
+         bare) -->
+    <section id="diag" hidden>
+      <h2 data-i18n="admin.diagH">裝置診斷</h2>
+      <a href="/vhtest" data-i18n="diag.vh">vh 測試</a>
+      <a href="/pgtest" data-i18n="diag.pg">翻頁測試</a>
+      <a href="/pagedtest" data-i18n="diag.paged">整頁測試</a>
+      <a href="/scrolltest" data-i18n="diag.scroll">雙捲動測試</a>
+    </section>
+  </div>
+
+  <script type="module">
+    import {
+      deriveSlug, shortSlug, uniqueSlug, newBookId,
+      splitTextIntoPieces, piecesToEntries, buildManifest,
+    } from "/split-core.mjs";
+
+    const $ = (id) => document.getElementById(id);
+    const TOKEN_KEY = "bookworm:admin-token";
+    let token = localStorage.getItem(TOKEN_KEY) ?? "";
+    let entries = null, manifest = null;
+
+    const authHeaders = () => ({ authorization: `Bearer ${token}` });
+
+    async function ping() {
+      const res = await fetch("/api/admin/ping", { headers: authHeaders() });
+      return res.ok;
+    }
+
+    // everything behind the key appears at once: the shelf to manage, the
+    // upload form, and the diagnostic pages
+    function unlock() {
+      $("authMsg").textContent = t("admin.verified");
+      $("authMsg").className = "small ok";
+      for (const id of ["books", "readers", "pick", "house", "fb", "diag"]) $(id).hidden = false;
+      loadBooks();
+      loadReaders();
+      loadNotes();
+    }
+
+    async function initAuth() {
+      if (token && (await ping())) {
+        $("token").value = token;
+        unlock();
+      }
+    }
+
+    $("saveToken").onclick = async () => {
+      token = $("token").value.trim();
+      if (await ping()) {
+        localStorage.setItem(TOKEN_KEY, token);
+        unlock();
+      } else {
+        $("authMsg").textContent = t("admin.badToken");
+        $("authMsg").className = "small err";
+      }
+    };
+
+    // ---------- 書架管理 ----------
+
+    function el(tag, attrs = {}, ...kids) {
+      const node = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs)) {
+        if (v === null || v === undefined || v === false) continue;
+        if (k === "class") node.className = v;
+        else if (k === "text") node.textContent = v;
+        else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+        else node.setAttribute(k, v === true ? "" : v);
+      }
+      for (const c of kids.flat()) if (c) node.append(c);
+      return node;
+    }
+
+    async function api(url, init = {}) {
+      const res = await fetch(url, {
+        ...init,
+        headers: { ...(init.headers ?? {}), ...authHeaders() },
+      });
+      if (res.status === 401) throw new Error(t("admin.tokenExpired"));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      return data;
+    }
+
+    // by id, never by slug — the slug is the thing these calls change
+    const bookUrl = (id) => `/api/admin/books/${encodeURIComponent(id)}`;
+
+    async function loadBooks() {
+      const list = $("bookList");
+      list.replaceChildren(el("div", { class: "small muted", text: t("lib.loading") }));
+      let books;
+      try {
+        // the admin Bearer is this page's credential for the gated shelf
+        // list; no-store because an edit must not read back what it replaced
+        books = (await api("/api/books", { cache: "no-store" })).books ?? [];
+      } catch (err) {
+        return list.replaceChildren(
+          el("div", { class: "small err", text: t("admin.booksFail", err.message) }));
+      }
+      $("booksMsg").textContent = "";
+      list.replaceChildren(
+        ...(books.length
+          ? books.map(bookRow)
+          : [el("p", { class: "muted small", text: t("admin.booksEmpty") })]));
+    }
+
+    function bookRow(b) {
+      const msg = el("div", { class: "msg" });
+      const edit = el("div", { class: "panel", hidden: true });
+      const del = el("div", { class: "panel", hidden: true });
+      const toggle = (panel) => {
+        for (const p of [edit, del]) p.hidden = p !== panel || !p.hidden;
+        msg.textContent = "";
+        msg.className = "msg";
+      };
+      const say = (text, cls = "") => {
+        msg.textContent = text;
+        msg.className = "msg" + (cls ? " " + cls : "");
+      };
+
+      // 改書名 + 改代號 in one form: both are edits to the same book, and
+      // typing them into fields beats a chain of prompt() boxes
+      const title = el("input", { type: "text", value: b.title });
+      const slug = el("input", { type: "text", value: b.slug });
+      edit.append(
+        el("label", { text: t("admin.bookTitle") }), title,
+        el("label", { text: t("admin.slug") }), slug,
+        el("p", { class: "hint", text: t("admin.slugHint") }),
+        el("button", {
+          class: "btn primary",
+          text: t("admin.save"),
+          onclick: (e) => saveBook(b, title.value.trim(), slug.value.trim(), say, e.target),
+        }),
+        el("button", { class: "btn", text: t("admin.cancel"), onclick: () => toggle(edit) }),
+        msg);
+
+      // deleting takes every reader's bookmark with it, so the slug has to be
+      // typed out — two characters, and nothing else on this page is final
+      const typed = el("input", { type: "text", autocomplete: "off" });
+      del.append(
+        el("p", { class: "small", text: t("admin.deleteWarn", b.title) }),
+        el("label", { text: t("admin.deleteConfirm", b.slug) }), typed,
+        el("button", {
+          class: "btn danger",
+          text: t("admin.deleteGo"),
+          onclick: (e) => removeBook(b, typed.value.trim(), say, e.target),
+        }),
+        el("button", { class: "btn", text: t("admin.cancel"), onclick: () => toggle(del) }));
+
+      return el("div", { class: "book" },
+        el("div", { class: "book-head" },
+          el("span", { class: "name", text: b.title }),
+          // the slug is what the URL says; the id underneath it is where the
+          // files actually are, and the only thing worth quoting in a bug report
+          el("code", { class: "muted", title: t("admin.idIs", b.id), text: b.slug }),
+          el("span", { class: "muted small", text: t("lib.meta", b.chapters, b.totalChars) }),
+          el("button", { class: "linklike", text: t("admin.edit"), onclick: () => toggle(edit) }),
+          el("button", { class: "linklike danger", text: t("admin.remove"), onclick: () => toggle(del) })),
+        edit, del);
+    }
+
+    // Rebuild the D1 shelf index from the bucket, one page of books per call.
+    // Books published before ids existed are picked up here — their prefix
+    // becomes their id — and any row whose files are gone is dropped.
+    //
+    // No button of its own: it writes, so it is step one of 修復 and nothing
+    // else. It is also the entire fix for two of the findings — a book the
+    // shelf lost, and a row whose book is gone — which is why 修復 runs it
+    // first and unconditionally: it is the cheapest repair here and the only
+    // one that puts something back rather than taking it away.
+    async function runReindex(say) {
+      say(t("admin.working"));
+      let r = {};
+      for (let round = 0; !r.done; round++) {
+        if (round > 500) throw new Error(t("admin.stuck"));
+        r = await api("/api/admin/reindex", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cursor: r.cursor, runAt: r.runAt, indexed: r.indexed, notes: r.notes }),
+        });
+      }
+      await loadBooks();
+      // A slug collision is the one thing this run finds that 健康檢查 cannot:
+      // it only shows itself when the row is written. The code comes back
+      // structured so the sentence can be made in the reader's language.
+      const notes = (r.notes ?? []).map((n) =>
+        t("clean.reindexNote." + n.code, n.id, n.slug ?? ""));
+      say([t("admin.reindexed", r.indexed, r.pruned ?? 0), ...notes].join("　"),
+        notes.length ? "err" : "ok");
+      return r;
+    }
+
+    const booksSay = (text, cls = "") => {
+      $("booksMsg").textContent = text;
+      $("booksMsg").className = "msg" + (cls ? " " + cls : "");
+    };
+
+    // ---------- 讀者鑰匙 ----------
+
+    // The enroll link a device swallows (see swallowKey in app.js). The
+    // origin rides along so the copied string works from any chat bubble.
+    const keyLink = (key) => `${location.origin}/?key=${encodeURIComponent(key)}`;
+
+    async function loadReaders() {
+      const list = $("readerList");
+      list.replaceChildren(el("div", { class: "small muted", text: t("lib.loading") }));
+      let readers;
+      try {
+        readers = (await api("/api/admin/readers")).readers ?? [];
+      } catch (err) {
+        return list.replaceChildren(el("div", { class: "small err", text: err.message }));
+      }
+      list.replaceChildren(
+        ...(readers.length
+          ? readers.map(readerRow)
+          : [el("p", { class: "muted small", text: t("rd.empty") })]));
+    }
+
+    function readerRow(r) {
+      const msg = el("span", { class: "small" });
+      return el("div", { class: "book" },
+        el("div", { class: "book-head" },
+          el("span", { class: "name" },
+            el("code", { text: r.user }),
+            r.label ? ` — ${r.label}` : ""),
+          el("button", {
+            class: "linklike",
+            text: t("rd.copy"),
+            onclick: async () => {
+              // clipboard needs a secure context (it has one: /admin is
+              // https or localhost); if it still refuses, hand-copy wins
+              try {
+                await navigator.clipboard.writeText(keyLink(r.key));
+                msg.textContent = t("rd.copied");
+              } catch {
+                prompt(t("rd.copyFail"), keyLink(r.key));
+              }
+            },
+          }),
+          el("button", {
+            class: "linklike danger",
+            text: t("rd.revoke"),
+            onclick: async () => {
+              if (!confirm(t("rd.revokeSure", r.user, r.label))) return;
+              try {
+                await api(`/api/admin/readers/${encodeURIComponent(r.key)}`, { method: "DELETE" });
+                loadReaders();
+              } catch (err) {
+                msg.textContent = err.message;
+                msg.className = "small err";
+              }
+            },
+          }),
+          msg));
+    }
+
+    $("rdCreate").onclick = async () => {
+      const say = (text, cls = "") => {
+        $("rdMsg").textContent = text;
+        $("rdMsg").className = "msg" + (cls ? " " + cls : "");
+      };
+      try {
+        const r = await api("/api/admin/readers", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            user: $("rdUser").value.trim(),
+            label: $("rdLabel").value.trim(),
+          }),
+        });
+        $("rdUser").value = "";
+        $("rdLabel").value = "";
+        // the link IS the deliverable — straight onto the clipboard, ready
+        // for the AirDrop/iMessage hop to the device being enrolled
+        try {
+          await navigator.clipboard.writeText(keyLink(r.key));
+          say(t("rd.created", r.user), "ok");
+        } catch {
+          prompt(t("rd.copyFail"), keyLink(r.key));
+          say(t("rd.createdShown", r.user), "ok");
+        }
+        loadReaders();
+      } catch (err) {
+        say(err.message, "err");
+      }
+    };
+
+    // ---------- 健康檢查 + 修復 ----------
+
+    // How each finding is dealt with. The prefix ones go through the ordinary
+    // book DELETE route, which sweeps a prefix whether or not there is a book
+    // behind it, and carries the premise it is acting on (`sweep:<reason>`) so
+    // the server can re-check it; the row ones through /api/admin/cleanup.
+    //
+    //   reindex  fixed by step one of 修復, with no call of its own
+    //   report   nothing here can touch it: a prefix outside the id alphabet
+    //            is one the server would neither serve nor delete
+    const CLEAN_FIX = {
+      "orphan-files": "sweep:gone",
+      "orphan-audio": "sweep:gone",
+      "stray-object": "object",
+      "orphan-slug": "row",
+      "orphan-position": "row",
+      "stale-file": "row",
+      // A book missing chapter files is a wall a reader hits mid-book, and
+      // there is nothing to salvage: it goes, and gets uploaded again.
+      "incomplete-book": "sweep:incomplete",
+      // A manifest that will not parse is as unreadable as none at all — the
+      // index is written from it, and every way into a book goes through the
+      // index. Same treatment, and the files are as unrecoverable.
+      "bad-manifest": "sweep:bad-manifest",
+      "unindexed": "reindex",
+      "ghost-book": "reindex",
+      "bad-prefix": "report",
+    };
+
+    const fixKind = (f) => (CLEAN_FIX[f.kind] ?? "report").split(":")[0];
+    const fixReason = (f) => (CLEAN_FIX[f.kind] ?? "").split(":")[1];
+    // findings 修復 can actually clear — the rest are for a human to read
+    const actionable = (found) => found.filter((f) => fixKind(f) !== "report");
+
+    // Sweeps that take something someone might still miss: a book that half
+    // works, or one whose manifest went bad underneath it. Everything else
+    // 修復 deletes was already unreachable by anyone.
+    const NEEDS_OK = new Set(["incomplete-book", "bad-manifest"]);
+
+    // Findings addressed by book id. A slug and a root object are ids too, but
+    // in their own namespaces, so they can never collide with a swept book.
+    const BOOK_KEYED = new Set([
+      "orphan-files", "orphan-audio", "incomplete-book", "bad-manifest", "stale-file",
+    ]);
+
+    // What the last 健康檢查 found, and the only thing 修復 ever acts on. Null
+    // means no check has run — 修復 is disabled and there is nothing to fix.
+    let checked = null;
+
+    const auditSay = (text, cls = "") => {
+      $("auditMsg").textContent = text;
+      $("auditMsg").className = "msg" + (cls ? " " + cls : "");
+    };
+
+    // Phase one, and it changes nothing. The scan is read-only the whole way
+    // down and never assumes a repair has run, so this can be pressed at any
+    // time and what it says is true when it says it — including its silence.
+    $("checkBtn").onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      $("fixBtn").disabled = true;
+      $("auditConfirm").hidden = true;
+      $("auditList").replaceChildren();
+      checked = null;
+      try {
+        report(await check(auditSay));
+      } catch (err) {
+        auditSay(t("admin.fail", err.message), "err");
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    // Phase two: the only thing on this page that writes. Re-index first —
+    // it is the fix for two of the findings, and the only step that puts
+    // something back — then delete what is left, then check again to prove it.
+    $("fixBtn").onclick = async (e) => {
+      const btn = e.target;
+      if (!checked?.length) return;
+      btn.disabled = true;
+      $("checkBtn").disabled = true;
+      $("auditConfirm").hidden = true;
+      try {
+        // Asked before anything at all happens, so cancelling leaves the shelf
+        // exactly as the check found it. Everything else 修復 clears is already
+        // unreachable — nobody loses what they could not open. A book is the
+        // exception: it is on the shelf, it half works, and sweeping it takes
+        // every reader's place in it. So it stops here and says which books,
+        // once. The shelf's own 刪除 asks for a typed slug; this asks for one
+        // press, because the alternative is a housekeeping button that quietly
+        // eats books after an interrupted upload.
+        const doomed = checked.filter((f) => NEEDS_OK.has(f.kind));
+        if (doomed.length) {
+          auditSay("");
+          if (!(await confirmSweep(doomed))) return auditSay(t("clean.cancelled"));
+        }
+
+        auditSay(t("clean.reindexing"));
+        await runReindex(booksSay);
+
+        const rows = checked.map((f) => ({ f, ...cleanRow(f) }));
+        $("auditList").replaceChildren(...rows.map((r) => r.node));
+
+        let removed = 0, acted = 0;
+        // A sweep takes the whole book, so any later finding about that same
+        // book is already dealt with — and calling for it would fail, since
+        // the manifest it needs is gone (stale-file answers 409 "no
+        // manifest"). checkChapters reports both for one book, in this order.
+        const swept = new Set();
+        for (const r of rows) {
+          if (BOOK_KEYED.has(r.f.kind) && swept.has(r.f.id)) {
+            r.say(t("clean.note.swept"));
+            continue;
+          }
+          if (fixKind(r.f) === "report") {
+            r.say(t("clean.note." + r.f.kind));
+            continue;
+          }
+          acted++;
+          removed += await cleanOne(r.f, r.say);
+          if (fixKind(r.f) === "sweep") swept.add(r.f.id);
+        }
+        // a swept book leaves the shelf, and the list above was drawn before
+        // that happened
+        if (swept.size) await loadBooks();
+
+        // And prove it, with the same read-only check. This is what a complete
+        // check buys: whatever comes back now is what the repair failed to
+        // clear, not something it uncovered — so a leftover is a bug, and can
+        // be said as one.
+        const before = rows.length;
+        const left = actionable((await check(auditSay)).found);
+        auditSay(left.length ? t("clean.left", left.length)
+          : acted ? t("clean.done", acted, removed)
+            : t("clean.reportOnly", before),
+          left.length ? "err" : "ok");
+      } catch (err) {
+        auditSay(t("admin.fail", err.message), "err");
+      } finally {
+        // the proof check above replaced `checked`, so the button now reflects
+        // what is actually left rather than what this run set out to do
+        $("fixBtn").disabled = !actionable(checked ?? []).length;
+        $("checkBtn").disabled = false;
+      }
+    };
+
+    // One check: scan, keep the findings for 修復, and draw them.
+    async function check(say) {
+      const r = await scan(say);
+      checked = prune(r.findings ?? []);
+      $("auditList").replaceChildren(...checked.map((f) => cleanRow(f).node));
+      return { found: checked, dropped: r.dropped ?? 0 };
+    }
+
+    // Two findings for one problem: a manifest that will not parse cannot be
+    // re-indexed, so "missing from the shelf index" is the wrong half to keep —
+    // and it is the half that looks like it has an easy fix.
+    function prune(found) {
+      const corrupt = new Set(
+        found.filter((f) => f.kind === "bad-manifest").map((f) => f.id));
+      return found.filter((f) => !(f.kind === "unindexed" && corrupt.has(f.id)));
+    }
+
+    // The verdict, and whether there is anything for 修復 to do.
+    function report({ found, dropped }) {
+      const can = actionable(found);
+      $("fixBtn").disabled = !can.length;
+      const over = dropped ? "　" + t("clean.dropped", dropped) : "";
+      if (!found.length) return auditSay(t("clean.healthy") + over, "ok");
+      auditSay((can.length
+        ? t("clean.found", found.length, can.length)
+        : t("clean.reportOnly", found.length)) + over, "err");
+    }
+
+    // The one stop in a repair: name the books it is about to take, and wait.
+    // Resolves true to go ahead, false to call the whole thing off — cancel
+    // leaves even the reachable garbage alone, because one button means the
+    // repair is one decision, not a per-finding interrogation.
+    function confirmSweep(findings) {
+      const panel = $("auditConfirm");
+      return new Promise((resolve) => {
+        const done = (ok) => {
+          panel.replaceChildren();
+          panel.hidden = true;
+          resolve(ok);
+        };
+        panel.replaceChildren(
+          el("p", { class: "small", text: t("clean.confirmWarn", findings.length) }),
+          ...findings.map((f) => el("div", { class: "book-head" },
+            el("span", { class: "name", text: t("clean.kind." + f.kind) }),
+            el("code", { class: "muted", text: f.id }),
+            el("span", { class: "muted small", text: cleanDetail(f) }))),
+          el("button", {
+            class: "btn danger",
+            text: t("clean.confirmGo", findings.length),
+            onclick: () => done(true),
+          }),
+          el("button", { class: "btn", text: t("admin.cancel"), onclick: () => done(false) }));
+        panel.hidden = false;
+      });
+    }
+
+    // One pass over bucket and index, a page per request (see /api/admin/audit).
+    // `dropped` comes back too: the server caps how many findings it will carry,
+    // and a check that hit the cap has to say so rather than look thorough.
+    async function scan(say) {
+      let r = {};
+      for (let round = 0; !r.done; round++) {
+        if (round > 500) throw new Error(t("admin.stuck"));
+        say(t("clean.scanning", round + 1));
+        r = await api("/api/admin/audit", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            phase: r.phase, cursor: r.cursor, offset: r.offset,
+            findings: r.findings, dropped: r.dropped,
+          }),
+        });
+      }
+      return r;
+    }
+
+    function cleanRow(f) {
+      const msg = el("div", { class: "msg" });
+      const say = (text, cls = "") => {
+        msg.textContent = text;
+        msg.className = "msg" + (cls ? " " + cls : "");
+      };
+      const node = el("div", { class: "book" },
+        el("div", { class: "book-head" },
+          el("span", { class: "name", text: t("clean.kind." + f.kind) }),
+          el("code", { class: "muted", text: f.id }),
+          el("span", { class: "muted small", text: cleanDetail(f) })),
+        msg);
+      return { node, say };
+    }
+
+    const cleanDetail = (f) =>
+      f.kind === "incomplete-book" ? t("clean.incomplete", f.missing, f.wrongSize, f.chapters, f.sample)
+        : f.files !== undefined ? t("clean.size", f.files, f.bytes, f.more)
+          : f.bytes !== undefined ? t("clean.bytes", f.bytes)
+            : f.count !== undefined ? t("clean.positions", f.count)
+              : f.book !== undefined ? t("clean.pointsAt", f.book)
+                : "";
+
+    async function cleanOne(f, say) {
+      const fix = fixKind(f);
+      // already dealt with by the re-index that opened this repair
+      if (fix === "reindex") {
+        say(t("clean.note." + f.kind));
+        return 0;
+      }
+      try {
+        say(t("admin.working"));
+        if (fix === "sweep") {
+          const n = await sweepBook(f.id, (done) => say(t("admin.sweeping", done)), fixReason(f));
+          say(t("clean.cleared", n), "ok");
+          return n;
+        }
+        if (fix === "object") {
+          await api(`/api/admin/objects/${encodeURIComponent(f.id)}`, { method: "DELETE" });
+          say(t("clean.cleared", 1), "ok");
+          return 1;
+        }
+        // row kinds are one call, except stale-file, which pages like a sweep
+        let total = 0, r;
+        for (let round = 0; ; round++) {
+          if (round > 5000) throw new Error(t("admin.stuck"));
+          r = await api("/api/admin/cleanup", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ kind: f.kind, id: f.id }),
+          });
+          total += r.removed ?? 0;
+          if (r.done !== false) break;
+          say(t("admin.sweeping", total));
+        }
+        say(t("clean.cleared", total), "ok");
+        return total;
+      } catch (err) {
+        say(t("admin.fail", err.message), "err");
+        return 0;
+      }
+    }
+
+    const SLUG_OK = /^[a-z0-9一-鿿぀-ヿ][a-z0-9一-鿿぀-ヿ-]*$/;
+
+    async function saveBook(b, title, slug, say, btn) {
+      if (!title) return say(t("admin.titleRequired"), "err");
+      if (slug !== b.slug && !SLUG_OK.test(slug)) return say(t("admin.badSlugChars"), "err");
+      if (title === b.title && slug === b.slug) return say(t("admin.noChange"));
+      btn.disabled = true;
+      try {
+        say(t("admin.working"));
+        // one request for both: the book keeps its id, so a new title and a
+        // new slug are two fields in a manifest, not a migration
+        const r = await api(bookUrl(b.id), {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title, slug }),
+        });
+        say(slug !== b.slug ? t("admin.reslugged", r.slug) : t("admin.titleSaved", r.title), "ok");
+      } catch (err) {
+        btn.disabled = false;
+        return say(t("admin.fail", err.message), "err");
+      }
+      btn.disabled = false;
+      loadBooks();
+    }
+
+    // Every object under a book id, a page per request: ?sweep=1 says "keep
+    // going", and without it a call that finds nothing left is a 404, which is
+    // what a typo deserves. Also 修復's broom for a prefix with no book.
+    // `reason` rides on the first call only, as ?expect=: it tells the server
+    // what this sweep believes about the book, and the server checks that
+    // belief against the bucket before agreeing to any of it.
+    async function sweepBook(id, onProgress, reason) {
+      let removed = 0;
+      for (let round = 0; ; round++) {
+        if (round > 5000) throw new Error(t("admin.stuck"));
+        const q = round ? "?sweep=1" : reason ? `?expect=${reason}` : "";
+        const r = await api(bookUrl(id) + q, { method: "DELETE" });
+        removed += r.removed ?? 0;
+        if (r.done) return removed;
+        onProgress?.(removed);
+      }
+    }
+
+    async function removeBook(b, typed, say, btn) {
+      if (typed !== b.slug) return say(t("admin.deleteMismatch"), "err");
+      btn.disabled = true;
+      try {
+        await sweepBook(b.id, (removed) => say(t("admin.sweeping", removed)));
+      } catch (err) {
+        btn.disabled = false;
+        return say(t("admin.fail", err.message), "err");
+      }
+      btn.disabled = false;
+      await loadBooks(); // takes this row, and its message box, with it
+      $("booksMsg").textContent = t("admin.deleted", b.title);
+      $("booksMsg").className = "msg ok";
+    }
+
+    $("file").onchange = () => {
+      const f = $("file").files[0];
+      if (!f) return;
+      const base = f.name.replace(/\.[^.]*$/, "");
+      if (!$("title").value) $("title").value = base;
+      if (!$("slug").value) $("slug").value = shortSlug(base);
+      $("analyze").disabled = false;
+    };
+
+    // crude but effective: compare counts of unambiguous simplified vs
+    // traditional characters in a sample
+    function looksSimplified(text) {
+      const sample = text.slice(0, 200000);
+      const count = (chars) =>
+        [...chars].reduce((n, c) => n + (sample.split(c).length - 1), 0);
+      return count("惊蛰门龙书剑对说话头风这为过还开") > count("驚蟄門龍書劍對說話頭風這為過還開");
+    }
+
+    async function extractText(file) {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bytes = buf;
+      if (/\.zip$/i.test(file.name) || (buf[0] === 0x50 && buf[1] === 0x4b)) {
+        const { unzipSync } = await import("/vendor/fflate.js");
+        const files = unzipSync(buf, { filter: (f) => /\.txt$/i.test(f.name) });
+        const names = Object.keys(files);
+        if (!names.length) throw new Error(t("admin.noTxtInZip"));
+        // one big txt expected — take the largest
+        names.sort((a, b) => files[b].length - files[a].length);
+        bytes = files[names[0]];
+        log(t("admin.fromZip", names[0], Math.round(bytes.length / 1e6)));
+      }
+      const decoder = new TextDecoder($("charset").value, { fatal: false });
+      return decoder.decode(bytes).replace(/^﻿/, "").replace(/\r\n?/g, "\n");
+    }
+
+    async function convertS2T(text, onProgress) {
+      const OpenCC = await import("/vendor/opencc-cn2t.js");
+      const convert = OpenCC.Converter({ from: "cn", to: "tw" });
+      const lines = text.split("\n");
+      const out = new Array(lines.length);
+      const CHUNK = 2000;
+      for (let i = 0; i < lines.length; i += CHUNK) {
+        for (let j = i; j < Math.min(i + CHUNK, lines.length); j++)
+          out[j] = convert(lines[j]);
+        onProgress(Math.min(1, (i + CHUNK) / lines.length));
+        await new Promise((r) => setTimeout(r)); // keep the UI alive
+      }
+      return out.join("\n");
+    }
+
+    function log(msg, cls = "") {
+      const div = document.createElement("div");
+      div.textContent = msg;
+      if (cls) div.className = cls;
+      $("log").append(div);
+    }
+
+    $("analyze").onclick = async () => {
+      $("analyze").disabled = true;
+      $("review").hidden = false;
+      $("log").replaceChildren();
+      $("summary").textContent = "";
+      $("chapterPreview").replaceChildren();
+      entries = manifest = null;
+      try {
+        let text = await extractText($("file").files[0]);
+
+        const mode = $("s2t").value;
+        const wantS2T = mode === "yes" || (mode === "auto" && looksSimplified(text));
+        let title = $("title").value.trim();
+        if (wantS2T) {
+          log(t("admin.converting"));
+          $("bar").hidden = false;
+          text = await convertS2T(text, (p) => ($("bar").value = p * 0.9));
+          const OpenCC = await import("/vendor/opencc-cn2t.js");
+          const conv = OpenCC.Converter({ from: "cn", to: "tw" });
+          title = conv(title);
+          $("title").value = title;
+          $("slug").value = deriveSlug(conv($("slug").value));
+          $("bar").hidden = true;
+        } else if (mode === "auto") {
+          log(t("admin.alreadyTrad"));
+        }
+
+        const { pieces, headingCount } = splitTextIntoPieces(text, {
+          pattern: $("pattern").value.trim() || undefined,
+          bookTitle: title,
+        });
+        if (headingCount < 3)
+          log(t("admin.fewHeadings", headingCount), "err");
+        entries = piecesToEntries(pieces);
+        // house rule: the title's pinyin initials, numeric postfix on
+        // collision — a typed slug is taken as typed, only tidied
+        let taken = [], sameTitle = null;
+        try {
+          const { books } = await api("/api/books", { cache: "no-store" });
+          taken = books.filter((b) => b.title !== title).map((b) => b.slug);
+          sameTitle = books.find((b) => b.title === title) ?? null;
+        } catch { /* offline: dedup check skipped */ }
+        const typed = $("slug").value.trim();
+        const slug = typed
+          ? uniqueSlug(deriveSlug(typed), taken)
+          : shortSlug(title, taken);
+        if (!slug) throw new Error(t("admin.badSlug"));
+        $("slug").value = slug;
+        // republishing a book keeps its id, so the upload lands on top of the
+        // old files and every bookmark still points at it; a new book mints one
+        manifest = buildManifest({ id: sameTitle?.id ?? newBookId(), slug, title, entries });
+
+        $("summary").textContent = t("admin.summary", entries.length, manifest.totalChars);
+        const show = entries.length <= 5 ? entries : [...entries.slice(0, 3), ...entries.slice(-2)];
+        $("chapterPreview").replaceChildren(
+          ...show.map((e) => {
+            const li = document.createElement("li");
+            li.textContent = t("admin.chapterLine", e.title, e.chars);
+            return li;
+          }),
+        );
+      } catch (err) {
+        log(`✗ ${err.message}`, "err");
+      }
+      $("analyze").disabled = false;
+    };
+
+    async function put(name, body, type) {
+      // keyed by id: the slug can change later, and nothing on disk should
+      // have to move when it does
+      const url = `/api/admin/objects/${encodeURIComponent(manifest.id)}/${encodeURIComponent(name)}`;
+      for (let attempt = 1; ; attempt++) {
+        const res = await fetch(url, {
+          method: "PUT",
+          headers: { ...authHeaders(), "content-type": type },
+          body,
+        });
+        if (res.ok) return;
+        if (res.status === 401) throw new Error(t("admin.tokenExpired"));
+        if (attempt >= 3) throw new Error(`${name}: HTTP ${res.status}`);
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+      }
+    }
+
+    $("upload").onclick = async () => {
+      if (!entries) return;
+      $("upload").disabled = true;
+      $("bar").hidden = false;
+      $("bar").value = 0;
+      let done = 0;
+      try {
+        const queue = [...entries];
+        await Promise.all(
+          Array.from({ length: 4 }, async () => {
+            while (queue.length) {
+              const e = queue.shift();
+              await put(e.file, e.body, "text/plain; charset=utf-8");
+              $("bar").value = ++done / (entries.length + 1);
+            }
+          }),
+        );
+        // manifest goes last so readers never see it referencing missing chapters
+        await put("manifest.json", JSON.stringify(manifest, null, 2) + "\n", "application/json");
+        $("bar").value = 1;
+        const a = document.createElement("a");
+        a.href = `/${encodeURIComponent(manifest.slug)}/`;
+        a.textContent = t("admin.uploaded", manifest.title);
+        $("log").append(a);
+      } catch (err) {
+        log(t("admin.uploadFail", err.message), "err");
+      }
+      $("upload").disabled = false;
+    };
+
+    // ---------- 改進建議 ----------
+
+    // the same public GET the AI uses — what this list shows is exactly the
+    // queue a dev session will read
+    async function loadNotes() {
+      try {
+        const { notes } = await (await fetch("/api/feedback")).json();
+        $("fbList").replaceChildren(...(notes ?? []).map((n) =>
+          el("div", { class: "small muted", text: n.body })));
+      } catch { /* the queue is still readable via curl; failing here is cosmetic */ }
+    }
+
+    $("fbSend").onclick = async () => {
+      const body = $("fbBody").value.trim();
+      if (!body) return;
+      $("fbSend").disabled = true;
+      try {
+        await api("/api/admin/feedback", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ body }),
+        });
+        $("fbBody").value = "";
+        $("fbMsg").textContent = t("fb.posted");
+        $("fbMsg").className = "msg ok";
+        loadNotes();
+      } catch (err) {
+        $("fbMsg").textContent = t("admin.fail", err.message);
+        $("fbMsg").className = "msg err";
+      } finally {
+        $("fbSend").disabled = false;
+      }
+    };
+
+    // one pass over the markup: every data-i18n node takes its string from
+    // the table, so the page ships readable zh-TW even before this runs
+    function applyI18n() {
+      document.title = t("admin.docTitle");
+      for (const node of document.querySelectorAll("[data-i18n]"))
+        node.textContent = t(node.dataset.i18n);
+      $("langBtn").textContent = t("lib.langSwitch");
+      $("langBtn").title = t("lib.langTitle");
+    }
+    $("langBtn").onclick = () => { bwSetLang(bwOtherLang()); applyI18n(); };
+    applyI18n();
+
+    initAuth();
+  </script>
+</body>
+</html>

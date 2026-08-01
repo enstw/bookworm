@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- zh-Hant is the shipped default (see i18n.js); the language switch in the
+     library rewrites this attribute when a device picks English -->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light dark">
+  <title>Bookworm</title>
+  <!-- PWA: no start_url in the manifest, so 加入主畫面 from a book URL opens
+       straight into that book; black-translucent + safe-area padding in the
+       CSS lets the text use the whole screen in the installed app -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Bookworm">
+  <meta name="theme-color" content="#f6efdc" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17181c" media="(prefers-color-scheme: dark)">
+  <link rel="apple-touch-icon" href="/icons/icon-180.png">
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="app"></div>
+  <!-- classic script, before app.js: it defines the t() every string below
+       goes through, and app.js is not a module -->
+  <script src="/i18n.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

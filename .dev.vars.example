@@ -1,0 +1,12 @@
+# Copy to .dev.vars for local development (wrangler dev reads it).
+# In production set it with: wrangler secret put ADMIN_TOKEN
+ADMIN_TOKEN=dev-token
+
+# Web Push (新書通知) — optional. Generate with: node scripts/gen-vapid.mjs
+# (single-quote the value: it is JSON and contains commas/quotes). Without
+# it /api/push/vapid answers 503 and the feature stays hidden.
+# VAPID_PRIVATE_JWK='{"kty":"EC","crv":"P-256","d":"…","x":"…","y":"…"}'
+# Contact address push services see in the VAPID token. Required together
+# with the key — push stays disabled until both are set, so an install
+# always announces itself under its own contact.
+# VAPID_SUBJECT=mailto:you@example.com

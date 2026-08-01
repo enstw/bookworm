@@ -1,0 +1,242 @@
+<!doctype html>
+<!-- TEMPORARY on-device diagnostic: isolates the conditions behind iOS
+     vertical-rl double scrolling. Linked from the library footer. -->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>雙捲動條件測試 · Bookworm</title>
+  <style>
+    * { box-sizing: border-box; }
+    html { color-scheme: light; background: #f6efdc; color: #29231d; }
+    body { margin: 0; padding: max(10px, env(safe-area-inset-top)) 12px max(16px, env(safe-area-inset-bottom));
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    h1 { margin: 0 0 6px; font-size: 18px; }
+    p { margin: 5px 0; }
+    a { color: #8a481e; }
+    .controls { position: sticky; top: 0; z-index: 2; margin: 10px -12px;
+      padding: 8px 12px; background: color-mix(in srgb, #f6efdc 94%, transparent);
+      border-block: 1px solid #bf9b75; }
+    button, select { min-height: 38px; padding: 6px 9px; font: inherit;
+      background: #fffaf0; color: inherit; border: 1px solid #9b7048; border-radius: 6px; }
+    #run { font-weight: 700; border-width: 2px; }
+    #meta, #events { white-space: pre-wrap; overflow-wrap: anywhere; }
+    #events { padding: 6px; background: #fffaf0; border: 1px solid #d2b38d; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .case { min-width: 0; background: #fffaf0; border: 1px solid #b78b5e; border-radius: 7px; overflow: hidden; }
+    .case h2 { margin: 0; padding: 5px 7px; font-size: 12px; background: #ead4b5; }
+    iframe { display: block; width: 100%; height: 150px; border: 0; background: white; }
+    .out { min-height: 72px; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+    .ok { color: #176b32; } .double { color: #b20d18; font-weight: 700; }
+    .other { color: #9a5500; font-weight: 700; }
+    .results { margin: 10px -12px; overflow-x: auto; }
+    table { width: 100%; min-width: 720px; border-collapse: collapse; background: #fffaf0; font-size: 11px; }
+    th, td { padding: 5px; border: 1px solid #c9a77f; text-align: left; vertical-align: top; }
+    th { background: #ead4b5; }
+    td span { display: block; white-space: nowrap; }
+    td small { display: block; max-width: 240px; overflow-wrap: anywhere; color: #625445; }
+    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>雙捲動條件矩陣</h1>
+  <p><a href="/">← 回書架</a> · 每格只差兩個條件：排版軸與 scroller 所在位置。</p>
+  <p>按一次自動跑完 3 種 API × 2 種 anchoring × 4 種版型，共 24 個量測。每次要求移動 120px，等待 1.2 秒；落在約 240px 才標成 <b>DOUBLE</b>。</p>
+  <div class="controls">
+    <button id="run">自動執行 24 個案例</button>
+    <button id="reset">重建／歸零</button>
+    <span id="progress">尚未執行</span>
+  </div>
+  <div id="meta"></div>
+  <div id="events">事件：尚未執行</div>
+  <div class="results"><table id="results">
+    <thead><tr><th>API / anchoring</th><th>直排元素</th><th>直排 document</th><th>橫排元素</th><th>橫排 document</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <div class="grid" id="grid"></div>
+<script>
+"use strict";
+// readout uploads: a completed run also POSTs to /api/testlog, so the laptop
+// can `curl /api/testlog?page=scrolltest` instead of trading screenshots
+const upload = (() => {
+  let last = "";
+  let device = "";
+  try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
+  return (data) => {
+    if (!data || data === last) return;
+    last = data;
+    const body = JSON.stringify({ page: "scrolltest", device, data });
+    try {
+      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
+        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+    } catch { /* offline is fine */ }
+  };
+})();
+
+const CASES = [
+  { id: "ve", title: "直排 vertical-rl · 元素 scroller", vertical: true, document: false },
+  { id: "vd", title: "直排 vertical-rl · document scroller", vertical: true, document: true },
+  { id: "he", title: "橫排 horizontal-tb · 元素 scroller", vertical: false, document: false },
+  { id: "hd", title: "橫排 horizontal-tb · document scroller", vertical: false, document: true },
+];
+const grid = document.querySelector("#grid");
+const frames = new Map();
+let runId = 0, deliveries = { touchend: 0, click: 0 };
+let activeRun = null;
+const METHODS = [
+  { value: "by", label: "scrollBy" },
+  { value: "to", label: "scrollTo" },
+  { value: "set", label: "scrollLeft=" },
+];
+const ANCHORS = ["auto", "none"];
+
+function childHtml(c) {
+  const axis = c.vertical ? "vertical-rl" : "horizontal-tb";
+  const size = c.vertical ? "height:100%;width:2600px" : "height:100%;width:2600px;white-space:nowrap";
+  const root = c.document ? `html{writing-mode:${axis};overflow-x:auto;overflow-y:hidden}body{${size}}` : "html,body{overflow:hidden}";
+  const box = c.document ? "body" : "#s";
+  return `<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><style>
+    *{box-sizing:border-box}html,body{margin:0;height:100%;font:16px/1.4 Georgia,serif}
+    ${root}
+    #s{writing-mode:${axis};overflow-x:auto;overflow-y:hidden;width:100%;height:100%}
+    #content{${size};background:repeating-linear-gradient(90deg,#fff 0 119px,#d33 119px 121px,#f3ead9 121px 240px)}
+    span{display:inline-block;padding:8px;color:#222}
+  </style>${c.document ? "" : "<div id=s>"}<div id=content><span>0 · 120 · 240 · 位移刻度</span></div>${c.document ? "" : "</div>"}<script>
+    // sampling + the 1.2 s finish line run on TIMERS, never rAF: iOS Safari
+    // freezes requestAnimationFrame in iframes it isn't rendering (the
+    // stacked cards sit below the fold on a phone), which silently ate every
+    // round after the first — timers keep firing in non-rendered same-page
+    // iframes (worst case coarsely clamped, still well inside the parent's
+    // deadline). The scroll listener still catches every actual movement.
+    const scroller=${box === "body" ? "document.scrollingElement" : "document.querySelector('#s')"};
+    let trace=[], iv=0, timer=0;
+    function pos(){return scroller.scrollLeft}
+    function sample(){const v=Math.round(pos()*10)/10;if(trace.at(-1)!==v)trace.push(v)}
+    addEventListener('scroll',sample,{passive:true,capture:true});
+    addEventListener('message',e=>{
+      const m=e.data;if(!m||m.kind!=='bw-scroll-test')return;
+      if(m.cmd==='reset'){clearInterval(iv);clearTimeout(timer);scroller.scrollLeft=0;trace=[pos()];return}
+      scroller.style.overflowAnchor=m.anchor;document.documentElement.style.overflowAnchor=m.anchor;
+      trace=[pos()];const start=pos(),delta=${c.vertical ? -120 : 120},target=start+delta;
+      if(m.method==='by')scroller.scrollBy(delta,0);
+      else if(m.method==='to')scroller.scrollTo(target,0);
+      else scroller.scrollLeft=target;
+      sample();
+      clearInterval(iv);clearTimeout(timer);
+      iv=setInterval(sample,100);
+      timer=setTimeout(()=>{clearInterval(iv);sample();parent.postMessage({kind:'bw-scroll-result',id:'${c.id}',run:m.run,start,target,end:pos(),trace,supportsAnchor:CSS.supports('overflow-anchor','none')},'*')},1200);
+    });
+  <\/script>`;
+}
+
+function rebuild() {
+  runId++;
+  frames.clear();
+  grid.replaceChildren(...CASES.map((c) => {
+    const card = document.createElement("section"); card.className = "case";
+    const h = document.createElement("h2"); h.textContent = c.title;
+    const f = document.createElement("iframe"); f.title = c.title; f.srcdoc = childHtml(c);
+    const out = document.createElement("div"); out.className = "out"; out.id = "out-" + c.id; out.textContent = "待測";
+    card.append(h, f, out); frames.set(c.id, f); return card;
+  }));
+}
+
+function runCombination(method, anchor) {
+  const id = ++runId;
+  for (const c of CASES) {
+    const out = document.querySelector("#out-" + c.id); out.className = "out"; out.textContent = "量測中…";
+    frames.get(c.id).contentWindow.postMessage({ kind: "bw-scroll-test", cmd: "reset" }, "*");
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    for (const c of CASES) frames.get(c.id).contentWindow.postMessage({ kind: "bw-scroll-test", cmd: "run", run: id, method, anchor }, "*");
+  }));
+  return new Promise((resolve) => {
+    // partial-tolerant deadline: a case that never reports (frozen iframe,
+    // throttled timers) becomes a 無回應 cell — one silent frame must not
+    // abort the other 23 measurements
+    const timer = setTimeout(() => {
+      const done = activeRun; activeRun = null;
+      if (done) done.resolve(done.results);
+    }, 5000);
+    activeRun = { id, results: [], resolve, timer };
+  });
+}
+
+addEventListener("message", (e) => {
+  const m = e.data; if (!m || m.kind !== "bw-scroll-result" || m.run !== runId) return;
+  const moved = Math.abs(m.end - m.start), wanted = Math.abs(m.target - m.start);
+  const ratio = wanted ? moved / wanted : 0;
+  const verdict = Math.abs(ratio - 2) < .12 ? "DOUBLE" : Math.abs(ratio - 1) < .08 ? "正常 1×" : "其他偏移";
+  const out = document.querySelector("#out-" + m.id);
+  out.className = "out " + (verdict === "DOUBLE" ? "double" : verdict.startsWith("正常") ? "ok" : "other");
+  out.textContent = `${verdict}\n起 ${m.start.toFixed(1)} → 目標 ${m.target.toFixed(1)} → 最終 ${m.end.toFixed(1)} (${ratio.toFixed(2)}×)\n軌跡 ${m.trace.join(" → ")}\noverflow-anchor ${m.supportsAnchor ? "支援" : "不支援"}`;
+  if (activeRun?.id === m.run) {
+    activeRun.results.push({ ...m, ratio, verdict });
+    if (activeRun.results.length === CASES.length) {
+      const done = activeRun; activeRun = null; clearTimeout(done.timer); done.resolve(done.results);
+    }
+  }
+});
+
+function resultCell(r) {
+  const td = document.createElement("td");
+  if (r.missing) { td.className = "other"; td.textContent = "無回應（逾時）"; return td; }
+  td.className = r.verdict === "DOUBLE" ? "double" : r.verdict.startsWith("正常") ? "ok" : "other";
+  const verdict = document.createElement("span");
+  verdict.textContent = `${r.verdict} · ${r.ratio.toFixed(2)}× · 最終 ${r.end.toFixed(1)}`;
+  const trace = document.createElement("small"); trace.textContent = "軌跡 " + r.trace.join(" → ");
+  td.append(verdict, trace); return td;
+}
+
+async function runMatrix() {
+  const btn = document.querySelector("#run"), reset = document.querySelector("#reset");
+  const body = document.querySelector("#results tbody");
+  btn.disabled = reset.disabled = true; body.replaceChildren(); document.body.removeAttribute("data-report");
+  const reports = []; let n = 0; let answered = 0;
+  try {
+    for (const method of METHODS) for (const anchor of ANCHORS) {
+      document.querySelector("#progress").textContent = `測試 ${++n}/6：${method.label} + ${anchor}`;
+      const got = await runCombination(method.value, anchor);
+      const row = document.createElement("tr"), label = document.createElement("th");
+      label.textContent = `${method.label} · anchor ${anchor}`; row.append(label);
+      for (const c of CASES) {
+        const r = got.find((x) => x.id === c.id) ?? { id: c.id, missing: true };
+        row.append(resultCell(r));
+        if (r.missing) {
+          const o = document.querySelector("#out-" + c.id);
+          o.className = "out other"; o.textContent = "無回應（逾時）";
+        }
+        if (!r.missing) answered++;
+        reports.push(`${method.label}/${anchor}/${c.id}: ` + (r.missing
+          ? "無回應(逾時)" : `${r.verdict} ${r.ratio.toFixed(2)}x [${r.trace.join(",")}]`));
+      }
+      body.append(row);
+    }
+    const report = `${navigator.standalone === true ? "PWA" : "browser"} inner=${innerWidth}×${innerHeight}\n` + reports.join("\n");
+    document.querySelector("#progress").textContent =
+      `完成：${answered}/24` + (answered < 24 ? "（缺的格＝無回應）" : "");
+    document.body.dataset.report = report.replaceAll("\n", " | ");
+    upload(report);
+  } catch (err) {
+    document.querySelector("#progress").textContent = "測試失敗：" + err.message;
+  } finally { btn.disabled = reset.disabled = false; }
+}
+
+const run = document.querySelector("#run");
+run.addEventListener("touchend", () => { deliveries.touchend++; }, { passive: true });
+run.addEventListener("click", () => {
+  deliveries.click++;
+  document.querySelector("#events").textContent = `事件：touchend ${deliveries.touchend} 次；click ${deliveries.click} 次（動作只綁 click，一次 click 只執行一次）`;
+  runMatrix();
+});
+document.querySelector("#reset").onclick = () => {
+  activeRun = null; rebuild(); document.querySelector("#results tbody").replaceChildren();
+  document.querySelector("#progress").textContent = "尚未執行";
+};
+document.querySelector("#meta").textContent = `${navigator.userAgent}\nstandalone=${navigator.standalone === true} · inner=${innerWidth}×${innerHeight} · overflow-anchor=${CSS.supports("overflow-anchor", "none")}`;
+rebuild();
+if (location.hash === "#autorun") setTimeout(runMatrix, 250);
+</script>
+</body>
+</html>

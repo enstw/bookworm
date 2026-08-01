@@ -1,0 +1,29 @@
+# Manual 新書上架 push test: publishes a throwaway book to production so
+# every subscribed device gets one real notification, then deletes it.
+# Run it from the Actions tab, or: gh workflow run "push test"
+#
+# Lives here because ADMIN_TOKEN is a repo secret and nothing else needs a
+# copy of it on a laptop.
+name: push test
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_seconds:
+        description: How long the test book stays on the shelf
+        required: false
+        default: "45"
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/push-test-book.mjs
+        env:
+          BOOKWORM_URL: ${{ secrets.BOOKWORM_URL }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          KEEP_MS: ${{ inputs.keep_seconds }}000

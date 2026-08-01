@@ -1,0 +1,427 @@
+<!doctype html>
+<!-- TEMPORARY diagnostic page (linked as「翻頁測試」from the library
+     footer): the on-device page-turn lab, split out of /vhtest — paging and
+     viewport sizing are separate questions. A full-width 直排 pager with
+     numbered paragraphs (【n】) mirrors the reader's typography (ENS Font,
+     line-height 4/3, same paddings/margins) and grades, per tap: three
+     distance algorithms (A 逐行量測 / B 區塊算術 / C 固定步距 = what the
+     reader ships) × five application methods (滑動 = the reader's shipped
+     eased per-frame assignment, scrollBy, scrollTo, 直設, 直設+校正), with
+     expected-landing lines drawn in the text, a scrollLeft 軌跡 (catches
+     late phantom scrolls), and a caret-based seam check (重疊 ✓ / 跳過 ✗).
+     Self-contained; delete this file and the library link once settled. -->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>翻頁測試 · Bookworm</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body { background: #f6efdc; color: #2c2620; }
+    body { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+    main { padding: calc(env(safe-area-inset-top) + 8px) 12px 6px; }
+    h1 { font-size: 14px; margin-bottom: 6px; }
+    h1 a { font-weight: 400; }
+    .btns { margin: 6px 0; display: flex; flex-wrap: wrap; gap: 4px;
+      align-items: center; }
+    button { font: inherit; padding: 7px 9px; border: 1px solid #a05e2a;
+      background: #fffdf8; border-radius: 6px; }
+    a { color: #a05e2a; }
+    #pagerout { font: 11px/1.5 ui-monospace, Menlo, monospace; margin: 6px 12px;
+      white-space: pre-wrap; }
+    /* the pager mirrors the reader's 直排 metrics: same font stack, the
+       reader's line-height 4/3 and horizontal paddings — so C's fixed step
+       here equals the reader's pageDelta on the same device + font size */
+    #pager { writing-mode: vertical-rl; overflow-x: auto; overflow-y: hidden;
+      overscroll-behavior-x: contain; width: 100vw; height: 60vh;
+      padding: 0.6rem max(1.5rem, env(safe-area-inset-right)) 0.6rem max(1.5rem, env(safe-area-inset-left));
+      background: #fffdf8; border-top: 1px solid #a05e2a;
+      border-bottom: 1px solid #a05e2a;
+      font-family: "ENS Font", Georgia, "Songti TC", "Noto Serif", serif;
+      font-size: 24px; line-height: calc(4 / 3); position: relative; }
+    #pager p { margin: 0 0 1em; }
+    #pager .num { color: #a05e2a; font-weight: 700; }
+    #pager h2 { margin: 0.5em 0 1.2em; font-size: 1.25em; font-weight: 600; }
+    /* expected-landing lines: drawn INSIDE the scroller at each algorithm's
+       "this column becomes the new first column" position, so they ride
+       along with the scroll — after a turn, the used algorithm's line should
+       sit exactly on the fixed 緣 reference line */
+    .vline { position: absolute; top: 0; width: 3px; z-index: 3;
+      pointer-events: none; }
+    .vline b { position: absolute; top: 0; left: -2px; writing-mode: vertical-rl;
+      font: 700 11px ui-monospace, Menlo, monospace; color: #fff;
+      background: inherit; padding: 2px 1px; white-space: nowrap; }
+    /* the fixed target: where the first column's right edge lives */
+    #edgeline { position: fixed; width: 0; border-left: 3px dashed #111;
+      z-index: 4; pointer-events: none; display: none; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>翻頁測試 <a href="/">← 回書架</a> · <a href="/vhtest">viewport 測試</a> · <a href="/pagedtest">整頁測試</a></h1>
+  <div class="btns">
+    <button id="pgPrev">◀ 前頁</button>
+    <button id="pgNextC">次頁 C（span−半行·現行）</button>
+    <button id="pgNextA">次頁 A（逐行+1行）</button>
+    <button id="pgNextB">次頁 B（區塊算術）</button>
+    <button id="pgMethod">套用: 原生smooth</button>
+    <button id="pgAnchor">錨定: auto</button>
+    <button id="pgFont">字級 24</button>
+    <button id="pgReset">回到開頭</button>
+  </div>
+  <div id="pagerout">按「次頁」時會在文中畫出三條彩色線＝三種演算法「翻完後應該貼到右緣」的行：
+C 綠（span−半行＝閱讀器現行：固定步距，前後翻完全對稱）、
+A 藍（逐行+1行）、B 紅（區塊算術）。黑色虛線＝右緣基準。
+翻完後：所用演算法的彩線應貼住黑虛線；讀數印出每條線離右緣的誤差
+（px 與行數）、scrollLeft 軌跡（抓晚到的偷捲）、接縫字數。
+套用方式可切換 原生smooth（現行）→滑動→scrollBy→scrollTo→直設→直設+校正。
+每種組合按一下「次頁」即可（讀數會自動上傳）。</div>
+</main>
+<div id="pager"></div>
+<div id="edgeline"></div>
+<script>
+"use strict";
+
+// the reader's real font: lift the @font-face rules straight out of app.css
+// so glyph metrics here match the reader exactly
+fetch("/app.css").then((r) => r.text()).then((css) => {
+  const faces = css.match(/@font-face\s*\{[^}]*\}/g) || [];
+  const st = document.createElement("style");
+  st.textContent = faces.join("\n");
+  document.head.append(st);
+}).catch(() => {});
+
+// readout uploads: every turn's readout also POSTs to /api/testlog, so the
+// laptop can `curl /api/testlog?page=pgtest` instead of trading screenshots;
+// device = the reader id, dedupe stops repeats, offline losses don't matter
+const upload = (() => {
+  let last = "";
+  let device = "";
+  try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
+  return (data) => {
+    if (!data || data === last) return;
+    last = data;
+    const body = JSON.stringify({ page: "pgtest", device, data });
+    try {
+      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
+        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+    } catch { /* offline is fine */ }
+  };
+})();
+
+const pager = document.getElementById("pager");
+const pagerout = document.getElementById("pagerout");
+const S = "話說天下大勢分久必合合久必分周末七國分爭併入於秦及秦滅之後" +
+  "楚漢分爭又併入於漢其致亂之由殆始於桓靈二帝，推其致亂之由。";
+{
+  const h = document.createElement("h2");
+  h.textContent = "第一回 翻頁距離測試";
+  pager.append(h);
+  let off = 0;
+  for (let i = 1; i <= 60; i++) {
+    const p = document.createElement("p");
+    const n = document.createElement("span");
+    n.className = "num";
+    n.textContent = "【" + i + "】";
+    p.append(n, S.repeat([1, 3, 2, 5, 1, 4][i % 6]));
+    p.dataset.off = off;
+    off += p.textContent.length;
+    pager.append(p);
+  }
+}
+
+// --- algorithm A: per-line measurement via Range.getClientRects, landing
+// the candidate's FAR edge at the content edge (多捲一行). Briefly shipped
+// 07-28, retired the same day: its per-direction measurement made
+// prev→next→prev land in different places ---
+function deltaA(d, trace) {
+  const c = pager;
+  const cs = getComputedStyle(c);
+  const line = parseFloat(cs.lineHeight) || 32;
+  let cand = null;
+  for (const block of c.children) {
+    if (block.classList.contains("vline")) continue; // diagnostic overlays
+    const b = block.getBoundingClientRect();
+    if (b.right < 0 || b.left > innerWidth) continue;
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    for (const r of range.getClientRects()) {
+      if (!r.width || !r.height) continue;
+      const fits = d > 0 ? r.left >= -0.5 : r.right <= innerWidth + 0.5;
+      if (!fits) continue;
+      const better = !cand || (d > 0 ? r.left < cand.left : r.right > cand.right);
+      if (better) cand = r;
+    }
+  }
+  let delta = null;
+  if (cand) {
+    // far edge, not near edge — the 一行 extra that removes the repeat
+    delta = d > 0 ? innerWidth - parseFloat(cs.paddingRight) - cand.left
+                  : cand.right - parseFloat(cs.paddingLeft);
+    trace.cand = "l" + cand.left.toFixed(1) + " r" + cand.right.toFixed(1) +
+      " w" + cand.width.toFixed(1) + " h" + Math.round(cand.height);
+  } else {
+    const span = c.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    delta = Math.floor(span / line) * line;
+    trace.cand = "無（退回整行法）";
+  }
+  trace.line = line;
+  return Math.max(line, delta);
+}
+
+// --- algorithm B: same edge-seeking, but the line grid is DERIVED from each
+// block's border box + its computed line-height (never asks getClientRects) ---
+function deltaB(d, trace) {
+  const c = pager;
+  const cs = getComputedStyle(c);
+  const line = parseFloat(cs.lineHeight) || 32;
+  let cand = null;
+  for (const block of c.children) {
+    if (block.classList.contains("vline")) continue; // diagnostic overlays
+    const b = block.getBoundingClientRect();
+    if (b.right < 0 || b.left > innerWidth || !b.width) continue;
+    const lb = parseFloat(getComputedStyle(block).lineHeight) || line;
+    const n = Math.max(1, Math.round(b.width / lb));
+    for (let k = 0; k < n; k++) {
+      const right = b.right - k * lb;
+      const left = right - lb;
+      if (right < 0 || left > innerWidth) continue;
+      const fits = d > 0 ? left >= -0.5 : right <= innerWidth + 0.5;
+      if (!fits) continue;
+      const better = !cand || (d > 0 ? left < cand.left : right > cand.right);
+      if (better) cand = { left, right };
+    }
+  }
+  let delta = null;
+  if (cand) {
+    delta = d > 0 ? innerWidth - parseFloat(cs.paddingRight) - cand.right
+                  : cand.left - parseFloat(cs.paddingLeft);
+    trace.cand = "l" + cand.left.toFixed(1) + " r" + cand.right.toFixed(1) + "（推算）";
+  } else {
+    const span = c.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    delta = (Math.floor(span / line) - 1) * line;
+    trace.cand = "無（退回整行法）";
+  }
+  trace.line = line;
+  return Math.max(line, delta);
+}
+
+// --- algorithm C: the reader's SHIPPED pageDelta (user formula, 07-28
+// final round) — fixed span − 半行: constant per font size + viewport and
+// direction-symmetric, so prev→next→prev returns to the same spot ---
+function deltaC(d, trace) {
+  const cs = getComputedStyle(pager);
+  const line = parseFloat(cs.lineHeight) || 32;
+  const span = pager.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  trace.cand = "span−半行";
+  trace.line = line;
+  return Math.max(line, span - line / 2);
+}
+
+// char offset at a viewport point (caret API — independent of getClientRects)
+function charAt(x, y) {
+  const r = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+  if (!r) return null;
+  const p = r.startContainer.parentElement?.closest("p[data-off]");
+  return p ? Number(p.dataset.off) + r.startOffset : null;
+}
+
+// last readable char of the current page: top of the leftmost column that
+// still resolves to text
+function edgeChars() {
+  const cs = getComputedStyle(pager);
+  const line = parseFloat(cs.lineHeight) || 32;
+  const top = pager.getBoundingClientRect().top + parseFloat(cs.paddingTop) + 14;
+  let last = null;
+  for (let x = line / 4; x < innerWidth; x += line / 4) {
+    const v = charAt(x, top);
+    if (v !== null) { last = v; break; }
+  }
+  const first = charAt(innerWidth - parseFloat(cs.paddingRight) - line / 2, top);
+  return { first, last };
+}
+
+// how the computed delta is handed to the scroller. 滑動 = the reader's
+// shipped vSlide: a ~200 ms ease-out tween of per-frame DIRECT scrollLeft
+// assignments, then a ~10-frame hold — the combination that cannot
+// double-apply (each frame re-asserts the eased position). The rest stay
+// for comparison: scrollBy doubled on iOS, scrollTo/直設 under/over-shot,
+// 直設+校正 was the round-6 proof.
+// 原生smooth = scrollTo({behavior:"smooth"}) on the vertical-rl scroller:
+// absolute (so the scrollBy doubling can't touch it) but a DIFFERENT engine
+// animator than instant scrollTo — negative-scrollLeft smooth animation is
+// exactly the kind of corner iOS keeps fumbling, so it must be graded here
+// before the reader may consider it.
+const METHODS = ["原生smooth", "滑動", "scrollBy", "scrollTo", "直設", "直設+校正"];
+let method = "原生smooth"; // what the reader ships; 滑動 = the retired hand-rolled tween
+const methodBtn = document.getElementById("pgMethod");
+methodBtn.onclick = () => {
+  method = METHODS[(METHODS.indexOf(method) + 1) % METHODS.length];
+  methodBtn.textContent = "套用: " + method;
+};
+const anchorBtn = document.getElementById("pgAnchor");
+anchorBtn.onclick = () => {
+  const off = pager.style.overflowAnchor !== "none";
+  pager.style.overflowAnchor = off ? "none" : "";
+  anchorBtn.textContent = "錨定: " + (off ? "none" : "auto") +
+    (CSS.supports("overflow-anchor", "none") ? "" : "（引擎不支援）");
+};
+
+// every distinct scrollLeft observed since the last tap — catches scrolls
+// that arrive AFTER our own application (the doubling suspect)
+let slTrace = [];
+pager.addEventListener("scroll", () => {
+  const v = Math.round(pager.scrollLeft);
+  if (slTrace[slTrace.length - 1] !== v) slTrace.push(v);
+}, { passive: true });
+
+const ALGOS = [
+  { key: "A", fn: deltaA, color: "#2980b9" },
+  { key: "B", fn: deltaB, color: "#c0392b" },
+  { key: "C", fn: deltaC, color: "#27ae60" },
+];
+const edgeline = document.getElementById("edgeline");
+
+// draw each algorithm's expected landing INSIDE the scroller: the content
+// column now at (右緣 − Δ) should sit exactly at 右緣 after the turn
+function drawLines(deltas, edgeX) {
+  pager.querySelectorAll(".vline").forEach((l) => l.remove());
+  for (const a of ALGOS) {
+    const l = document.createElement("div");
+    l.className = "vline";
+    l.style.background = a.color;
+    l.style.height = pager.clientHeight + "px";
+    const b = document.createElement("b");
+    b.textContent = a.key + " Δ" + Math.round(deltas[a.key]);
+    l.append(b);
+    l.style.left = "0px";
+    pager.append(l);
+    // self-calibrating placement: measure where left:0 lands, then offset —
+    // sidesteps vertical-rl coordinate-origin guesswork
+    const at = l.getBoundingClientRect().left;
+    l.style.left = (edgeX - deltas[a.key] - at) + "px";
+  }
+  placeEdge(edgeX);
+}
+
+// fixed reference: the right content edge the used line must return to —
+// re-placed after settling too, since the growing readout shifts the pager
+function placeEdge(edgeX) {
+  const pr = pager.getBoundingClientRect();
+  edgeline.style.display = "block";
+  edgeline.style.left = edgeX + "px";
+  edgeline.style.top = Math.max(0, pr.top) + "px";
+  edgeline.style.height = Math.min(innerHeight, pr.bottom) - Math.max(0, pr.top) + "px";
+}
+
+let pagerLog = [];
+function turn(d, which) {
+  // caretRangeFromPoint only resolves on-viewport points — keep the pager on
+  // screen so the seam measurement works (window scroll only; scrollIntoView
+  // proved to reset the pager's own scrollLeft on iOS)
+  const pr = pager.getBoundingClientRect();
+  if (pr.top < 0 || pr.bottom > innerHeight)
+    scrollTo(0, scrollY + pr.top - Math.max(0, innerHeight - pr.height) / 2);
+  const cs = getComputedStyle(pager);
+  const edgeX = innerWidth - parseFloat(cs.paddingRight);
+  const pre = pager.scrollLeft;
+  const before = edgeChars();
+  const traces = {}, deltas = {};
+  for (const a of ALGOS) { traces[a.key] = {}; deltas[a.key] = a.fn(d, traces[a.key]); }
+  const delta = deltas[which];
+  const target = pre - d * delta;
+  if (d > 0) drawLines(deltas, edgeX);
+  slTrace = [Math.round(pre)];
+  let fixes = 0, frames = 0;
+  if (method === "滑動") {
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / 200);
+      pager.scrollLeft = pre + (target - pre) * (1 - (1 - k) ** 3);
+      if (k < 1) requestAnimationFrame(step);
+      else {
+        const hold = () => { // the reader's vSnap tail
+          if (++frames > 10 || fixes >= 3) return;
+          if (Math.abs(pager.scrollLeft - target) > 1) { fixes++; pager.scrollLeft = target; }
+          requestAnimationFrame(hold);
+        };
+        requestAnimationFrame(hold);
+      }
+    };
+    requestAnimationFrame(step);
+  } else if (method === "原生smooth") pager.scrollTo({ left: target, behavior: "smooth" });
+  else if (method === "scrollBy") pager.scrollBy(-d * delta, 0);
+  else if (method === "scrollTo") pager.scrollTo({ left: target });
+  else pager.scrollLeft = target; // 直設 and 直設+校正
+  const sync = pager.scrollLeft;
+  if (method === "直設+校正") {
+    const watch = () => {
+      if (++frames > 10) return;
+      if (Math.abs(pager.scrollLeft - target) > 1 && fixes < 3) {
+        fixes++;
+        pager.scrollLeft = target;
+      }
+      requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
+  }
+  setTimeout(() => {
+    const after = edgeChars();
+    // forward: new first column should ≈ old leftmost column (1 行重疊 = 0 跳)
+    const skip = d > 0 && after.first != null && before.last != null
+      ? after.first - before.last : null;
+    const line = traces[which].line || 32;
+    // signed landing error of every line vs the fixed edge, in px and 行
+    const errs = d > 0 ? [...pager.querySelectorAll(".vline")].map((l, i) => {
+      const e = l.getBoundingClientRect().left - edgeX;
+      return ALGOS[i].key + (e >= 0 ? "+" : "") + Math.round(e) +
+        "(" + (e / line).toFixed(1) + "行)";
+    }).join(" ") : "";
+    // a slide's 軌跡 is long by design — show the start and the landing tail
+    const tr = slTrace.length > 9
+      ? [slTrace[0], "…" + (slTrace.length - 6) + "步…", ...slTrace.slice(-5)]
+      : slTrace;
+    pagerLog.unshift(
+      which + "·" + method + (fixes ? "×" + fixes : "") +
+      "  Δ A" + deltas.A.toFixed(0) + " B" + deltas.B.toFixed(0) + " C" + deltas.C.toFixed(0) +
+      "\n    " + Math.round(pre) + " → 目標 " + Math.round(target) +
+      " → 即時 " + Math.round(sync) + " → 定後 " + Math.round(pager.scrollLeft) +
+      "\n    軌跡 " + tr.join("/") +
+      (errs ? "\n    線離右緣 " + errs : "") +
+      (skip === null ? "" :
+        // A(現行) expects 接下 ≈ 一行的字數；C(固定步距) may 重疊 — a big
+        // positive jump is the only real failure (text skipped)
+        "  接縫: " + (skip > 0 ? "接下 " + skip + " 字" : "重疊 " + (-skip) + " 字") +
+        (skip <= 45 ? " ✓" : " ✗")));
+    pagerLog = pagerLog.slice(0, 4);
+    pagerout.textContent = pagerLog.join("\n");
+    if (d > 0) placeEdge(edgeX); // the readout just grew and shifted the pager
+    const standalone = matchMedia("(display-mode: standalone)").matches || !!navigator.standalone;
+    upload((standalone ? "PWA" : "browser") + " " + innerWidth + "×" + innerHeight +
+      " 字級" + Math.round(parseFloat(cs.fontSize)) + "\n" + pagerLog[0]);
+    // 550 ms clears the 200 ms slide + its hold; native smooth's duration is
+    // engine-defined, so give it room to finish before grading the landing
+  }, method === "原生smooth" ? 1400 : 550);
+}
+
+document.getElementById("pgNextA").onclick = () => turn(1, "A");
+document.getElementById("pgNextB").onclick = () => turn(1, "B");
+document.getElementById("pgNextC").onclick = () => turn(1, "C");
+document.getElementById("pgPrev").onclick = () => turn(-1, "C");
+document.getElementById("pgReset").onclick = () => {
+  pager.scrollLeft = 0;
+  pager.querySelectorAll(".vline").forEach((l) => l.remove());
+  edgeline.style.display = "none";
+  pagerout.textContent = "已回到開頭。";
+};
+const SIZES = [24, 28, 32, 20];
+let sizeIdx = 0;
+document.getElementById("pgFont").onclick = () => {
+  sizeIdx = (sizeIdx + 1) % SIZES.length;
+  pager.style.fontSize = SIZES[sizeIdx] + "px";
+  document.getElementById("pgFont").textContent = "字級 " + SIZES[sizeIdx];
+};
+</script>
+</body>
+</html>
