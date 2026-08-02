@@ -334,9 +334,12 @@ if (isStandalone()) persistStorage();
 // re-assert this device's push subscription (see healPush): the refresh
 // button and a reinstall both invalidate it behind the user's back
 healPush();
-// the app icon badge is set by the service worker when a 新書上架 push lands;
-// looking at the app is what marks it read — including switching back to an
-// app that was already open, which is how iOS multitasking usually goes
+// the app icon badge has two writers: the service worker when a 新書上架
+// push lands, and checkVersion below while an update sits unapplied.
+// Looking at the app is what marks a push read — including switching back
+// to an app that was already open, which is how iOS multitasking usually
+// goes; checkVersion re-asserts its dot right after this clear for as long
+// as the update is still pending.
 const clearBadge = () => navigator.clearAppBadge?.().catch(() => {});
 clearBadge();
 addEventListener("visibilitychange", () => document.hidden || clearBadge());
@@ -387,6 +390,7 @@ function isStandalone() {
 // One build per session gets offered; dismissing it is answered, and a
 // foreground flip must not re-raise the same note.
 let versionNoticed = "";
+let versionDismissed = "";
 async function checkVersion() {
   try {
     const res = await fetch("/api/version", {
@@ -395,7 +399,15 @@ async function checkVersion() {
     if (!res.ok) return;
     const { build } = await res.json();
     // "dev" on either side means an unstamped local run — nothing to announce
-    if (!build || build === "dev" || build === BUILD || build === versionNoticed) return;
+    if (!build || build === "dev" || build === BUILD) return;
+    // a pending update keeps a dot on the app icon: clearBadge just wiped
+    // the icon on this same open/foreground event, and re-asserting here is
+    // what lets the dot outlive a session that closed without reloading.
+    // A dismissed note stays dismissed — ✕ means "seen it, not now" — and a
+    // reload clears naturally: the fresh shell's build matches, so this
+    // line is never reached again.
+    if (build !== versionDismissed) navigator.setAppBadge?.(1).catch(() => {});
+    if (build === versionNoticed) return;
     versionNoticed = build;
     showUpdateNotice(build);
   } catch { /* offline or slow: the next foreground flip asks again */ }
@@ -412,7 +424,16 @@ function showUpdateNotice(build) {
       // shell network-first, so fresh bytes win whenever the network answers
       onclick: () => location.reload(),
     }, t("update.reload")),
-    el("button", { class: "iconbtn", title: t("ui.close"), onclick: () => note.remove() }, "✕"));
+    el("button", {
+      class: "iconbtn", title: t("ui.close"),
+      onclick: () => {
+        // an answered note takes its badge with it, and stays answered for
+        // this session's foreground flips
+        versionDismissed = versionNoticed;
+        navigator.clearAppBadge?.().catch(() => {});
+        note.remove();
+      },
+    }, "✕"));
   document.body.append(note);
 }
 
