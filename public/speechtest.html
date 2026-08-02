@@ -1,0 +1,252 @@
+<!doctype html>
+<!-- TEMPORARY diagnostic page (linked from /admin diagnostics): on-device
+     Web Speech API (speechSynthesis — the iOS built-in voices) experiments.
+     The standing TTS decision rejected Web Speech because "iOS pauses it on
+     lock"; this page measures that claim and its edges on the real device:
+     lock screen, app switch, silent switch, installed PWA vs Safari tab,
+     no-gesture starts, queue survival, and the resume() keep-alive hack.
+     Everything logs a timestamped event timeline to /api/testlog
+     (page=speechtest) because the interesting moments happen with the screen
+     off — gaps between ♥ heartbeats show exactly when iOS suspended JS.
+     Self-contained; delete this file and the /admin link once settled. -->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>系統朗讀測試 · Bookworm</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body { background: #f6efdc; color: #2c2620; }
+    body { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+    main { padding: calc(env(safe-area-inset-top) + 8px) 12px
+      calc(env(safe-area-inset-bottom) + 12px); }
+    h1 { font-size: 14px; margin-bottom: 6px; }
+    h1 a { font-weight: 400; }
+    .btns { margin: 10px 0 6px; display: flex; flex-wrap: wrap; gap: 4px;
+      align-items: center; }
+    .btns b { width: 100%; }
+    button, select { font: inherit; padding: 7px 9px; border: 1px solid #a05e2a;
+      background: #fffdf8; border-radius: 6px; max-width: 100%; }
+    button.on { background: #a05e2a; color: #fff; }
+    a { color: #a05e2a; }
+    ol { margin: 6px 0 6px 1.4em; color: #6b6257; }
+    #ctx td { padding: 0 8px 0 0; }
+    #log { margin-top: 8px; padding: 8px; background: #fffdf8;
+      border: 1px solid #d8cbb0; border-radius: 6px; white-space: pre-wrap;
+      word-break: break-all; min-height: 8em; }
+    label { display: inline-flex; align-items: center; gap: 4px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>系統朗讀測試 <a href="/admin">← 回管理</a></h1>
+  <table><tbody id="ctx"></tbody></table>
+
+  <ol>
+    <li>鎖屏：按「長文」，立刻鎖屏 30 秒再解鎖。</li>
+    <li>切換 App：按「長文」，回主畫面或切去別的 App。</li>
+    <li>靜音鍵：撥上實體靜音開關，再按「短句」。</li>
+    <li>無手勢：按「5 秒後朗讀」，然後手離開螢幕。</li>
+    <li>保活：開「保活」重跑鎖屏測試，比較差異。</li>
+    <li>Safari 分頁與已安裝 PWA 各跑一輪。</li>
+  </ol>
+  <p>時間軸同步上傳：<code>/api/testlog?page=speechtest</code>；♥ 心跳每 5 秒一次，斷點＝JS 被暫停的區間。</p>
+
+  <div class="btns"><b>朗讀</b>
+    <button id="bShort">短句</button>
+    <button id="bLong">長文</button>
+    <button id="bQueue">佇列 10 段</button>
+    <button id="bDelay">5 秒後朗讀</button>
+  </div>
+  <div class="btns"><b>控制</b>
+    <button id="bPause">暫停</button>
+    <button id="bResume">繼續</button>
+    <button id="bCancel">停止</button>
+    <button id="bKeep">保活 resume()</button>
+    <button id="bVoices">語音清單</button>
+  </div>
+  <div class="btns"><b>語音與語速</b>
+    <select id="voice"></select>
+    <label>語速 <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1">
+      <span id="rateVal">1.0</span></label>
+  </div>
+
+  <div id="log"></div>
+</main>
+
+<script>
+"use strict";
+// ---- timeline: on-screen log + batched uploads to /api/testlog ----------
+// Batches flush at most every 1.5 s (sendBeacon first: it is the only send
+// that reliably escapes right as the page is being hidden for a lock).
+const t0 = performance.now();
+const stamp = () => ((performance.now() - t0) / 1000).toFixed(1) + "s";
+const logEl = document.getElementById("log");
+let device = "";
+try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
+let buf = [];
+let flushTimer = 0;
+function flush() {
+  flushTimer = 0;
+  if (!buf.length) return;
+  const body = JSON.stringify({ page: "speechtest", device, data: buf.join("\n") });
+  buf = [];
+  try {
+    if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
+      fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+  } catch { /* offline is fine */ }
+}
+function log(line) {
+  const row = stamp() + " " + line;
+  logEl.textContent += row + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+  buf.push(row);
+  // non-resetting timer: steady heartbeats still flush, just batched
+  if (!flushTimer) flushTimer = setTimeout(flush, 1500);
+}
+// hidden = the last moment we are guaranteed to run before a lock suspends
+// us — flush now, and put the transition itself on the timeline
+document.addEventListener("visibilitychange", () => {
+  log("vis=" + document.visibilityState);
+  if (document.visibilityState === "hidden") { clearTimeout(flushTimer); flush(); }
+});
+addEventListener("pagehide", () => { clearTimeout(flushTimer); flush(); });
+
+// ---- context ------------------------------------------------------------
+const standalone = matchMedia("(display-mode: standalone)").matches || !!navigator.standalone;
+const ctxRows = [
+  ["mode", standalone ? "standalone（已安裝）" : "browser"],
+  ["speechSynthesis", "speechSynthesis" in window ? "有" : "無"],
+  ["UA", navigator.userAgent.replace(/^Mozilla\/5\.0 \([^)]*\)\s*/, "").slice(0, 60)],
+];
+document.getElementById("ctx").replaceChildren(...ctxRows.map(([k, v]) => {
+  const tr = document.createElement("tr");
+  for (const t of [k, v]) {
+    const td = document.createElement("td");
+    td.textContent = t;
+    tr.append(td);
+  }
+  return tr;
+}));
+log(ctxRows.map(([k, v]) => k + "=" + v).join(" · "));
+if (!("speechSynthesis" in window)) throw new Error("no speechSynthesis");
+
+// ---- voices -------------------------------------------------------------
+// iOS populates getVoices() asynchronously; log when the list actually
+// arrives, and whether the voices are on-device (localService = offline-able)
+const voiceSel = document.getElementById("voice");
+let voices = [];
+function loadVoices(evt) {
+  voices = speechSynthesis.getVoices();
+  if (!voices.length) return;
+  const zh = voices.filter((v) => v.lang.startsWith("zh"));
+  const rest = voices.filter((v) => !v.lang.startsWith("zh"));
+  voiceSel.replaceChildren(new Option("預設（zh-TW）", ""), ...[...zh, ...rest].map(
+    (v) => new Option(`${v.name} (${v.lang}${v.localService ? "·本機" : "·雲端"})`, v.voiceURI)));
+  log(`${evt}: ${voices.length} 個語音 · 本機 ${voices.filter((v) => v.localService).length} · zh ${zh.length}`);
+}
+loadVoices("載入即有");
+speechSynthesis.addEventListener("voiceschanged", () => loadVoices("voiceschanged"));
+document.getElementById("bVoices").onclick = () => {
+  loadVoices("點查");
+  for (const v of voices.filter((x) => x.lang.startsWith("zh")))
+    log(`  ${v.name} ${v.lang}${v.localService ? " 本機" : " 雲端"}${v.default ? " 預設" : ""}`);
+};
+
+const rateEl = document.getElementById("rate");
+rateEl.oninput = () => { document.getElementById("rateVal").textContent = Number(rateEl.value).toFixed(1); };
+
+// ---- instrumented utterances --------------------------------------------
+// `keep` pins live utterances: WebKit has historically GC'd utterances
+// mid-speech, silently eating their end events. `cur` feeds the heartbeat.
+const keep = new Set();
+let cur = null;
+function mkUtter(text, tag) {
+  const u = new SpeechSynthesisUtterance(text);
+  const v = voices.find((x) => x.voiceURI === voiceSel.value);
+  if (v) u.voice = v;
+  u.lang = v?.lang ?? "zh-TW";
+  u.rate = parseFloat(rateEl.value);
+  const st = { tag, len: text.length, bounds: 0, last: 0, t: 0 };
+  u.onstart = () => { st.t = performance.now(); cur = st; startHb(); log(`${tag} start`); };
+  u.onboundary = (e) => { st.bounds++; st.last = e.charIndex; if (st.bounds === 1) log(`${tag} 首個界標 char=${e.charIndex}`); };
+  const done = (kind) => (e) => {
+    keep.delete(u);
+    if (cur === st) cur = null;
+    const dt = st.t ? ((performance.now() - st.t) / 1000).toFixed(1) : "?";
+    log(`${tag} ${kind}${e?.error ? " " + e.error : ""} 經過${dt}s 界標${st.bounds} 至字${st.last}/${st.len}`);
+  };
+  u.onend = done("end");
+  u.onerror = done("error");
+  u.onpause = () => log(`${tag} pause 事件`);
+  u.onresume = () => log(`${tag} resume 事件`);
+  keep.add(u);
+  return u;
+}
+
+// ---- heartbeat: is JS even running? -------------------------------------
+// One beat per 5 s while speech is active (+15 s tail). A lock that suspends
+// the page shows as a gap between beats; a lock that keeps JS but pauses
+// speech shows beats with speaking=1 and a frozen 至字.
+let hb = 0;
+let hbUntil = 0;
+function startHb() {
+  hbUntil = performance.now() + 15000;
+  if (!hb) hb = setInterval(beat, 5000);
+}
+function beat() {
+  const s = speechSynthesis;
+  if (s.speaking || s.pending || s.paused) hbUntil = performance.now() + 15000;
+  if (performance.now() > hbUntil) { clearInterval(hb); hb = 0; flush(); return; }
+  log(`♥ speaking=${+s.speaking} paused=${+s.paused} pending=${+s.pending} vis=${document.visibilityState}`
+    + (cur ? ` 至字${cur.last}/${cur.len}` : ""));
+}
+
+// ---- the tests ----------------------------------------------------------
+const SHORT = "床前明月光，疑是地上霜。舉頭望明月，低頭思故鄉。";
+// ~1,200 字 ≈ 4½ 分鐘（真實華語 ≈ 4.5 字/秒）— 長到足以在朗讀中鎖屏，
+// 也長到足以暴露長 utterance 被截斷（end 過早、至字遠小於總長）
+const LONG = ("晉太元中，武陵人捕魚為業。緣溪行，忘路之遠近。忽逢桃花林，夾岸數百步，中無雜樹，"
+  + "芳草鮮美，落英繽紛。漁人甚異之，復前行，欲窮其林。林盡水源，便得一山，山有小口，"
+  + "彷彿若有光。便舍船，從口入。初極狹，才通人。復行數十步，豁然開朗。").repeat(8);
+
+function speak(text, tag) {
+  speechSynthesis.cancel();
+  log(`${tag} speak() 呼叫 共${text.length}字 語速${rateEl.value}`);
+  speechSynthesis.speak(mkUtter(text, tag));
+  startHb();
+}
+document.getElementById("bShort").onclick = () => speak(SHORT, "短句");
+document.getElementById("bLong").onclick = () => speak(LONG, "長文");
+// 10 utterances queued in one gesture: does the queue advance across chunk
+// boundaries with the screen locked?（本家播放器 STREAM 引擎存在的理由）
+document.getElementById("bQueue").onclick = () => {
+  speechSynthesis.cancel();
+  log("佇列 speak()×10 呼叫");
+  for (let k = 1; k <= 10; k++)
+    speechSynthesis.speak(mkUtter(`第${"一二三四五六七八九十"[k - 1]}段，${SHORT}`, `段${k}`));
+  startHb();
+};
+// deliberately violates the start-inside-the-gesture rule, to measure it
+document.getElementById("bDelay").onclick = () => {
+  log("5 秒後才呼叫 speak()（非手勢）…手離開螢幕");
+  setTimeout(() => speak(SHORT, "非手勢"), 5000);
+};
+
+document.getElementById("bPause").onclick = () => { speechSynthesis.pause(); log("pause() 呼叫"); };
+document.getElementById("bResume").onclick = () => { speechSynthesis.resume(); log("resume() 呼叫"); };
+document.getElementById("bCancel").onclick = () => { speechSynthesis.cancel(); log("cancel() 呼叫"); };
+
+// the classic keep-alive hack: blind resume() every 5 s. Runs only while JS
+// runs, which is itself part of what the lock test measures.
+let keepTimer = 0;
+document.getElementById("bKeep").onclick = (e) => {
+  keepTimer = keepTimer ? (clearInterval(keepTimer), 0)
+    : setInterval(() => speechSynthesis.resume(), 5000);
+  e.target.classList.toggle("on", !!keepTimer);
+  log("保活 " + (keepTimer ? "開（每 5s resume()）" : "關"));
+};
+</script>
+</body>
+</html>

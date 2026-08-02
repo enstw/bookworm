@@ -15,9 +15,19 @@ const BUNDLES = [
   // simplified→traditional only (1.0MB); the full bi-directional bundle is not needed
   { pkg: "opencc-js", src: "dist/esm/cn2t.js", dst: "opencc-cn2t.js" },
   { pkg: "fflate", src: "esm/browser.js", dst: "fflate.js" },
+  // /wasmtest glue (small files only). The large binaries these load — the
+  // huayan VITS model, piper_phonemize.data, ort-wasm-simd.wasm — are NOT
+  // deployed as assets: the page fetches them from the wasmtts-assets GitHub
+  // release, so the deploy stays small and files may exceed the 25 MiB
+  // per-asset limit. Versions here must match that release's contents.
+  { pkg: "@diffusionstudio/piper-wasm", src: "build/piper_phonemize.js", dst: "wasmtts/piper_phonemize.js" },
+  { pkg: "@diffusionstudio/piper-wasm", src: "build/piper_phonemize.wasm", dst: "wasmtts/piper_phonemize.wasm" },
+  // UMD build: the page's inference worker loads it via importScripts
+  { pkg: "onnxruntime-web", src: "dist/ort.min.js", dst: "wasmtts/ort-umd.min.js" },
 ];
 
 mkdirSync(outDir, { recursive: true });
+mkdirSync(join(outDir, "wasmtts"), { recursive: true });
 const versions = {};
 for (const { pkg, src, dst } of BUNDLES) {
   const pkgDir = join(root, "node_modules", pkg);

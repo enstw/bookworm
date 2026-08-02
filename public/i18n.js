@@ -164,6 +164,8 @@ const BW_STRINGS = {
     "diag.pg": "翻頁測試",
     "diag.paged": "整頁測試",
     "diag.scroll": "雙捲動測試",
+    "diag.speech": "系統朗讀測試",
+    "diag.wasm": "WASM 朗讀測試",
 
     // --- 上傳新書 (/admin) ---
     "admin.docTitle": "Bookworm · 管理",
@@ -433,6 +435,8 @@ const BW_STRINGS = {
     "diag.pg": "page-turn test",
     "diag.paged": "full-page test",
     "diag.scroll": "dual-scroll test",
+    "diag.speech": "system TTS test",
+    "diag.wasm": "WASM TTS test",
 
     // --- upload a book (/admin) ---
     "admin.docTitle": "Bookworm · Manage",

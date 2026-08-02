@@ -33,8 +33,9 @@ export default {
       // Still open: the app shell (it is the public repo's contents),
       // /api/feedback (the AI's inbox reads it keyless by design),
       // /api/testlog (the phones' drop box — the service worker logs push
-      // deliveries there with no page alive to hold a key), and the push
-      // vapid/unsubscribe pair (a public key, and a revoked device must
+      // deliveries there with no page alive to hold a key), /api/wasmtts/*
+      // (public OSS binaries proxied for the /wasmtest diagnostic), and the
+      // push vapid/unsubscribe pair (a public key, and a revoked device must
       // always be able to unregister).
       const gated =
         path === "/api/books" || path.startsWith("/api/books/") ||
@@ -57,6 +58,7 @@ export default {
       if (path === "/api/settings") return await handleSettings(request, env, url, who);
       if (path === "/api/testlog") return await handleTestlog(request, env, ctx, url);
       if (path === "/api/feedback") return await listFeedback(request, env);
+      if (path.startsWith("/api/wasmtts/")) return await serveWasmttsAsset(path);
       if (path.startsWith("/api/tts/")) return await handleTts(request, env, ctx, path, url);
       if (path.startsWith("/api/push/")) return await handlePush(request, env, ctx, path, who);
       if (path.startsWith("/api/admin/")) return await handleAdmin(request, env, ctx, path);
@@ -443,6 +445,32 @@ const USER_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const randHex = (bytes) =>
   Array.from(crypto.getRandomValues(new Uint8Array(bytes)),
     (b) => b.toString(16).padStart(2, "0")).join("");
+
+// GET /api/wasmtts/<file> — same-origin proxy for the /wasmtest diagnostic's
+// large binaries (VITS model, espeak data, ort wasm). They live on the
+// wasmtts-assets GitHub release, not in the deploy: releases have no 25 MiB
+// per-file limit and keep the upload small — but their download host sends
+// no CORS headers, so the page cannot fetch them cross-origin and this route
+// is the thinnest same-origin door. Open like the shell (public OSS bytes
+// guard nothing), but strictly allowlisted on a pinned tag — an open proxy
+// would otherwise fetch arbitrary URLs on our egress. Delete with /wasmtest.
+const WASMTTS_RELEASE = "https://github.com/enstw/bookworm/releases/download/wasmtts-assets-v1/";
+const WASMTTS_FILES = new Set(["zh_CN-huayan-x_low.onnx", "zh_CN-huayan-x_low.onnx.json", "piper_phonemize.data", "ort-wasm-simd.wasm"]);
+
+async function serveWasmttsAsset(path) {
+  const name = path.slice("/api/wasmtts/".length);
+  if (!WASMTTS_FILES.has(name)) return json({ error: "not found" }, 404);
+  const res = await fetch(WASMTTS_RELEASE + name, { redirect: "follow" });
+  if (!res.ok) return json({ error: `upstream ${res.status}` }, 502);
+  const headers = {
+    "content-type": name.endsWith(".wasm") ? "application/wasm" : "application/octet-stream",
+    // the tag is versioned: this URL will only ever serve these bytes
+    "cache-control": "public, max-age=31536000, immutable",
+  };
+  const len = res.headers.get("content-length");
+  if (len) headers["content-length"] = len;
+  return new Response(res.body, { headers });
+}
 
 // GET /api/testlog?page=&limit= / POST {page, device, data} — readout drop
 // box for the on-device diagnostic pages (/pgtest, /vhtest, /scrolltest,

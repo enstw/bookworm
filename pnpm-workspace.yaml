@@ -2,3 +2,6 @@ allowBuilds:
   esbuild: true
   workerd: true
   sharp: false
+  # transitive via onnxruntime-web (vendored dist files only — its build
+  # script generates nothing we consume)
+  protobufjs: false

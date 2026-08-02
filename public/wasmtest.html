@@ -1,0 +1,396 @@
+<!doctype html>
+<!-- TEMPORARY diagnostic page (linked from /admin diagnostics): in-browser
+     WASM TTS experiment — piper's zh_CN-huayan-x_low VITS model under
+     onnxruntime-web, phonemized by piper_phonemize (espeak-ng). Measures the
+     three unknowns that decide whether WASM TTS can succeed edge-tts:
+       1. RTF — audio seconds per compute second on THIS device;
+       2. whether inference (in a Worker) keeps running while the screen is
+          locked with audio playing through the media path;
+       3. whether a CHAIN-style double-buffered <audio> swap advances across
+          sentence boundaries under lock (play() rejections are logged).
+     Small glue is vendored (/vendor/wasmtts/); the large binaries come from
+     the wasmtts-assets GitHub release through the /api/wasmtts/ same-origin
+     proxy (the release host sends no CORS headers) and are cached in the
+     Cache API, so a second visit — and offline — costs nothing.
+     Timeline uploads to /api/testlog (page=wasmtest), heartbeat gaps show
+     JS suspension, same instrument as /speechtest. Self-contained apart
+     from the shared chunker (/tts-core.mjs — the real player's boundaries).
+     Delete this file, the /admin link, the /api/wasmtts route and the
+     vendor wasmtts/ entries together once settled. -->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>WASM 朗讀測試 · Bookworm</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body { background: #f6efdc; color: #2c2620; }
+    body { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+    main { padding: calc(env(safe-area-inset-top) + 8px) 12px
+      calc(env(safe-area-inset-bottom) + 12px); }
+    h1 { font-size: 14px; margin-bottom: 6px; }
+    h1 a { font-weight: 400; }
+    .btns { margin: 10px 0 6px; display: flex; flex-wrap: wrap; gap: 4px;
+      align-items: center; }
+    .btns b { width: 100%; }
+    button { font: inherit; padding: 7px 9px; border: 1px solid #a05e2a;
+      background: #fffdf8; border-radius: 6px; }
+    button:disabled { opacity: 0.5; }
+    a { color: #a05e2a; }
+    ol { margin: 6px 0 6px 1.4em; color: #6b6257; }
+    #ctx td { padding: 0 8px 0 0; }
+    #log { margin-top: 8px; padding: 8px; background: #fffdf8;
+      border: 1px solid #d8cbb0; border-radius: 6px; white-space: pre-wrap;
+      word-break: break-all; min-height: 8em; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>WASM 朗讀測試 <a href="/admin">← 回管理</a> · <a href="/speechtest">系統朗讀</a></h1>
+  <table><tbody id="ctx"></tbody></table>
+
+  <ol>
+    <li>首次「準備引擎」下載約 48MB（之後走快取，離線也可）。</li>
+    <li>「短句」聽得出模型音質，並給單句 RTF。</li>
+    <li>鎖屏測試：按「連續朗讀」，開始出聲後鎖屏 60 秒再解鎖 —
+      時間軸看鎖屏中「合成」有沒有繼續、「play()」有沒有被拒。</li>
+    <li>×N＝實時倍率（音訊秒÷合成秒），&gt;1 才可能邊播邊合成。</li>
+  </ol>
+  <p>時間軸同步上傳：<code>/api/testlog?page=wasmtest</code>；♥ 心跳每 5 秒。</p>
+
+  <div class="btns"><b>引擎</b>
+    <button id="bPrep">準備引擎</button>
+    <button id="bClear">清除快取</button>
+  </div>
+  <div class="btns"><b>朗讀</b>
+    <button id="bShort">短句</button>
+    <button id="bLong">連續朗讀（鎖屏用）</button>
+    <button id="bStop">停止</button>
+  </div>
+
+  <div id="log"></div>
+</main>
+
+<script src="/vendor/wasmtts/piper_phonemize.js"></script>
+<script type="module">
+"use strict";
+import * as ttsCore from "/tts-core.mjs";
+
+// ---- timeline: on-screen log + batched uploads (same shape as /speechtest)
+const t0 = performance.now();
+const stamp = () => ((performance.now() - t0) / 1000).toFixed(1) + "s";
+const logEl = document.getElementById("log");
+let device = "";
+try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
+let buf = [];
+let flushTimer = 0;
+function flush() {
+  flushTimer = 0;
+  if (!buf.length) return;
+  const body = JSON.stringify({ page: "wasmtest", device, data: buf.join("\n") });
+  buf = [];
+  try {
+    if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
+      fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+  } catch { /* offline is fine */ }
+}
+function log(line) {
+  const row = stamp() + " " + line;
+  logEl.textContent += row + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+  buf.push(row);
+  if (!flushTimer) flushTimer = setTimeout(flush, 1500);
+}
+document.addEventListener("visibilitychange", () => {
+  log("vis=" + document.visibilityState);
+  if (document.visibilityState === "hidden") { clearTimeout(flushTimer); flush(); }
+});
+addEventListener("pagehide", () => { clearTimeout(flushTimer); flush(); });
+
+// ---- context ------------------------------------------------------------
+// the canonical WASM-SIMD probe module: ort picks ort-wasm-simd.wasm only
+// when this validates, and simd is the variant the release hosts
+const SIMD = WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
+const standalone = matchMedia("(display-mode: standalone)").matches || !!navigator.standalone;
+const ctxRows = [
+  ["mode", standalone ? "standalone（已安裝）" : "browser"],
+  ["wasm simd / 核心", `${SIMD ? "有" : "無"} / ${navigator.hardwareConcurrency ?? "?"}（isolated=${crossOriginIsolated}）`],
+  ["webgpu / mediaSession", `${"gpu" in navigator ? "有" : "無"} / ${"mediaSession" in navigator ? "有" : "無"}`],
+  ["UA", navigator.userAgent.replace(/^Mozilla\/5\.0 \([^)]*\)\s*/, "").slice(0, 60)],
+];
+document.getElementById("ctx").replaceChildren(...ctxRows.map(([k, v]) => {
+  const tr = document.createElement("tr");
+  for (const t of [k, v]) {
+    const td = document.createElement("td");
+    td.textContent = t;
+    tr.append(td);
+  }
+  return tr;
+}));
+log(ctxRows.map(([k, v]) => k + "=" + v).join(" · "));
+
+// ---- large binaries: /api/wasmtts proxy + Cache API ---------------------
+const CACHE = "bw-wasmtts";
+async function cachedBuf(name) {
+  const url = "/api/wasmtts/" + name;
+  let cache = null;
+  try { cache = await caches.open(CACHE); } catch { /* private mode: no cache */ }
+  let res = await cache?.match(url);
+  let how = "快取";
+  if (!res) {
+    const t = performance.now();
+    res = await fetch(url);
+    if (!res.ok) throw new Error(`${name} HTTP ${res.status}`);
+    if (cache) await cache.put(url, res.clone());
+    const s = (performance.now() - t) / 1000;
+    const mb = +(res.headers.get("content-length") ?? 0) / 1048576;
+    how = `網路 ${s.toFixed(1)}s${mb ? ` ${(mb / s).toFixed(1)}MB/s` : ""}`;
+  }
+  const bytes = await res.arrayBuffer();
+  log(`${name} ${(bytes.byteLength / 1048576).toFixed(1)}MB ${how}`);
+  return bytes;
+}
+
+// ---- engine: phonemizer on main (fast, runs once), ort in a Worker ------
+// Inference must not run on the main thread: session.run blocks JS for
+// seconds at a time, which would delay the chain-swap 'ended' handlers and
+// make every lock-screen readout ambiguous (was it iOS, or our own stall?).
+// A Worker also answers the real production question — does iOS keep worker
+// JS running under lock while audio plays through the media path?
+const WORKER_SRC = `
+let session, rt; // rt, not ort: the UMD script declares the global "ort" itself
+onmessage = async (e) => {
+  const m = e.data;
+  try {
+    if (m.type === "init") {
+      importScripts(m.base + "/vendor/wasmtts/ort-umd.min.js");
+      rt = self.ort;
+      rt.env.wasm.numThreads = 1;
+      rt.env.wasm.wasmPaths = { "ort-wasm-simd.wasm": URL.createObjectURL(new Blob([m.wasm], { type: "application/wasm" })) };
+      const t = performance.now();
+      session = await rt.InferenceSession.create(new Uint8Array(m.model));
+      postMessage({ type: "ready", ms: performance.now() - t });
+    } else if (m.type === "synth") {
+      const t = performance.now();
+      const { output } = await session.run({
+        input: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
+        input_lengths: new rt.Tensor("int64", [m.ids.length]),
+        scales: new rt.Tensor("float32", m.scales),
+      });
+      const pcm = new Float32Array(output.data);
+      postMessage({ type: "pcm", k: m.k, pcm, ms: performance.now() - t }, [pcm.buffer]);
+    }
+  } catch (err) {
+    postMessage({ type: "err", k: m.k, msg: String(err?.message ?? err) });
+  }
+};`;
+
+let piperData = null;
+let config = null;
+let worker = null;
+let ready = null;
+const pending = new Map();
+function ensureEngine() {
+  return ready ??= (async () => {
+    navigator.storage?.persist?.().catch(() => {});
+    const t = performance.now();
+    const [model, ortWasm, data, cfg] = await Promise.all([
+      cachedBuf("zh_CN-huayan-x_low.onnx"),
+      cachedBuf("ort-wasm-simd.wasm"),
+      cachedBuf("piper_phonemize.data"),
+      cachedBuf("zh_CN-huayan-x_low.onnx.json"),
+    ]);
+    piperData = data;
+    config = JSON.parse(new TextDecoder().decode(cfg));
+    worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
+    worker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "ready") { log(`模型載入 ${(m.ms / 1000).toFixed(1)}s（合計 ${((performance.now() - t) / 1000).toFixed(1)}s）`); pending.get("ready")?.(); }
+      else if (m.type === "pcm") { pending.get(m.k)?.(m); pending.delete(m.k); }
+      else if (m.type === "err") {
+        log(`worker 錯誤 ${m.msg}`);
+        pending.get(m.k)?.(null);
+        pending.delete(m.k);
+        // an init-time error has no k: release the waiting ensureEngine so
+        // the button fails into the log instead of hanging forever
+        if (m.k === undefined) { pending.get("ready")?.(null); pending.delete("ready"); }
+      }
+    };
+    worker.onerror = (e) => log(`worker error ${e.message}`);
+    const up = new Promise((r) => pending.set("ready", r));
+    worker.postMessage({ type: "init", base: location.origin, model, wasm: ortWasm }, [model, ortWasm]);
+    await up;
+    navigator.storage?.estimate?.().then((e) => log(`儲存用量 ${((e.usage ?? 0) / 1048576).toFixed(0)}MB`));
+  })().catch((e) => { ready = null; log(`準備失敗 ${e.message}`); throw e; });
+}
+function synthInWorker(k, ids) {
+  const { noise_scale, length_scale, noise_w } = config.inference;
+  return new Promise((r) => { pending.set(k, r); worker.postMessage({ type: "synth", k, ids, scales: [noise_scale, length_scale, noise_w] }); });
+}
+
+// texts → one phoneme_ids array per PRINT LINE (piper's own sentence
+// granularity — the mapping back to input entries is deliberately not
+// assumed). stderr is collected, not thrown: espeak warns on rare glyphs.
+//
+// The CLI's built-in id table is NEWER than this 2023-era model's 130-symbol
+// phoneme_id_map (ids like 135 overflow the embedding — ort refuses), so ids
+// are rebuilt through the model's own map: walk ids and phoneme strings in
+// lockstep, keep the structural 0/1/2 (pad/BOS/EOS — sentence breaks emit
+// EOS,BOS mid-stream and only exist in the id stream), re-map the rest.
+// Symbols the model never had (espeak's newer tone digits — this model is
+// tone-blind by training) are dropped and counted.
+let phMiss = 0;
+function remapIds(ids, phonemes) {
+  const map = config.phoneme_id_map;
+  const out = [];
+  let p = 0;
+  for (const id of ids) {
+    if (id <= 2) { out.push(id); continue; }
+    const hit = map[phonemes[p++]];
+    if (hit) out.push(hit[0]);
+    else phMiss++;
+  }
+  return out;
+}
+async function phonemize(texts) {
+  const t = performance.now();
+  const out = [], errs = [];
+  const mod = await createPiperPhonemize({
+    print: (l) => { try { const j = JSON.parse(l); out.push(remapIds(j.phoneme_ids, j.phonemes)); } catch { errs.push(l); } },
+    printErr: (l) => errs.push(l),
+    locateFile: (f) => "/vendor/wasmtts/" + f,
+    getPreloadedPackage: () => piperData,
+  });
+  try {
+    mod.callMain(["-l", "cmn", "--input", JSON.stringify(texts.map((text) => ({ text }))), "--espeak_data", "/espeak-ng-data"]);
+  } catch (e) {
+    if (!out.length) throw e;
+  }
+  if (errs.length) log(`音素器 stderr ${errs.length} 行：${String(errs[0]).slice(0, 80)}`);
+  if (!out.length) throw new Error("音素器無輸出");
+  return { lines: out, ms: performance.now() - t };
+}
+
+// Float32 PCM → 16-bit mono WAV blob (what <audio> can play from a blob URL)
+function mkWav(f32, rate) {
+  const n = f32.length, v = new DataView(new ArrayBuffer(44 + n * 2));
+  v.setUint32(0, 0x46464952, true); v.setUint32(4, 36 + n * 2, true);
+  v.setUint32(8, 0x45564157, true); v.setUint32(12, 0x20746d66, true);
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  v.setUint32(36, 0x61746164, true); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, f32[i])) * 32767 | 0, true);
+  return new Blob([v.buffer], { type: "audio/wav" });
+}
+
+// ---- CHAIN-style playback: two <audio>, primed in the tap gesture -------
+const players = [new Audio(), new Audio()];
+let token = 0;
+let queue = [];
+let nextPlay = 0;
+let active = false;
+let synthDone = true;
+players.forEach((a) => {
+  a.preload = "auto";
+  a.onended = () => { log(`句${a.dataset.k} 播畢`); URL.revokeObjectURL(a.src); active = false; pump(); };
+  // clearing src also fires error — only a blob src is a real playback fault
+  a.onerror = () => { if (!a.src.startsWith("blob:")) return; log(`句${a.dataset.k} audio error`); active = false; pump(); };
+});
+// iOS only lets an element play() outside a gesture if a gesture played it
+// once before — the double-buffer's element B never gets its own tap, so
+// both elements swallow 50 ms of silence inside the tap that starts a test
+function prime() {
+  const s = URL.createObjectURL(mkWav(new Float32Array(800), 16000));
+  players.forEach((a) => { a.src = s; a.play().then(() => a.pause(), () => {}); });
+}
+function pump() {
+  if (active) return;
+  const item = queue[nextPlay];
+  if (!item) {
+    if (synthDone && nextPlay >= queue.length && queue.length) { log("全部播畢"); flush(); }
+    return;
+  }
+  const a = players[nextPlay % 2];
+  a.src = URL.createObjectURL(item.blob);
+  a.dataset.k = item.k;
+  active = true;
+  nextPlay++;
+  a.play().then(
+    () => log(`句${item.k} play() ok 音${item.secs.toFixed(1)}s vis=${document.visibilityState}`),
+    (e) => log(`句${item.k} play() 拒 ${e.name} vis=${document.visibilityState}`),
+  );
+}
+function stopAll() {
+  token++;
+  queue = []; nextPlay = 0; active = false; synthDone = true;
+  players.forEach((a) => { a.pause(); a.removeAttribute("src"); });
+}
+// e2e/debug handle, like the player's globalThis.bwPlayer: the elements are
+// never in the DOM, so scripts have no other way to reach the audio
+globalThis.bwWasmtest = { players, queue: () => queue };
+if ("mediaSession" in navigator) {
+  navigator.mediaSession.metadata = new MediaMetadata({ title: "WASM 朗讀測試", artist: "Bookworm" });
+  for (const act of ["play", "pause"])
+    try { navigator.mediaSession.setActionHandler(act, () => log(`mediaSession ${act}`)); } catch { /* not supported */ }
+}
+
+// ---- heartbeat ----------------------------------------------------------
+let hb = 0;
+let hbUntil = 0;
+function startHb() {
+  hbUntil = performance.now() + 15000;
+  if (!hb) hb = setInterval(() => {
+    if (active || !synthDone) hbUntil = performance.now() + 15000;
+    if (performance.now() > hbUntil) { clearInterval(hb); hb = 0; flush(); return; }
+    const a = players.find((p) => !p.paused);
+    log(`♥ vis=${document.visibilityState} 播=${a ? `句${a.dataset.k} ${a.currentTime.toFixed(0)}s` : "無"} 佇${queue.length - nextPlay} 合成${synthDone ? "畢" : "中"}`);
+  }, 5000);
+}
+
+// ---- the tests ----------------------------------------------------------
+const SHORT = "床前明月光，疑是地上霜。舉頭望明月，低頭思故鄉。";
+// heading first — chunk 0 is the heading alone, exactly like a real chapter
+const LONG = "桃花源記\n\n" + ("晉太元中，武陵人捕魚為業。緣溪行，忘路之遠近。忽逢桃花林，夾岸數百步，中無雜樹，"
+  + "芳草鮮美，落英繽紛。漁人甚異之，復前行，欲窮其林。林盡水源，便得一山，山有小口，"
+  + "彷彿若有光。便舍船，從口入。初極狹，才通人。復行數十步，豁然開朗。").repeat(4);
+
+async function speak(text, tag) {
+  stopAll();
+  const run = token;
+  synthDone = false;
+  prime();
+  startHb();
+  await ensureEngine();
+  if (token !== run) return;
+  const chunks = ttsCore.chunkChapter(text);
+  phMiss = 0;
+  const { lines, ms } = await phonemize(chunks.map((c) => ttsCore.ttsPrompt(c.text)));
+  const rate = config.audio.sample_rate;
+  log(`${tag} 分段${chunks.length} → 句${lines.length}，音素 ${(ms / 1000).toFixed(1)}s${phMiss ? `（丟符號 ${phMiss}）` : ""}`);
+  let audioS = 0, synthS = 0;
+  for (const [i, ids] of lines.entries()) {
+    if (token !== run) return;
+    const r = await synthInWorker(i + 1, ids);
+    if (!r || token !== run) { if (!r) log(`句${i + 1} 合成失敗`); continue; }
+    const secs = r.pcm.length / rate;
+    audioS += secs; synthS += r.ms / 1000;
+    log(`句${i + 1}/${lines.length} 合成${(r.ms / 1000).toFixed(1)}s → 音${secs.toFixed(1)}s ×${(secs * 1000 / r.ms).toFixed(1)} vis=${document.visibilityState}`);
+    queue.push({ k: i + 1, blob: mkWav(r.pcm, rate), secs });
+    pump();
+  }
+  if (token !== run) return;
+  synthDone = true;
+  if (synthS) log(`${tag} 合成完：音${audioS.toFixed(0)}s／算${synthS.toFixed(0)}s ×${(audioS / synthS).toFixed(1)} 實時`);
+}
+
+const $ = (id) => document.getElementById(id);
+$("bPrep").onclick = () => { startHb(); ensureEngine().catch(() => {}); };
+$("bShort").onclick = () => speak(SHORT, "短句").catch((e) => log(`短句失敗 ${e.message}`));
+$("bLong").onclick = () => speak(LONG, "連續").catch((e) => log(`連續失敗 ${e.message}`));
+$("bStop").onclick = () => { stopAll(); log("停止"); };
+$("bClear").onclick = async () => { stopAll(); log(`快取清除 ${await caches.delete(CACHE).catch(() => false)}`); };
+</script>
+</body>
+</html>
