@@ -1,22 +1,31 @@
 <!doctype html>
 <!-- TEMPORARY diagnostic page (linked from /admin diagnostics): in-browser
-     WASM TTS experiment — piper's zh_CN-huayan-x_low VITS model under
-     onnxruntime-web, phonemized by piper_phonemize (espeak-ng). Measures the
-     three unknowns that decide whether WASM TTS can succeed edge-tts:
+     WASM TTS experiment — candidate voices under onnxruntime-web, measured
+     for the three unknowns that decide whether WASM TTS can succeed
+     edge-tts:
        1. RTF — audio seconds per compute second on THIS device;
        2. whether inference (in a Worker) keeps running while the screen is
           locked with audio playing through the media path;
        3. whether a CHAIN-style double-buffered <audio> swap advances across
           sentence boundaries under lock (play() rejections are logged).
-     Small glue is vendored (/vendor/wasmtts/); the large binaries come from
-     the wasmtts-assets GitHub release through the /api/wasmtts/ same-origin
+     Two engine families behind one selector:
+       - piper (huayan x_low / medium): espeak-ng phonemizer (piper_phonemize
+         wasm), ids re-mapped through each model's own phoneme_id_map;
+       - MeloTTS zh (int8 / fp32, sherpa-onnx export): no espeak — the page
+         reimplements sherpa's melo frontend (greedy longest lexicon match,
+         per-char fallback, punctuation flushes a sentence, AddBlank
+         interspersal, tones), with opencc t2cn first because the lexicon's
+         multi-char words are simplified and word matches carry the tone
+         sandhi that per-char fallback loses.
+     Small glue is vendored (/vendor/); the large binaries come from the
+     wasmtts-assets GitHub release through the /api/wasmtts/ same-origin
      proxy (the release host sends no CORS headers) and are cached in the
-     Cache API, so a second visit — and offline — costs nothing.
+     Cache API, so a voice costs its download once — offline included.
      Timeline uploads to /api/testlog (page=wasmtest), heartbeat gaps show
-     JS suspension, same instrument as /speechtest. Self-contained apart
-     from the shared chunker (/tts-core.mjs — the real player's boundaries).
-     Delete this file, the /admin link, the /api/wasmtts route and the
-     vendor wasmtts/ entries together once settled. -->
+     JS suspension, same instrument as /speechtest. Shares the real player's
+     chunker (/tts-core.mjs). Delete this file, the /admin link, the
+     /api/wasmtts route and the vendor wasmtts/ entries together once
+     settled. -->
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
@@ -34,8 +43,8 @@
     .btns { margin: 10px 0 6px; display: flex; flex-wrap: wrap; gap: 4px;
       align-items: center; }
     .btns b { width: 100%; }
-    button { font: inherit; padding: 7px 9px; border: 1px solid #a05e2a;
-      background: #fffdf8; border-radius: 6px; }
+    button, select { font: inherit; padding: 7px 9px; border: 1px solid #a05e2a;
+      background: #fffdf8; border-radius: 6px; max-width: 100%; }
     button:disabled { opacity: 0.5; }
     a { color: #a05e2a; }
     ol { margin: 6px 0 6px 1.4em; color: #6b6257; }
@@ -51,8 +60,8 @@
   <table><tbody id="ctx"></tbody></table>
 
   <ol>
-    <li>首次「準備引擎」下載約 48MB（之後走快取，離線也可）。</li>
-    <li>「短句」聽得出模型音質，並給單句 RTF。</li>
+    <li>選語音後「準備引擎」——下載量見選單標示，之後走快取，離線也可。</li>
+    <li>「短句」聽音質並給單句 RTF；換語音重按即可 A/B。</li>
     <li>鎖屏測試：按「連續朗讀」，開始出聲後鎖屏 60 秒再解鎖 —
       時間軸看鎖屏中「合成」有沒有繼續、「play()」有沒有被拒。</li>
     <li>×N＝實時倍率（音訊秒÷合成秒），&gt;1 才可能邊播邊合成。</li>
@@ -60,6 +69,12 @@
   <p>時間軸同步上傳：<code>/api/testlog?page=wasmtest</code>；♥ 心跳每 5 秒。</p>
 
   <div class="btns"><b>引擎</b>
+    <select id="voiceSel">
+      <option value="medium" selected>華言 medium（60MB·有聲調）</option>
+      <option value="x_low">華言 x_low（20MB·無聲調）</option>
+      <option value="melo8">MeloTTS int8（51MB）</option>
+      <option value="melo32">MeloTTS fp32（163MB）</option>
+    </select>
     <button id="bPrep">準備引擎</button>
     <button id="bClear">清除快取</button>
   </div>
@@ -130,6 +145,16 @@ document.getElementById("ctx").replaceChildren(...ctxRows.map(([k, v]) => {
 }));
 log(ctxRows.map(([k, v]) => k + "=" + v).join(" · "));
 
+// ---- voices -------------------------------------------------------------
+const VOICES = {
+  x_low: { label: "華言 x_low", frontend: "piper", model: "zh_CN-huayan-x_low.onnx", cfg: "zh_CN-huayan-x_low.onnx.json" },
+  medium: { label: "華言 medium", frontend: "piper", model: "zh_CN-huayan-medium.onnx", cfg: "zh_CN-huayan-medium.onnx.json" },
+  melo8: { label: "MeloTTS int8", frontend: "melo", model: "melo-zh_en.int8.onnx" },
+  melo32: { label: "MeloTTS fp32", frontend: "melo", model: "melo-zh_en.onnx" },
+};
+const voiceSel = document.getElementById("voiceSel");
+const voice = () => VOICES[voiceSel.value];
+
 // ---- large binaries: /api/wasmtts proxy + Cache API ---------------------
 const CACHE = "bw-wasmtts";
 async function cachedBuf(name) {
@@ -152,20 +177,21 @@ async function cachedBuf(name) {
   return bytes;
 }
 
-// ---- engine: phonemizer on main (fast, runs once), ort in a Worker ------
+// ---- engine: frontend on main (runs once per utterance), ort in a Worker
 // Inference must not run on the main thread: session.run blocks JS for
 // seconds at a time, which would delay the chain-swap 'ended' handlers and
 // make every lock-screen readout ambiguous (was it iOS, or our own stall?).
 // A Worker also answers the real production question — does iOS keep worker
 // JS running under lock while audio plays through the media path?
 const WORKER_SRC = `
-let session, rt; // rt, not ort: the UMD script declares the global "ort" itself
+let session, rt, kind; // rt, not ort: the UMD script declares the global "ort" itself
 onmessage = async (e) => {
   const m = e.data;
   try {
     if (m.type === "init") {
       importScripts(m.base + "/vendor/wasmtts/ort-umd.min.js");
       rt = self.ort;
+      kind = m.kind;
       rt.env.wasm.numThreads = 1;
       rt.env.wasm.wasmPaths = { "ort-wasm-simd.wasm": URL.createObjectURL(new Blob([m.wasm], { type: "application/wasm" })) };
       const t = performance.now();
@@ -173,12 +199,23 @@ onmessage = async (e) => {
       postMessage({ type: "ready", ms: performance.now() - t });
     } else if (m.type === "synth") {
       const t = performance.now();
-      const { output } = await session.run({
-        input: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
-        input_lengths: new rt.Tensor("int64", [m.ids.length]),
-        scales: new rt.Tensor("float32", m.scales),
-      });
-      const pcm = new Float32Array(output.data);
+      const feeds = kind === "melo"
+        ? {
+            x: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
+            x_lengths: new rt.Tensor("int64", [m.ids.length]),
+            tones: new rt.Tensor("int64", m.tones, [1, m.tones.length]),
+            sid: new rt.Tensor("int64", [1]),
+            noise_scale: new rt.Tensor("float32", [m.scales[0]]),
+            length_scale: new rt.Tensor("float32", [m.scales[1]]),
+            noise_scale_w: new rt.Tensor("float32", [m.scales[2]]),
+          }
+        : {
+            input: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
+            input_lengths: new rt.Tensor("int64", [m.ids.length]),
+            scales: new rt.Tensor("float32", m.scales),
+          };
+      const out = await session.run(feeds);
+      const pcm = new Float32Array((out.output ?? out.y).data);
       postMessage({ type: "pcm", k: m.k, pcm, ms: performance.now() - t }, [pcm.buffer]);
     }
   } catch (err) {
@@ -186,23 +223,54 @@ onmessage = async (e) => {
   }
 };`;
 
-let piperData = null;
-let config = null;
+let piperData = null;   // shared by both piper voices
+let config = null;      // per-voice: { audio: {sample_rate}, inference: {...}, phoneme_id_map? }
+let meloLex = null;     // { tok: Map, lex: Map } — shared by both melo voices
+let t2cn = null;
 let worker = null;
 let ready = null;
 const pending = new Map();
+
+voiceSel.onchange = () => {
+  stopAll();
+  worker?.terminate();
+  // release anything awaiting the dead worker, or a stale speak() run's
+  // await would hang on a promise nobody can settle
+  for (const [, r] of pending) r(null);
+  pending.clear();
+  worker = null; ready = null; config = null;
+  log(`語音切換 → ${voice().label}`);
+};
+
 function ensureEngine() {
   return ready ??= (async () => {
     navigator.storage?.persist?.().catch(() => {});
+    const v = voice();
     const t = performance.now();
-    const [model, ortWasm, data, cfg] = await Promise.all([
-      cachedBuf("zh_CN-huayan-x_low.onnx"),
-      cachedBuf("ort-wasm-simd.wasm"),
-      cachedBuf("piper_phonemize.data"),
-      cachedBuf("zh_CN-huayan-x_low.onnx.json"),
-    ]);
-    piperData = data;
-    config = JSON.parse(new TextDecoder().decode(cfg));
+    const jobs = [cachedBuf(v.model), cachedBuf("ort-wasm-simd.wasm")];
+    if (v.frontend === "piper") {
+      jobs.push(cachedBuf(v.cfg), piperData ? null : cachedBuf("piper_phonemize.data"));
+    } else {
+      jobs.push(meloLex ? null : cachedBuf("melo-tokens.txt"), meloLex ? null : cachedBuf("melo-lexicon.txt"));
+    }
+    const [model, ortWasm, a, b] = await Promise.all(jobs);
+    if (v.frontend === "piper") {
+      config = JSON.parse(new TextDecoder().decode(a));
+      if (b) piperData = b;
+    } else {
+      // sherpa's export carries these in onnx metadata, unreadable from ort-web;
+      // values mirror sherpa-onnx's melo defaults (sample_rate from the export)
+      config = { audio: { sample_rate: 44100 }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 } };
+      if (a) {
+        const tp = performance.now();
+        meloLex = parseMeloLexicon(new TextDecoder().decode(a), new TextDecoder().decode(b));
+        log(`melo 詞典 ${meloLex.lex.size} 詞，解析 ${((performance.now() - tp) / 1000).toFixed(1)}s`);
+      }
+      if (!t2cn) {
+        const OpenCC = await import("/vendor/opencc-t2cn.js");
+        t2cn = OpenCC.Converter({ from: "tw", to: "cn" });
+      }
+    }
     worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
     worker.onmessage = (e) => {
       const m = e.data;
@@ -219,27 +287,31 @@ function ensureEngine() {
     };
     worker.onerror = (e) => log(`worker error ${e.message}`);
     const up = new Promise((r) => pending.set("ready", r));
-    worker.postMessage({ type: "init", base: location.origin, model, wasm: ortWasm }, [model, ortWasm]);
+    worker.postMessage({ type: "init", base: location.origin, kind: v.frontend, model, wasm: ortWasm }, [model, ortWasm]);
     await up;
     navigator.storage?.estimate?.().then((e) => log(`儲存用量 ${((e.usage ?? 0) / 1048576).toFixed(0)}MB`));
   })().catch((e) => { ready = null; log(`準備失敗 ${e.message}`); throw e; });
 }
-function synthInWorker(k, ids) {
+function synthInWorker(k, unit) {
   const { noise_scale, length_scale, noise_w } = config.inference;
-  return new Promise((r) => { pending.set(k, r); worker.postMessage({ type: "synth", k, ids, scales: [noise_scale, length_scale, noise_w] }); });
+  return new Promise((r) => {
+    pending.set(k, r);
+    worker.postMessage({ type: "synth", k, ids: unit.ids, tones: unit.tones, scales: [noise_scale, length_scale, noise_w] });
+  });
 }
 
-// texts → one phoneme_ids array per PRINT LINE (piper's own sentence
-// granularity — the mapping back to input entries is deliberately not
-// assumed). stderr is collected, not thrown: espeak warns on rare glyphs.
+// ---- piper frontend: espeak phonemize + remap ---------------------------
+// texts → one unit per PRINT LINE (piper's own sentence granularity — the
+// mapping back to input entries is deliberately not assumed). stderr is
+// collected, not thrown: espeak warns on rare glyphs.
 //
-// The CLI's built-in id table is NEWER than this 2023-era model's 130-symbol
-// phoneme_id_map (ids like 135 overflow the embedding — ort refuses), so ids
-// are rebuilt through the model's own map: walk ids and phoneme strings in
-// lockstep, keep the structural 0/1/2 (pad/BOS/EOS — sentence breaks emit
-// EOS,BOS mid-stream and only exist in the id stream), re-map the rest.
-// Symbols the model never had (espeak's newer tone digits — this model is
-// tone-blind by training) are dropped and counted.
+// The CLI's built-in id table is NEWER than the 2023-era x_low model's
+// 130-symbol phoneme_id_map (ids like 135 overflow the embedding — ort
+// refuses), so ids are rebuilt through the model's own map: walk ids and
+// phoneme strings in lockstep, keep the structural 0/1/2 (pad/BOS/EOS —
+// sentence breaks emit EOS,BOS mid-stream and only exist in the id stream),
+// re-map the rest. Symbols a model lacks are dropped and counted — x_low
+// loses espeak's tone digits (tone-blind by training); medium keeps them.
 let phMiss = 0;
 function remapIds(ids, phonemes) {
   const map = config.phoneme_id_map;
@@ -253,11 +325,10 @@ function remapIds(ids, phonemes) {
   }
   return out;
 }
-async function phonemize(texts) {
-  const t = performance.now();
+async function piperUnits(texts) {
   const out = [], errs = [];
   const mod = await createPiperPhonemize({
-    print: (l) => { try { const j = JSON.parse(l); out.push(remapIds(j.phoneme_ids, j.phonemes)); } catch { errs.push(l); } },
+    print: (l) => { try { const j = JSON.parse(l); out.push({ ids: remapIds(j.phoneme_ids, j.phonemes), tones: null }); } catch { errs.push(l); } },
     printErr: (l) => errs.push(l),
     locateFile: (f) => "/vendor/wasmtts/" + f,
     getPreloadedPackage: () => piperData,
@@ -268,8 +339,76 @@ async function phonemize(texts) {
     if (!out.length) throw e;
   }
   if (errs.length) log(`音素器 stderr ${errs.length} 行：${String(errs[0]).slice(0, 80)}`);
-  if (!out.length) throw new Error("音素器無輸出");
-  return { lines: out, ms: performance.now() - t };
+  return out;
+}
+
+// ---- melo frontend: sherpa's melo-tts-lexicon.cc, reimplemented ---------
+// lexicon.txt line: word phone… tone… (equal counts); tokens.txt: symbol id.
+// Greedy longest match against lexicon words (sherpa's PhraseMatcher),
+// per-char fallback, bare punctuation via token aliases, OOV skipped and
+// counted. A punctuation unit flushes the sentence; each sentence gets
+// AddBlank ([0, x1, 0, …, xn, 0]) on both ids and tones.
+function parseMeloLexicon(tokTxt, lexTxt) {
+  const tok = new Map();
+  for (const line of tokTxt.split("\n")) {
+    const p = line.split(/\s+/).filter(Boolean);
+    if (p.length === 2) tok.set(p[0], +p[1]);
+  }
+  tok.set(" ", tok.get("_"));
+  for (const [a, b] of [[",", "，"], [".", "。"], ["!", "！"], ["?", "？"]])
+    if (tok.has(a)) tok.set(b, tok.get(a));
+  tok.set("、", tok.get("，"));
+  const lex = new Map();
+  for (const line of lexTxt.split("\n")) {
+    const p = line.split(/\s+/).filter(Boolean);
+    if (p.length < 3) continue;
+    const w = p[0].toLowerCase();
+    if (lex.has(w)) continue;
+    const n = (p.length - 1) >> 1;
+    const ids = new Array(n), tones = new Array(n);
+    let ok = true;
+    for (let i = 0; i < n; i++) {
+      const id = tok.get(p[1 + i]);
+      if (id === undefined) { ok = false; break; }
+      ids[i] = id;
+      tones[i] = +p[1 + n + i];
+    }
+    if (ok) lex.set(w, [ids, tones]);
+  }
+  lex.set("呣", lex.get("母"));
+  lex.set("嗯", lex.get("恩"));
+  return { tok, lex };
+}
+const addBlank = (x) => {
+  const out = new Array(x.length * 2 + 1).fill(0);
+  for (let i = 0; i < x.length; i++) out[i * 2 + 1] = x[i];
+  return out;
+};
+const MELO_PUNCT = ".!?,。！？，";
+function meloUnits(text) {
+  const units = [...text.toLowerCase()];
+  const out = [];
+  let ids = [], tones = [];
+  for (let i = 0; i < units.length;) {
+    let step = 1;
+    for (let L = Math.min(8, units.length - i); L >= 1; L--) {
+      const w = units.slice(i, i + L).join("");
+      const hit = meloLex.lex.get(w);
+      if (hit) { ids.push(...hit[0]); tones.push(...hit[1]); step = L; break; }
+      if (L === 1) {
+        const t = meloLex.tok.get(w);
+        if (t !== undefined) { ids.push(t); tones.push(0); }
+        else if (w.trim()) phMiss++;
+      }
+    }
+    i += step;
+    if (MELO_PUNCT.includes(units[i - 1]) && ids.length) {
+      out.push({ ids: addBlank(ids), tones: addBlank(tones) });
+      ids = []; tones = [];
+    }
+  }
+  if (ids.length) out.push({ ids: addBlank(ids), tones: addBlank(tones) });
+  return out;
 }
 
 // Float32 PCM → 16-bit mono WAV blob (what <audio> can play from a blob URL)
@@ -364,25 +503,31 @@ async function speak(text, tag) {
   startHb();
   await ensureEngine();
   if (token !== run) return;
+  const v = voice();
   const chunks = ttsCore.chunkChapter(text);
+  const texts = chunks.map((c) => ttsCore.ttsPrompt(c.text));
   phMiss = 0;
-  const { lines, ms } = await phonemize(chunks.map((c) => ttsCore.ttsPrompt(c.text)));
+  const tp = performance.now();
+  const units = v.frontend === "piper"
+    ? await piperUnits(texts)
+    : texts.flatMap((s) => meloUnits(t2cn(s)));
+  if (!units.length) throw new Error("前端無輸出");
   const rate = config.audio.sample_rate;
-  log(`${tag} 分段${chunks.length} → 句${lines.length}，音素 ${(ms / 1000).toFixed(1)}s${phMiss ? `（丟符號 ${phMiss}）` : ""}`);
+  log(`${tag} ${v.label} 分段${chunks.length} → 句${units.length}，前端 ${((performance.now() - tp) / 1000).toFixed(1)}s${phMiss ? `（丟符號 ${phMiss}）` : ""}`);
   let audioS = 0, synthS = 0;
-  for (const [i, ids] of lines.entries()) {
+  for (const [i, unit] of units.entries()) {
     if (token !== run) return;
-    const r = await synthInWorker(i + 1, ids);
+    const r = await synthInWorker(i + 1, unit);
     if (!r || token !== run) { if (!r) log(`句${i + 1} 合成失敗`); continue; }
     const secs = r.pcm.length / rate;
     audioS += secs; synthS += r.ms / 1000;
-    log(`句${i + 1}/${lines.length} 合成${(r.ms / 1000).toFixed(1)}s → 音${secs.toFixed(1)}s ×${(secs * 1000 / r.ms).toFixed(1)} vis=${document.visibilityState}`);
+    log(`句${i + 1}/${units.length} 合成${(r.ms / 1000).toFixed(1)}s → 音${secs.toFixed(1)}s ×${(secs * 1000 / r.ms).toFixed(1)} vis=${document.visibilityState}`);
     queue.push({ k: i + 1, blob: mkWav(r.pcm, rate), secs });
     pump();
   }
   if (token !== run) return;
   synthDone = true;
-  if (synthS) log(`${tag} 合成完：音${audioS.toFixed(0)}s／算${synthS.toFixed(0)}s ×${(audioS / synthS).toFixed(1)} 實時`);
+  if (synthS) log(`${tag} ${v.label} 合成完：音${audioS.toFixed(0)}s／算${synthS.toFixed(0)}s ×${(audioS / synthS).toFixed(1)} 實時`);
 }
 
 const $ = (id) => document.getElementById(id);

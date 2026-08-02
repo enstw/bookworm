@@ -14,6 +14,10 @@ const outDir = join(root, "public", "vendor");
 const BUNDLES = [
   // simplified→traditional only (1.0MB); the full bi-directional bundle is not needed
   { pkg: "opencc-js", src: "dist/esm/cn2t.js", dst: "opencc-cn2t.js" },
+  // traditional→simplified, for /wasmtest's MeloTTS frontend: its lexicon
+  // has simplified multi-char words, and word-level matches carry the tone
+  // sandhi that per-char fallback loses
+  { pkg: "opencc-js", src: "dist/esm/t2cn.js", dst: "opencc-t2cn.js" },
   { pkg: "fflate", src: "esm/browser.js", dst: "fflate.js" },
   // /wasmtest glue (small files only). The large binaries these load — the
   // huayan VITS model, piper_phonemize.data, ort-wasm-simd.wasm — are NOT

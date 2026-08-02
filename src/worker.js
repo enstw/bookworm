@@ -455,7 +455,12 @@ const randHex = (bytes) =>
 // guard nothing), but strictly allowlisted on a pinned tag — an open proxy
 // would otherwise fetch arbitrary URLs on our egress. Delete with /wasmtest.
 const WASMTTS_RELEASE = "https://github.com/enstw/bookworm/releases/download/wasmtts-assets-v1/";
-const WASMTTS_FILES = new Set(["zh_CN-huayan-x_low.onnx", "zh_CN-huayan-x_low.onnx.json", "piper_phonemize.data", "ort-wasm-simd.wasm"]);
+const WASMTTS_FILES = new Set([
+  "zh_CN-huayan-x_low.onnx", "zh_CN-huayan-x_low.onnx.json",
+  "zh_CN-huayan-medium.onnx", "zh_CN-huayan-medium.onnx.json",
+  "melo-zh_en.onnx", "melo-zh_en.int8.onnx", "melo-lexicon.txt", "melo-tokens.txt",
+  "piper_phonemize.data", "ort-wasm-simd.wasm",
+]);
 
 async function serveWasmttsAsset(path) {
   const name = path.slice("/api/wasmtts/".length);
