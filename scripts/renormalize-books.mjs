@@ -15,7 +15,7 @@
 //        [--dry-run] [slug-or-id …]         (token also via BOOKWORM_ADMIN_TOKEN)
 
 import { parseArgs } from "node:util";
-import { normalizeBody } from "../public/split-core.mjs";
+import { normalizeBody, GHOST_CHARS } from "../public/split-core.mjs";
 
 function die(msg) {
   console.error(`error: ${msg}`);
@@ -73,17 +73,26 @@ for (const b of wanted) {
   const chapters = man.chapters ?? [];
   let changed = 0;
   let removed = 0;
+  // what got cut, by codepoint, plus which chapters (1-based) — numbers are
+  // safe in a public log where titles are not, and they answer "was it ch N?"
+  const ghosts = new Map();
+  const changedAt = [];
 
-  const queue = [...chapters];
+  const queue = chapters.map((c, i) => [c, i]);
   await Promise.all(
     Array.from({ length: Math.max(1, Math.min(Number(opts.concurrency), queue.length)) }, async () => {
       while (queue.length) {
-        const c = queue.shift();
+        const [c, ci] = queue.shift();
         const old = await (await req(`/books/${encodeURIComponent(b.id)}/${encodeURIComponent(c.file)}`)).text();
         const now = normalizeBody(old);
         if (now === old) continue;
         changed++;
         removed += old.length - now.length;
+        changedAt.push(ci + 1);
+        for (const m of old.match(GHOST_CHARS) ?? []) {
+          const cp = "U+" + m.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+          ghosts.set(cp, (ghosts.get(cp) ?? 0) + 1);
+        }
         c.chars = now.length;
         c.bytes = enc.encode(now).length;
         if (!opts["dry-run"])
@@ -111,9 +120,15 @@ for (const b of wanted) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(man, null, 2) + "\n",
     });
+  const where = changedAt.length <= 12
+    ? ` (ch ${changedAt.sort((x, y) => x - y).join(", ")})`
+    : "";
+  const cut = ghosts.size
+    ? `; ghosts: ${[...ghosts].map(([cp, n]) => `${cp}×${n}`).join(" ")}`
+    : "";
   console.log(
     `${opts["dry-run"] ? "· would rewrite" : "✓"} ${label(b)}: ` +
-    `${changed}/${chapters.length} chapters, −${removed.toLocaleString()} chars`,
+    `${changed}/${chapters.length} chapters${where}, −${removed.toLocaleString()} chars${cut}`,
   );
 }
 

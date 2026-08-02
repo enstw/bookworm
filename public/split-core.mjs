@@ -188,18 +188,31 @@ export function splitTextIntoPieces(text, opts = {}) {
   return { pieces, headingCount: marks.length };
 }
 
+// Zero-width characters (ZWSP/ZWNJ/ZWJ, direction marks, word joiner, BOM,
+// soft hyphen, Mongolian vowel separator) carry no meaning in prose — scraped
+// novels use them as watermarks and padding. Exported so
+// scripts/renormalize-books.mjs can count what it removed.
+export const GHOST_CHARS = /[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g;
+
+// A line is blank when nothing on it takes ink: whitespace, plus glyphs that
+// render as empty — braille blank (U+2800), Hangul fillers, lone variation
+// selectors. These pass the reader's `line.trim()` check (trim only strips
+// Unicode whitespace), so left alone they'd render as empty paragraphs.
+const INK_FREE = /^[\s\u115f\u1160\u2800\u3164\uffa0\ufe00-\ufe0f]*$/;
+
 // One paragraph per line is the reader's contract — the page renders each
-// non-empty line as a <p> and blank lines as nothing, so blank-line runs
-// (including whitespace-only lines) are pure offset padding. Collapse them
-// to a single line break, drop leading blank lines (a line's own 段首 indent
-// survives), trim the tail, end with exactly one \n. Idempotent — an already
-// clean body comes back byte-identical, which is what lets
+// line with visible content as a <p>, so blank lines (including ones made of
+// invisible characters) are pure offset padding. Strip ghost characters
+// everywhere, drop every ink-free line, trim the tail, end with exactly one
+// \n; a line's own 段首 indent survives. Idempotent — an already clean body
+// comes back byte-identical, which is what lets
 // scripts/renormalize-books.mjs skip unchanged chapters in the store.
 export function normalizeBody(text) {
-  return text
-    .replace(/\n(?:[ \t\r　]*\n)+/g, "\n")
-    .replace(/^[ \t\r　]*\n+/, "")
-    .replace(/\s+$/, "") + "\n";
+  const kept = text
+    .replace(GHOST_CHARS, "")
+    .split("\n")
+    .filter((line) => !INK_FREE.test(line));
+  return kept.join("\n").replace(/\s+$/, "") + "\n";
 }
 
 // pieces → [{ title, file, body, chars }] with normalized bodies and final

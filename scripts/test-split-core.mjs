@@ -24,6 +24,23 @@ out.indentAndEdges = normalizeBody("\n\n　　首段。\n\n　　次段。\n\n")
   === "　　首段。\n　　次段。\n"
   ? "ok" : `FAIL ${JSON.stringify(normalizeBody("\n\n　　首段。\n\n　　次段。\n\n"))}`;
 
+// invisible-but-not-whitespace junk: `line.trim()` keeps it, so before
+// normalization these rendered as EMPTY paragraphs in the reader
+const ZWSP = String.fromCodePoint(0x200b);    // zero-width space
+const BRAILLE = String.fromCodePoint(0x2800); // braille blank — a real glyph, zero ink
+const FILLER = String.fromCodePoint(0x3164);  // hangul filler
+out.ghostLines = normalizeBody(`甲\n${ZWSP}\n${BRAILLE}${BRAILLE}\n${FILLER}\n乙\n`)
+  === "甲\n乙\n"
+  ? "ok (invisible-only lines dropped)"
+  : `FAIL ${JSON.stringify(normalizeBody(`甲\n${ZWSP}\n${BRAILLE}${BRAILLE}\n${FILLER}\n乙\n`))}`;
+
+// zero-widths vanish mid-line too (watermarks); braille blank only counts as
+// blank when it is the whole line — inside prose it stays untouched
+out.ghostInline = normalizeBody(`甲${ZWSP}乙\n丙${BRAILLE}丁\n`)
+  === `甲乙\n丙${BRAILLE}丁\n`
+  ? "ok (zero-width stripped inline, inline braille kept)"
+  : `FAIL ${JSON.stringify(normalizeBody(`甲${ZWSP}乙\n丙${BRAILLE}丁\n`))}`;
+
 const once = normalizeBody("a\n\n b\n\n\nc");
 out.idempotent = normalizeBody(once) === once && normalizeBody("甲\n乙\n") === "甲\n乙\n"
   ? "ok (clean input returns byte-identical)"
