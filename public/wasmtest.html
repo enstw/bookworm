@@ -31,9 +31,12 @@
      Cache API, so a voice costs its download once — offline included.
      Timeline uploads to /api/testlog (page=wasmtest), heartbeat gaps show
      JS suspension, same instrument as /speechtest. Shares the real player's
-     chunker (/tts-core.mjs). Delete this file, the /admin link, the
-     /api/wasmtts route and the vendor wasmtts/ entries together once
-     settled. -->
+     chunker (/tts-core.mjs).
+     GRADUATED 2026-08-02: the reader now runs melo fp32 for real
+     (public/wasm-tts.mjs) — this page stays as the voice-pack manager (its
+     downloads fill the same bw-wasmtts cache packReady() checks; the reader
+     itself never downloads 180 MB) and as the A/B bench for future voices.
+     -->
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
@@ -81,6 +84,9 @@
       切「執行緒 1」重跑「短句」可對比 ×N — melo 過 1 的關鍵。</li>
     <li>fanchen-C 是 187 人合訓的原生中文模型（16kHz）——「說話人」0–186
       換音色不用重載，預設 25（Whisper 聽寫最清楚的一位）。</li>
+    <li>MeloTTS fp32 按過「準備引擎」後，語音包已入快取 —
+      回到書頁按 ▶，閱讀器自動改用離線引擎（console 顯示
+      wasm (offline melo)；localStorage bw_tts="stream" 可強制回線上）。</li>
     <li>「後端 webgpu」實測比 CPU 慢（VITS 算子小而多，GPU 往返吃掉收益），
       留作對照。</li>
   </ol>

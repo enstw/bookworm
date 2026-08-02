@@ -19,12 +19,26 @@
 //   locked, and the system keeps the page alive to buffer ahead.
 // - CHAIN (everything else): the double-buffered element swap. Chrome and
 //   Firefox happily chain play() from the `ended` handler in background.
+// - WASM (offline, wasm-tts.mjs): in-browser MeloTTS — no network after the
+//   one-time voice pack download. Chain-style blob-WAV swap on the same two
+//   elements; the /wasmtest rounds proved iOS 26 chains play() from `ended`
+//   across alternating elements under the lock screen, and that ×1.7
+//   realtime synthesis keeps the queue ahead of playback there. Selected
+//   automatically when the pack is in the cache (downloaded by /wasmtest,
+//   never by the reader — ▶ must not quietly pull 180 MB over cellular);
+//   localStorage bw_tts="stream" forces the online engines back.
 
 import * as ttsCore from "/tts-core.mjs";
+import * as wasmTts from "/wasm-tts.mjs";
 
 const MMS = globalThis.ManagedMediaSource;
 export const useStream = !!MMS?.isTypeSupported?.("audio/mpeg");
-console.log(`bookworm tts engine: ${useStream ? "stream (ManagedMediaSource)" : "chain"}`);
+let wasmOn = false;
+const useWasm = () => wasmOn;
+wasmTts.packReady().then((r) => {
+  wasmOn = r && localStorage.getItem("bw_tts") !== "stream";
+  console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline melo)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
+});
 
 // reader internals, injected once by app.js
 let $, el, state, fetchChapter, openChapter, savePos, flush, updateProgress,
@@ -60,7 +74,7 @@ export function togglePlayer() {
   // bless the element(s) inside this tap: iOS only lets an element play()
   // outside a gesture (chunk swaps happen on `ended`) after it has played
   // within one — a beat of silence counts
-  if (useStream) {
+  if (useStream && !useWasm()) {
     ensureStreamEl();
     unlockAudio(stream.el);
   } else {
@@ -82,8 +96,9 @@ export function chapterOpened(i, offset) {
 // called on visibilitychange→visible: show the chapter the narration
 // crossed into while the screen was off
 export function visibleCatchup() {
-  if (stream.pendingOpen && player.on) {
+  if ((stream.pendingOpen || wasm.pendingOpen) && player.on) {
     stream.pendingOpen = false;
+    wasm.pendingOpen = false;
     openChapter(state.idx, state.off);
   }
 }
@@ -122,7 +137,11 @@ function makeAudio() {
   a.addEventListener("waiting", active(() => { player.status = "loading"; updatePlayerBar(); }));
   a.addEventListener("timeupdate", active(onAudioTime));
   // the unlock silence also ends — it must not advance the narration
-  a.addEventListener("ended", active(() => { if (!a.currentSrc.startsWith("data:")) advanceChunk(1); }));
+  a.addEventListener("ended", active(() => {
+    if (a.currentSrc.startsWith("data:")) return;
+    if (useWasm()) { wasm.active = false; wasmTrim(); wasmPump(); return; }
+    advanceChunk(1);
+  }));
   a.addEventListener("error", () => {
     if (a === player.audio) { player.playing = false; player.status = "error"; updatePlayerBar(); }
     else player.nextUrl = null;
@@ -134,6 +153,7 @@ function makeAudio() {
 // when the chapter text is already loaded, so the audio.play() inside stays
 // within the user's tap gesture (iOS requirement).
 function playFrom(ci, off) {
+  if (useWasm()) return wasmPlayFrom(ci, off);
   if (useStream) return streamPlayFrom(ci, off);
   const ch = state.manifest.chapters[ci];
   if (!ch) return closePlayer();
@@ -195,13 +215,16 @@ function retryOnVisible() {
   const retry = () => {
     if (document.visibilityState !== "visible") return;
     document.removeEventListener("visibilitychange", retry);
-    if (player.on && !player.playing && player.status === "error")
-      playChunk(Math.max(0, player.chunkIdx));
+    if (player.on && !player.playing && player.status === "error") {
+      if (useWasm()) wasmReplay();
+      else playChunk(Math.max(0, player.chunkIdx));
+    }
   };
   document.addEventListener("visibilitychange", retry);
 }
 
 function advanceChunk(d) {
+  if (useWasm()) return wasmSkip(d);
   if (useStream) return streamAdvanceChunk(d);
   const k = player.chunkIdx + d;
   if (k >= 0 && k < player.chunks.length) playChunk(k);
@@ -226,11 +249,13 @@ function advanceChapter(d) {
 }
 
 function playerPlayPause() {
-  const a = useStream ? stream.el : player.audio;
+  const a = useStream && !useWasm() ? stream.el : player.audio;
   if (player.playing) { a?.pause(); flush(); return; }
-  if (player.status === "error")
+  if (player.status === "error") {
+    if (useWasm()) return wasmReplay();
     return useStream ? streamPlayFrom(state.idx, state.off) : playChunk(Math.max(0, player.chunkIdx));
-  if (useStream || (player.chapIdx === state.idx && player.chunkIdx >= 0))
+  }
+  if (useWasm() || useStream || (player.chapIdx === state.idx && player.chunkIdx >= 0))
     a?.play().catch(() => { player.status = "error"; updatePlayerBar(); });
   else playFrom(state.idx, state.off);
 }
@@ -245,6 +270,7 @@ export function closePlayer() {
   for (const a of [player.audio, player.standby])
     if (a) { a.pause(); a.removeAttribute("src"); }
   streamTeardown();
+  wasmTeardown();
   $("#playerbar")?.remove();
   $("#audioBtn")?.classList.remove("active");
   flush();
@@ -514,6 +540,195 @@ function streamAdvanceChunk(d) {
   streamPlayFrom(ci, 0);
 }
 
+// ---------- WASM engine (offline melo, wasm-tts.mjs) ----------
+//
+// Synthesis streams sentence-sized WAV units into `queue`; playback chains
+// them through the same two chain elements with strict alternation (the
+// exact pattern the /wasmtest lock-screen rounds validated). Each unit maps
+// to a char span of its chunk, so position sync is FINER than chunk
+// granularity. Synthesis runs ~90 s ahead and pauses (backpressure inside
+// speakChunk's onUnit await); played units are dropped promptly so an
+// hours-long session cannot pile up blobs.
+
+export const wasm = {
+  gen: 0,
+  queue: [],         // {url, secs, ci, k, start, chars, chunks}
+  nextPlay: 0,       // queue index of the next unit to play
+  active: false,     // a unit is in the audio element right now
+  synthDone: false,  // book finished synthesizing; drain then closePlayer
+  cur: null,         // unit currently playing (position mapping)
+  pendingOpen: false, // chapter crossed while hidden; DOM catches up on show
+};
+
+function wasmTeardown() {
+  wasm.gen++;
+  for (const u of wasm.queue) URL.revokeObjectURL(u.url);
+  wasm.queue = [];
+  wasm.nextPlay = 0;
+  wasm.active = false;
+  wasm.synthDone = false;
+  wasm.cur = null;
+  wasm.pendingOpen = false;
+}
+
+function wasmPlayFrom(ci, off) {
+  wasmTeardown();
+  const gen = wasm.gen;
+  const ch = state.manifest.chapters[ci];
+  if (!ch) return closePlayer();
+  const text = state.cache.get(ch.file);
+  if (text === undefined) {
+    player.status = "loading";
+    updatePlayerBar();
+    fetchChapter(ci)
+      .then(() => { if (player.on && gen === wasm.gen) wasmPlayFrom(ci, off); })
+      .catch(() => { player.status = "error"; updatePlayerBar(); });
+    return;
+  }
+  const chunks = ttsCore.chunkChapter(text);
+  player.chapIdx = ci;
+  player.chunks = chunks;
+  player.chunkIdx = ttsCore.chunkIndexFor(chunks, off);
+  player.status = "loading"; // first audio lands when unit 1 is synthesized
+  updatePlayerBar();
+  setMediaSession();
+  wasmSynthLoop(gen, ci, chunks, player.chunkIdx);
+}
+
+const wasmQueuedSecs = () =>
+  wasm.queue.slice(wasm.nextPlay).reduce((s, u) => s + u.secs, 0);
+
+async function wasmSynthLoop(gen, ci, chunks, k) {
+  let eng;
+  try {
+    eng = await wasmTts.ensureEngine();
+  } catch (e) {
+    // pack half-evicted or init failure: this device cannot run the engine
+    // now — fall back to the online engines for the rest of the session
+    console.warn("wasm-tts unavailable, falling back:", e);
+    wasmOn = false;
+    if (player.on && gen === wasm.gen) playFrom(state.idx, state.off);
+    return;
+  }
+  try {
+    while (gen === wasm.gen && player.on) {
+      if (k >= chunks.length) { // roll into the next chapter's text
+        ci += 1;
+        if (ci >= state.manifest.chapters.length) break;
+        const text = state.cache.get(state.manifest.chapters[ci].file)
+          ?? await fetchChapter(ci);
+        if (gen !== wasm.gen) return;
+        chunks = ttsCore.chunkChapter(text);
+        k = 0;
+        continue;
+      }
+      const c = chunks[k];
+      const ok = await eng.speakChunk(ttsCore.ttsPrompt(c.text), async (u) => {
+        if (gen !== wasm.gen) return false;
+        wasm.queue.push({
+          url: URL.createObjectURL(u.blob),
+          secs: u.secs, ci, k, chunks,
+          start: c.start + Math.round(u.frac0 * c.chars),
+          chars: Math.max(1, Math.round((u.frac1 - u.frac0) * c.chars)),
+        });
+        wasmPump();
+        while (gen === wasm.gen && wasmQueuedSecs() > 90)
+          await new Promise((r) => setTimeout(r, 1000));
+        return gen === wasm.gen;
+      });
+      if (!ok || gen !== wasm.gen) return;
+      k += 1;
+    }
+    if (gen === wasm.gen) { wasm.synthDone = true; wasmPump(); }
+  } catch (e) {
+    if (gen !== wasm.gen) return;
+    console.warn("wasm-tts synth:", e);
+    player.status = "error";
+    updatePlayerBar();
+  }
+}
+
+function wasmPump() {
+  if (wasm.active || !player.on) return;
+  const u = wasm.queue[wasm.nextPlay];
+  if (!u) {
+    if (wasm.synthDone && wasm.queue.length && wasm.nextPlay >= wasm.queue.length)
+      closePlayer(); // whole book spoken and drained
+    return;
+  }
+  // strict element alternation — the pattern the lock-screen rounds proved
+  const a = player.standby;
+  player.standby = player.audio;
+  player.standby.pause();
+  player.audio = a;
+  wasm.cur = u;
+  wasm.nextPlay++;
+  wasm.active = true;
+  a.src = u.url;
+  a.play().then(
+    () => { player.status = ""; updatePlayerBar(); },
+    () => { player.status = "error"; updatePlayerBar(); retryOnVisible(); },
+  );
+  wasmPosition(u);
+  updatePlayerBar();
+}
+
+// keep a few played units for ⏮, revoke everything older
+function wasmTrim() {
+  while (wasm.nextPlay > 3) {
+    URL.revokeObjectURL(wasm.queue.shift().url);
+    wasm.nextPlay--;
+  }
+}
+
+// re-play the unit that last failed (or paused in error) — used by the
+// visible-again retry and the ▶ button in error state
+function wasmReplay() {
+  wasm.nextPlay = Math.max(0, wasm.nextPlay - 1);
+  wasm.active = false;
+  wasmPump();
+}
+
+// ⏮/⏭ over synthesized units; ⏭ past the queue jumps synthesis forward
+function wasmSkip(d) {
+  const t = Math.max(0, wasm.nextPlay - 1 + d);
+  if (t < wasm.queue.length) {
+    player.audio.pause();
+    wasm.nextPlay = t;
+    wasm.active = false;
+    wasmPump();
+    return;
+  }
+  const u = wasm.cur;
+  if (!u) return;
+  const c = u.chunks[u.k + 1];
+  if (c) wasmPlayFrom(u.ci, c.start);
+  else if (u.ci + 1 < state.manifest.chapters.length) wasmPlayFrom(u.ci + 1, 0);
+  else closePlayer();
+}
+
+// keep the reader following the narration as units start (chapter cross,
+// chunk label) — mirrors the stream engine's hidden-tab discipline
+function wasmPosition(u) {
+  player.chunkIdx = u.k;
+  if (u.ci !== player.chapIdx) {
+    player.chapIdx = u.ci;
+    player.chunks = u.chunks;
+    setMediaSession();
+  }
+  if (u.ci !== state.idx) {
+    if (document.visibilityState === "hidden") {
+      state.idx = u.ci;
+      state.off = u.start;
+      wasm.pendingOpen = true;
+      savePos();
+      return;
+    }
+    wasm.pendingOpen = false;
+    openChapter(u.ci, u.start).then(() => flush());
+  }
+}
+
 // ---------- player bar / MediaSession ----------
 
 function buildPlayerBar() {
@@ -542,7 +757,8 @@ function updatePlayerBar() {
 
 function onAudioTime() {
   if (!player.playing || player.chapIdx !== state.idx) return;
-  const c = player.chunks[player.chunkIdx];
+  // wasm units carry their own char span — finer than a chunk, same shape
+  const c = useWasm() ? wasm.cur : player.chunks[player.chunkIdx];
   if (!c) return;
   // proportional to the real clip length when known (exact at chunk edges);
   // the measured chars/sec constant is only the pre-metadata fallback
@@ -574,4 +790,4 @@ function setMediaSession() {
 }
 
 // debug handle: e2e assertions and the remote-inspector device pass
-globalThis.bwPlayer = { player, stream, useStream };
+globalThis.bwPlayer = { player, stream, wasm, useStream, useWasm };

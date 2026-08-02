@@ -150,18 +150,32 @@ the pre-publication history, which lives in the owner's private archive.
   reading must not wait on a bookmark the device already holds. The legacy
   `/<book>/<uid>` route is deleted, not shimmed. An online not-found forgets
   `bw_last_book`; an offline not-found forgets nothing.
-- **TTS (2026-07-15 onward).** Two engines in `player.mjs`: STREAM
-  (`ManagedMediaSource`, one continuous mp3 timeline — no chunk boundary
-  ever needs `play()` while the screen is locked) where supported, CHAIN
-  (double-buffered element swap) elsewhere; `globalThis.bwPlayer` says
-  which. The backend speaks Microsoft Edge read-aloud (protocol gotchas
-  commented in `src/edge-tts.js`); real Mandarin rate ≈ 4.5 chars/s; TTS
-  chunk 0 is always the chapter heading alone. Verify any backend change by
+- **TTS (2026-07-15 onward).** Three engines in `player.mjs`: WASM
+  (offline, preferred when available), STREAM (`ManagedMediaSource`, one
+  continuous mp3 timeline — no chunk boundary ever needs `play()` while
+  the screen is locked) where supported, CHAIN (double-buffered element
+  swap) elsewhere; `globalThis.bwPlayer` says which. The online backend
+  speaks Microsoft Edge read-aloud (protocol gotchas commented in
+  `src/edge-tts.js`); real Mandarin rate ≈ 4.5 chars/s; TTS chunk 0 is
+  always the chapter heading alone. Verify any backend change by
   Whisper-transcribing a sample — duration checks cannot hear garbage,
-  which is how the MeloTTS breakage was confirmed. Rejected alternatives,
-  kept for the day edge-tts dies: Web Speech API (iOS pauses it on lock),
-  Azure/OpenAI TTS (~$200/novel), MeloTTS (broke upstream; voices
-  zh-TW-HsiaoChen/YunJhe were the shortlist).
+  which is how the Workers-AI MeloTTS breakage was confirmed. Rejected
+  alternatives: Web Speech API (iOS pauses it on lock), Azure/OpenAI TTS
+  (~$200/novel).
+- **Offline TTS (2026-08-02).** `wasm-tts.mjs` runs MeloTTS-zh fp32 under
+  onnxruntime-web in a Worker: native-accent lexicon frontend (opencc
+  t2cn → greedy longest match → AddBlank), page-spliced punctuation
+  pauses, sentence-sized WAV units chained through the CHAIN elements —
+  measured ×1.7 realtime on the phone with 4 wasm threads, lock-screen
+  clean. Threads need `crossOriginIsolated`: `public/_headers` puts
+  COOP/COEP on every page. The ~180 MB voice pack is downloaded ONLY by
+  the `/wasmtest` diagnostic (never by ▶ — cellular) into the
+  `bw-wasmtts` cache both pages share; `packReady()` flips the reader to
+  this engine, eviction falls back to STREAM, `localStorage
+  bw_tts="stream"` forces the online engines. Model binaries come from
+  the `wasmtts-assets-v1` GitHub release via the allowlisted
+  `/api/wasmtts/` proxy. The fanchen-C voice (faster, 187 speakers,
+  zhuyin lexicon) stayed a diagnostic option — melo won by ear.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:
