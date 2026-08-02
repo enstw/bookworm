@@ -68,6 +68,21 @@ const enc = new TextEncoder();
 const label = (b) => (opts["slugs-only"] ? b.slug : `${b.title} (${b.slug})`);
 let touched = 0;
 
+// Characters that certainly take ink: CJK (BMP + supplementary planes), kana,
+// hangul, printable ASCII, CJK/fullwidth punctuation, common symbols/emoji. A
+// kept line with NONE of these is suspicious — it will render as an empty (or
+// tofu) paragraph the normalization rule doesn't yet understand. Reporting
+// such lines by codepoint leaks nothing: by construction they contain no text.
+const VISIBLE = new RegExp(
+  "[\\u0021-\\u007e\\u2010-\\u2027\\u2030-\\u205e\\u2460-\\u27bf" +
+  "\\u3001-\\u303f\\u3040-\\u30ff\\u3105-\\u312f\\u3400-\\u4dbf\\u4e00-\\u9fff" +
+  "\\uac00-\\ud7a3\\uf900-\\ufaff\\ufe30-\\ufe4f\\uff01-\\uff60\\uffe0-\\uffe6" +
+  "\\u{1f000}-\\u{1faff}\\u{20000}-\\u{2ffff}]", "u");
+const lineCodepoints = (line) =>
+  [...new Set([...line.trim()])].slice(0, 6)
+    .map((ch) => "U+" + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0"))
+    .join(" ");
+
 for (const b of wanted) {
   const man = await (await req(`/books/${encodeURIComponent(b.id)}/manifest.json`)).json();
   const chapters = man.chapters ?? [];
@@ -77,6 +92,7 @@ for (const b of wanted) {
   // safe in a public log where titles are not, and they answer "was it ch N?"
   const ghosts = new Map();
   const changedAt = [];
+  const suspicious = [];
 
   const queue = chapters.map((c, i) => [c, i]);
   await Promise.all(
@@ -85,6 +101,10 @@ for (const b of wanted) {
         const [c, ci] = queue.shift();
         const old = await (await req(`/books/${encodeURIComponent(b.id)}/${encodeURIComponent(c.file)}`)).text();
         const now = normalizeBody(old);
+        now.split("\n").forEach((line, li) => {
+          if (line.trim() && !VISIBLE.test(line) && suspicious.length < 20)
+            suspicious.push(`ch ${ci + 1} line ${li + 1} (${line.length} chars): ${lineCodepoints(line)}`);
+        });
         if (now === old) continue;
         changed++;
         removed += old.length - now.length;
@@ -104,6 +124,11 @@ for (const b of wanted) {
       }
     }),
   );
+
+  // lines the rule KEEPS that hold no certainly-visible character — the
+  // rendered-as-empty candidates the rule doesn't cover yet
+  for (const s of suspicious) console.log(`    ? ${s}`);
+  if (suspicious.length === 20) console.log("    ? …more suppressed");
 
   if (!changed) {
     console.log(`  ${label(b)}: already clean`);
