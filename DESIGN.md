@@ -221,6 +221,14 @@ the pre-publication history, which lives in the owner's private archive.
   dismissible jumpnote pill with one-tap restore. The original +100-chapter
   jump was never conclusively reproduced, so the recovery UI is the
   load-bearing fix.
+- **Chapter bodies are blank-line free (2026-08-03).** The reader renders one
+  `<p>` per non-empty line, so a blank line (even a whitespace-only one) is
+  pure char-offset padding. `normalizeBody` in `split-core.mjs` collapses
+  blank-line runs to a single break at import — CLI and /admin both pass
+  through `piecesToEntries` — and `scripts/renormalize-books.mjs` applies the
+  identical, idempotent rule to books already in the store through the admin
+  API (chapters first, manifest last with fresh chars/bytes/generatedAt so
+  `?v=` caches bust and the shelf index stays honest).
 - **Deploy & ops.** The custom domain is added in the Cloudflare dashboard
   only — the deploy token has no zone permissions, so putting the domain in
   `wrangler.jsonc` `routes` breaks `deploy.sh`. `deploy.sh` captures

@@ -188,13 +188,27 @@ export function splitTextIntoPieces(text, opts = {}) {
   return { pieces, headingCount: marks.length };
 }
 
+// One paragraph per line is the reader's contract — the page renders each
+// non-empty line as a <p> and blank lines as nothing, so blank-line runs
+// (including whitespace-only lines) are pure offset padding. Collapse them
+// to a single line break, drop leading blank lines (a line's own 段首 indent
+// survives), trim the tail, end with exactly one \n. Idempotent — an already
+// clean body comes back byte-identical, which is what lets
+// scripts/renormalize-books.mjs skip unchanged chapters in the store.
+export function normalizeBody(text) {
+  return text
+    .replace(/\n(?:[ \t\r　]*\n)+/g, "\n")
+    .replace(/^[ \t\r　]*\n+/, "")
+    .replace(/\s+$/, "") + "\n";
+}
+
 // pieces → [{ title, file, body, chars }] with normalized bodies and final
 // NNNN_<sanitized-title>.txt filenames; empty pieces are dropped.
 export function piecesToEntries(pieces) {
   const enc = new TextEncoder();
   const entries = [];
   for (const piece of pieces) {
-    const body = piece.body.replace(/^\n+|\n+$/g, "") + "\n";
+    const body = normalizeBody(piece.body);
     if (!body.trim()) continue;
     const i = entries.length;
     const file = `${String(i).padStart(4, "0")}_${safeName(piece.title) || "chapter"}.txt`;

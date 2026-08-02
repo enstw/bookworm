@@ -1,0 +1,52 @@
+# 整理已上架的書：把連續空行壓成一個換行 — 跟新書切章走同一條規則
+# （split-core.mjs 的 normalizeBody），只改寫有變化的章節，manifest 最後寫。
+#
+# 手動觸發（Actions → renormalize books → Run workflow）。跑在這裡是因為
+# ADMIN_TOKEN 只存在 repo secrets——本機沒有正式站的密鑰，也不需要有。
+#
+# 公開 repo 的記錄任何人都看得到，所以只印代稱不印書名（--slugs-only）。
+name: renormalize books
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只檢查不改寫，先看有哪些書會動"
+        type: boolean
+        default: true
+      books:
+        description: "只處理這些書（slug 或 id，空白分隔；留空 = 全部）"
+        required: false
+
+# 跟上架搶同一個 R2 寫入配額 → 排同一條隊
+concurrency:
+  group: publish-book
+  cancel-in-progress: false
+
+jobs:
+  renormalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # script 只 import node 內建模組和 public/split-core.mjs — 不必 pnpm install
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 改寫
+        env:
+          # 走環境變數而不是 --token：命令列會出現在記錄裡，環境變數不會
+          BOOKWORM_ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          SERVER: ${{ secrets.BOOKWORM_URL }}
+          IN_BOOKS: ${{ inputs.books }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVER:-}" ] || [ -z "${BOOKWORM_ADMIN_TOKEN:-}" ]; then
+            echo "::error::少了 BOOKWORM_URL 或 ADMIN_TOKEN secret"
+            exit 1
+          fi
+          ARGS=(--url "$SERVER" --slugs-only)
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS+=(--dry-run); fi
+          # 代稱是空白分隔的清單，就是要讓它展開
+          # shellcheck disable=SC2086
+          node scripts/renormalize-books.mjs "${ARGS[@]}" $IN_BOOKS | tee -a "$GITHUB_STEP_SUMMARY"
