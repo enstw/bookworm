@@ -163,10 +163,12 @@ the pre-publication history, which lives in the owner's private archive.
   alternatives: Web Speech API (iOS pauses it on lock), Azure/OpenAI TTS
   (~$200/novel).
 - **Offline TTS (2026-08-02).** `wasm-tts.mjs` runs MeloTTS-zh fp32 under
-  onnxruntime-web in a Worker: native-accent lexicon frontend (opencc
-  t2cn → greedy longest match → AddBlank), a 台灣讀音 overlay
-  (TW_LEXICON), page-spliced punctuation pauses — ×1.7 realtime on the
-  phone with 4 wasm threads. The worker lame-encodes each sentence unit
+  onnxruntime-web in a Worker: lexicon frontend (opencc t2cn → greedy
+  longest match → AddBlank), page-spliced punctuation pauses — ×1.7
+  realtime on the phone with 4 wasm threads. (A 台灣讀音 lexicon overlay
+  shipped briefly and was removed 2026-08-03 — mainland-model readings
+  stay stock until a real zh_TW voice exists; the vetted word list lives
+  in git history as TW_LEXICON.) The worker lame-encodes each sentence unit
   to mp3 and playback appends them to ONE ManagedMediaSource timeline
   (plain MediaSource on Chrome, so the same path is testable headless):
   chain-swapping blob WAVs died after ~5 min locked with a play() that

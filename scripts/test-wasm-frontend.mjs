@@ -5,7 +5,7 @@
 //
 //   node scripts/test-wasm-frontend.mjs
 
-import { parseMeloLexicon, lexItems, addBlank, trimTail, mkWav, PAUSE_MS, UNIT_ENDERS, RATE, TW_LEXICON }
+import { parseMeloLexicon, lexItems, addBlank, trimTail, mkWav, PAUSE_MS, UNIT_ENDERS, RATE }
   from "../public/wasm-tts.mjs";
 
 const out = {};
@@ -48,21 +48,6 @@ out.mkWav = wav.size === 44 + 200 && wav.type === "audio/wav"
 
 out.pauses = UNIT_ENDERS.includes("。") && PAUSE_MS["，"] === 200 && PAUSE_MS["。"] === 450
   ? "ok" : "FAIL";
-
-// Taiwan overlay: prepended lines beat the base lexicon (first-wins), and
-// every line is well-formed (word + n phones + n single-digit tones)
-const dup = parseMeloLexicon(TOKS, "你 n i 3 3\n" + LEX);
-out.twFirstWins = eq(dup.lex.get("你"), [[1, 2], [3, 3]])
-  ? "ok (prepended entry wins)" : `FAIL ${JSON.stringify(dup.lex.get("你"))}`;
-const badLines = TW_LEXICON.split("\n").filter((line) => {
-  const p = line.split(/\s+/).filter(Boolean);
-  const n = (p.length - 1) >> 1;
-  return p.length < 3 || p.length !== 1 + 2 * n ||
-    p.slice(1, 1 + n).some((s) => /^[0-9]$/.test(s)) ||
-    p.slice(1 + n).some((s) => !/^[0-9]$/.test(s));
-});
-out.twShape = badLines.length === 0
-  ? `ok (${TW_LEXICON.split("\n").length} lines)` : `FAIL ${JSON.stringify(badLines)}`;
 
 console.log(JSON.stringify(out, null, 2));
 if (Object.values(out).some((v) => String(v).startsWith("FAIL"))) process.exit(1);

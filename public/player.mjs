@@ -761,7 +761,7 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
   let eng;
   try {
     eng = await wasmTts.ensureEngine();
-    wlog(`引擎 ${wasmTts.engineInfo.threads}緒 tw=${wasmTts.engineInfo.tw} isolated=${crossOriginIsolated}`);
+    wlog(`引擎 ${wasmTts.engineInfo.threads}緒 isolated=${crossOriginIsolated}`);
   } catch (e) {
     // pack half-evicted or init failure: this device cannot run the engine
     // now — fall back to the online engines for the rest of the session

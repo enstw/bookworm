@@ -16,7 +16,7 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v10";
+const SHELL = "bw-shell-v11";
 // opencc-t2cn rides the shell so the offline TTS engine (wasm-tts.mjs)
 // works with no network — its big binaries live in their own bw-wasmtts
 // cache; the vendor URL is unversioned like fonts (bump SHELL on dep bumps)

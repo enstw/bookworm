@@ -50,75 +50,6 @@ export function parseMeloLexicon(tokTxt, lexTxt) {
   return { tok, lex };
 }
 
-// ---- Taiwan readings overlay ---------------------------------------------
-// The melo lexicon carries mainland readings; these lines (same format as
-// lexicon.txt, every phone verified against melo-tokens.txt offline) are
-// prepended so parseMeloLexicon's first-wins dedupe yields 台灣讀音 (MOE
-// 一字多音審訂表) where the two standards differ: 垃圾 lèsè, 角色 jiǎosè,
-// 頭髮 fǎ, 研究 jiù, 消息/休息 xí, 期 qí, 品質 zhí, 知識 shì, 攻擊 jí,
-// 突 tú, 危/微 wéi, 企 qì, 血 xiě, 液 yì, 說服 shuì, 曝光 pù, 包括 guā,
-// 亞 yǎ, 步驟 zòu, 誰 shéi… Single-char lines catch every per-char
-// fallback; word lines exist only where the base lexicon has the whole
-// word (a word hit would otherwise bypass the single-char override).
-// Keys are simplified because matching runs after t2cn. localStorage
-// bw_tts_tw="0" turns the overlay off.
-export const TW_LEXICON = `期 q i 2 2
-质 zh ir 2 2
-识 sh ir 4 4
-息 x i 2 2
-击 j i 2 2
-突 t u 2 2
-危 w ei 2 2
-微 w ei 2 2
-企 q i 4 4
-淆 y ao 2 2
-俄 EE e 4 4
-亚 y a 3 3
-骤 z ou 4 4
-携 x i 1 1
-蜗 g ua 1 1
-液 y i 4 4
-血 x ie 3 3
-谁 sh ei 2 2
-究 j iu 4 4
-括 g ua 1 1
-垃圾 l e s e 4 4 4 4
-头发 t ou f a 2 2 3 3
-白发 b ai f a 2 2 3 3
-长发 ch ang f a 2 2 3 3
-角色 j iao s e 3 3 4 4
-主角 zh u j iao 3 3 3 3
-配角 p ei j iao 4 4 3 3
-研究 y En j iu 2 2 4 4
-追究 zh ui j iu 1 1 4 4
-消息 x iao x i 1 1 2 2
-休息 x iu x i 1 1 2 2
-信息 x in x i 4 4 2 2
-期待 q i d ai 2 2 4 4
-时期 sh ir q i 2 2 2 2
-星期 x ing q i 1 1 2 2
-期间 q i j ian 2 2 1 1
-预期 y v q i 4 4 2 2
-期望 q i w ang 2 2 4 4
-学期 x ve q i 2 2 2 2
-日期 r ir q i 4 4 2 2
-早期 z ao q i 3 3 2 2
-长期 ch ang q i 2 2 2 2
-近期 j in q i 4 4 2 2
-质量 zh ir l iang 2 2 4 4
-意识 y i sh ir 4 4 4 4
-认识 r en sh ir 4 4 4 4
-知识 zh ir sh ir 1 1 4 4
-打击 d a j i 3 3 2 2
-冲击 ch ong j i 1 1 2 2
-冲突 ch ong t u 1 1 2 2
-稍微 sh ao w ei 1 1 2 2
-血液 x ie y i 3 3 4 4
-鲜血 x ian x ie 1 1 3 3
-说服 sh ui f u 4 4 2 2
-曝光 p u g uang 4 4 1 1
-包括 b ao g ua 1 1 1 1`;
-
 export const addBlank = (x) => {
   const out = new Array(x.length * 2 + 1).fill(0);
   for (let i = 0; i < x.length; i++) out[i * 2 + 1] = x[i];
@@ -269,7 +200,7 @@ onmessage = async (e) => {
 export const RATE = 44100; // melo's export; onnx metadata is unreadable from ort-web
 
 // what init actually decided — the player's flight recorder reads this
-export const engineInfo = { threads: 0, tw: true };
+export const engineInfo = { threads: 0 };
 
 let engine = null; // singleton promise — model stays loaded across sessions
 
@@ -289,10 +220,8 @@ export function ensureEngine() {
       cachedBuf("/api/wasmtts/melo-lexicon.txt"),
       import("/vendor/opencc-t2cn.js"),
     ]);
-    const tw = localStorage.getItem("bw_tts_tw") !== "0";
     const lex = parseMeloLexicon(
-      new TextDecoder().decode(tokTxt),
-      (tw ? TW_LEXICON + "\n" : "") + new TextDecoder().decode(lexTxt));
+      new TextDecoder().decode(tokTxt), new TextDecoder().decode(lexTxt));
     const t2cn = OpenCC.Converter({ from: "tw", to: "cn" });
     const worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
     const pending = new Map();
@@ -316,8 +245,7 @@ export function ensureEngine() {
     });
     if (up === null) { worker.terminate(); throw new Error("wasm-tts init failed"); }
     engineInfo.threads = threads;
-    engineInfo.tw = tw;
-    console.log(`wasm-tts ready: melo fp32, ${threads} thread(s), tw readings ${tw ? "on" : "off"}`);
+    console.log(`wasm-tts ready: melo fp32, ${threads} thread(s)`);
 
     // Synthesize one chunk's prompt text as a stream of sentence-sized
     // units. onUnit({blob|buf, secs, frac0, frac1}) — fracs are the unit's
