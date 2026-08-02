@@ -28,6 +28,13 @@ const BUNDLES = [
   { pkg: "@diffusionstudio/piper-wasm", src: "build/piper_phonemize.wasm", dst: "wasmtts/piper_phonemize.wasm" },
   // UMD build: the page's inference worker loads it via importScripts
   { pkg: "onnxruntime-web", src: "dist/ort.min.js", dst: "wasmtts/ort-umd.min.js" },
+  // the 後端=webgpu experiment rides a NEWER ort (aliased package): its
+  // webgpu EP matured well past 1.18. UMD for importScripts, plus the
+  // ASYNCIFY loader mjs that wasmPaths points at — 1.27's webgpu lives in
+  // the asyncify build, not the legacy jsep one (webgpuInit only exists
+  // there). The 24MB asyncify wasm is a release asset like the rest.
+  { pkg: "onnxruntime-web-gpu", src: "dist/ort.webgpu.min.js", dst: "wasmtts/ort-webgpu.min.js" },
+  { pkg: "onnxruntime-web-gpu", src: "dist/ort-wasm-simd-threaded.asyncify.mjs", dst: "wasmtts/ort-wasm-simd-threaded.asyncify.mjs" },
 ];
 
 mkdirSync(outDir, { recursive: true });

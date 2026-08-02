@@ -459,7 +459,7 @@ const WASMTTS_FILES = new Set([
   "zh_CN-huayan-x_low.onnx", "zh_CN-huayan-x_low.onnx.json",
   "zh_CN-huayan-medium.onnx", "zh_CN-huayan-medium.onnx.json",
   "melo-zh_en.onnx", "melo-zh_en.int8.onnx", "melo-lexicon.txt", "melo-tokens.txt",
-  "piper_phonemize.data", "ort-wasm-simd.wasm",
+  "piper_phonemize.data", "ort-wasm-simd.wasm", "ort-wasm-simd-threaded.asyncify.wasm",
 ]);
 
 async function serveWasmttsAsset(path) {

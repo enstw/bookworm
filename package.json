@@ -26,6 +26,7 @@
     "@diffusionstudio/piper-wasm": "1.0.0",
     "fflate": "^0.8.3",
     "onnxruntime-web": "1.18.0",
+    "onnxruntime-web-gpu": "npm:onnxruntime-web@1.27.0",
     "opencc-js": "^1.4.1",
     "wrangler": "^4.114.0"
   }

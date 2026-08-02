@@ -68,6 +68,8 @@
       不足 1 的語音（melo）鎖屏會斷 — 勾「先全部合成再播」，合成時開著螢幕，
       出聲後再鎖屏。</li>
     <li>標點停頓由頁面統一插入（模型尾端靜音先剪掉再補），兩引擎一致。</li>
+    <li>「後端 webgpu」把推理搬上 GPU（ort 1.27 jsep）— 同一語音兩個後端
+      各跑一次「短句」，×N 直接對比；不支援的算子自動退回 CPU，數字已含。</li>
   </ol>
   <p>時間軸同步上傳：<code>/api/testlog?page=wasmtest</code>；♥ 心跳每 5 秒。</p>
 
@@ -77,6 +79,10 @@
       <option value="x_low">華言 x_low（20MB·無聲調）</option>
       <option value="melo8">MeloTTS int8（51MB）</option>
       <option value="melo32">MeloTTS fp32（163MB）</option>
+    </select>
+    <select id="epSel">
+      <option value="wasm" selected>後端 wasm（CPU）</option>
+      <option value="webgpu">後端 webgpu</option>
     </select>
     <button id="bPrep">準備引擎</button>
     <button id="bClear">清除快取</button>
@@ -193,14 +199,29 @@ onmessage = async (e) => {
   const m = e.data;
   try {
     if (m.type === "init") {
-      importScripts(m.base + "/vendor/wasmtts/ort-umd.min.js");
-      rt = self.ort;
+      let extra = "";
+      const wasmURL = URL.createObjectURL(new Blob([m.wasm], { type: "application/wasm" }));
+      let opts;
+      if (m.ep === "webgpu") {
+        if (!self.navigator.gpu) throw new Error("worker 無 WebGPU（此平台不給 worker GPU）");
+        const ad = await self.navigator.gpu.requestAdapter();
+        if (!ad) throw new Error("requestAdapter 回 null");
+        extra = "，GPU " + (ad.info ? (ad.info.vendor + " " + ad.info.architecture) : "adapter ok");
+        importScripts(m.base + "/vendor/wasmtts/ort-webgpu.min.js");
+        rt = self.ort;
+        rt.env.wasm.wasmPaths = { mjs: m.base + "/vendor/wasmtts/ort-wasm-simd-threaded.asyncify.mjs", wasm: wasmURL };
+        opts = { executionProviders: ["webgpu"] };
+      } else {
+        importScripts(m.base + "/vendor/wasmtts/ort-umd.min.js");
+        rt = self.ort;
+        rt.env.wasm.wasmPaths = { "ort-wasm-simd.wasm": wasmURL };
+        opts = undefined;
+      }
       kind = m.kind;
       rt.env.wasm.numThreads = 1;
-      rt.env.wasm.wasmPaths = { "ort-wasm-simd.wasm": URL.createObjectURL(new Blob([m.wasm], { type: "application/wasm" })) };
       const t = performance.now();
-      session = await rt.InferenceSession.create(new Uint8Array(m.model));
-      postMessage({ type: "ready", ms: performance.now() - t });
+      session = await rt.InferenceSession.create(new Uint8Array(m.model), opts);
+      postMessage({ type: "ready", ms: performance.now() - t, extra });
     } else if (m.type === "synth") {
       const t = performance.now();
       const feeds = kind === "melo"
@@ -233,25 +254,32 @@ let meloLex = null;     // { tok: Map, lex: Map } — shared by both melo voices
 let t2cn = null;
 let worker = null;
 let ready = null;
+let lastWorkerErr = "";
+let mainGpu = null;     // { rt, session } — webgpu on the main thread, for
+                        // platforms that give the page a GPU but not workers
 const pending = new Map();
 
-voiceSel.onchange = () => {
+const epSel = document.getElementById("epSel");
+function resetEngine(why) {
   stopAll();
   worker?.terminate();
   // release anything awaiting the dead worker, or a stale speak() run's
   // await would hang on a promise nobody can settle
   for (const [, r] of pending) r(null);
   pending.clear();
-  worker = null; ready = null; config = null;
-  log(`語音切換 → ${voice().label}`);
-};
+  worker = null; ready = null; config = null; mainGpu = null;
+  log(why);
+}
+voiceSel.onchange = () => resetEngine(`語音切換 → ${voice().label}`);
+epSel.onchange = () => resetEngine(`後端切換 → ${epSel.value}`);
 
 function ensureEngine() {
   return ready ??= (async () => {
     navigator.storage?.persist?.().catch(() => {});
     const v = voice();
+    const ep = epSel.value;
     const t = performance.now();
-    const jobs = [cachedBuf(v.model), cachedBuf("ort-wasm-simd.wasm")];
+    const jobs = [cachedBuf(v.model), cachedBuf(ep === "webgpu" ? "ort-wasm-simd-threaded.asyncify.wasm" : "ort-wasm-simd.wasm")];
     if (v.frontend === "piper") {
       jobs.push(cachedBuf(v.cfg), piperData ? null : cachedBuf("piper_phonemize.data"));
     } else {
@@ -278,10 +306,11 @@ function ensureEngine() {
     worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
     worker.onmessage = (e) => {
       const m = e.data;
-      if (m.type === "ready") { log(`模型載入 ${(m.ms / 1000).toFixed(1)}s（合計 ${((performance.now() - t) / 1000).toFixed(1)}s）`); pending.get("ready")?.(); }
+      if (m.type === "ready") { log(`模型載入 ${(m.ms / 1000).toFixed(1)}s（合計 ${((performance.now() - t) / 1000).toFixed(1)}s${m.extra ?? ""}）`); pending.get("ready")?.(); }
       else if (m.type === "pcm") { pending.get(m.k)?.(m); pending.delete(m.k); }
       else if (m.type === "err") {
         log(`worker 錯誤 ${m.msg}`);
+        lastWorkerErr = m.msg;
         pending.get(m.k)?.(null);
         pending.delete(m.k);
         // an init-time error has no k: release the waiting ensureEngine so
@@ -291,16 +320,83 @@ function ensureEngine() {
     };
     worker.onerror = (e) => log(`worker error ${e.message}`);
     const up = new Promise((r) => pending.set("ready", r));
-    worker.postMessage({ type: "init", base: location.origin, kind: v.frontend, model, wasm: ortWasm }, [model, ortWasm]);
-    await up;
+    worker.postMessage({ type: "init", base: location.origin, kind: v.frontend, ep, model, wasm: ortWasm }, [model, ortWasm]);
+    // the "ready" resolver hands back null when init errored — surface that
+    // as a failure here, or speak() would march on into a session-less worker
+    if ((await up) === null) {
+      // Safari 26 gives the page WebGPU but (unlike Chrome) not dedicated
+      // workers — fall back to a main-thread session so the phone still
+      // produces an RTF number. GPU-bound run() mostly yields, but expect
+      // some UI jank during synthesis. The buffers were transferred to the
+      // dead worker, so re-fetch from cache.
+      if (ep === "webgpu" && lastWorkerErr.includes("無 WebGPU")) {
+        worker.terminate(); worker = null;
+        log("worker 無 WebGPU — 改在主執行緒跑（合成中 UI 可能卡）");
+        const [m2, w2] = await Promise.all([cachedBuf(v.model), cachedBuf("ort-wasm-simd-threaded.asyncify.wasm")]);
+        await mainGpuInit(m2, w2);
+      } else {
+        throw new Error("引擎初始化失敗（見上方 worker 錯誤）");
+      }
+    }
     navigator.storage?.estimate?.().then((e) => log(`儲存用量 ${((e.usage ?? 0) / 1048576).toFixed(0)}MB`));
   })().catch((e) => { ready = null; log(`準備失敗 ${e.message}`); throw e; });
 }
-function synthInWorker(k, unit) {
+async function mainGpuInit(model, ortWasm) {
+  if (!globalThis.ort) {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "/vendor/wasmtts/ort-webgpu.min.js";
+      s.onload = res;
+      s.onerror = () => rej(new Error("ort-webgpu.min.js 載入失敗"));
+      document.head.append(s);
+    });
+  }
+  const rt = globalThis.ort;
+  rt.env.wasm.numThreads = 1;
+  rt.env.wasm.wasmPaths = {
+    mjs: location.origin + "/vendor/wasmtts/ort-wasm-simd-threaded.asyncify.mjs",
+    wasm: URL.createObjectURL(new Blob([ortWasm], { type: "application/wasm" })),
+  };
+  const t = performance.now();
+  const session = await rt.InferenceSession.create(new Uint8Array(model), { executionProviders: ["webgpu"] });
+  log(`模型載入（主執行緒 webgpu）${((performance.now() - t) / 1000).toFixed(1)}s`);
+  mainGpu = { rt, session };
+}
+
+// feed shapes mirror WORKER_SRC exactly — the worker owns the normal path,
+// this one only exists for page-GPU-but-no-worker-GPU platforms
+async function synthesize(k, unit) {
   const { noise_scale, length_scale, noise_w } = config.inference;
+  const scales = [noise_scale, length_scale, noise_w];
+  if (mainGpu) {
+    const { rt, session } = mainGpu;
+    const t = performance.now();
+    const feeds = voice().frontend === "melo"
+      ? {
+          x: new rt.Tensor("int64", unit.ids, [1, unit.ids.length]),
+          x_lengths: new rt.Tensor("int64", [unit.ids.length]),
+          tones: new rt.Tensor("int64", unit.tones, [1, unit.tones.length]),
+          sid: new rt.Tensor("int64", [1]),
+          noise_scale: new rt.Tensor("float32", [scales[0]]),
+          length_scale: new rt.Tensor("float32", [scales[1]]),
+          noise_scale_w: new rt.Tensor("float32", [scales[2]]),
+        }
+      : {
+          input: new rt.Tensor("int64", unit.ids, [1, unit.ids.length]),
+          input_lengths: new rt.Tensor("int64", [unit.ids.length]),
+          scales: new rt.Tensor("float32", scales),
+        };
+    try {
+      const out = await session.run(feeds);
+      return { pcm: new Float32Array((out.output ?? out.y).data), ms: performance.now() - t };
+    } catch (e) {
+      log(`主執行緒合成錯誤 ${e.message}`);
+      return null;
+    }
+  }
   return new Promise((r) => {
     pending.set(k, r);
-    worker.postMessage({ type: "synth", k, ids: unit.ids, tones: unit.tones, scales: [noise_scale, length_scale, noise_w] });
+    worker.postMessage({ type: "synth", k, ids: unit.ids, tones: unit.tones, scales });
   });
 }
 
@@ -583,7 +679,7 @@ async function speak(text, tag) {
   };
   for (const item of items) {
     if (token !== run) return;
-    const r = await synthInWorker(`s${++synthSeq}`, item);
+    const r = await synthesize(`s${++synthSeq}`, item);
     if (!r || token !== run) { if (!r) log("子句合成失敗"); continue; }
     const pcm = trimTail(r.pcm, rate);
     const gap = new Float32Array(Math.floor(rate * (PAUSE_MS[item.punct] ?? (item.punct ? 300 : 80)) / 1000));
