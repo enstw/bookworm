@@ -1,39 +1,37 @@
 // Unit test for the offline TTS frontend (public/wasm-tts.mjs pure parts):
-// lexicon parsing, greedy longest match with per-char fallback, punctuation
-// aliases, AddBlank shape, source-length accounting (position mapping), and
-// the PCM helpers. No browser APIs — plain node.
+// clause splitting for pause control, orphan-punct folding, espeak→model id
+// remapping with structural 0/1/2 pass-through and miss counting, and the
+// PCM helpers. No browser APIs — plain node.
 //
 //   node scripts/test-wasm-frontend.mjs
 
-import { parseMeloLexicon, lexItems, addBlank, trimTail, mkWav, PAUSE_MS, UNIT_ENDERS, RATE }
+import { clauses, remapIds, trimTail, mkWav, PAUSE_MS, UNIT_ENDERS, RATE }
   from "../public/wasm-tts.mjs";
 
 const out = {};
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-// tiny melo-format fixture: word phone… tone… (equal counts)
-const TOKS = "_ 0\nn 1\ni 2\nh 3\nao 4\n, 5\n. 6\nma 7\n";
-const LEX = "你好 n i h ao 2 2 3 3\n你 n i 2 2\n好 h ao 3 3\n吗 ma 5\n母 ma 3\n恩 n 1\n";
-const ld = parseMeloLexicon(TOKS, LEX);
+// clause per mark, the mark stays with its clause, the tail keeps its text
+out.clauses = eq(clauses("你好，好嗎。再見"), [
+  { text: "你好", punct: "，" },
+  { text: "好嗎", punct: "。" },
+  { text: "再見", punct: "" },
+]) ? "ok (split, punct kept, bare tail)" : `FAIL ${JSON.stringify(clauses("你好，好嗎。再見"))}`;
 
-out.parse = ld.lex.get("你好") && ld.tok.get("，") === 5 && ld.tok.get("。") === 6
-  ? "ok (word entry, full-width punct aliases)"
-  : `FAIL 你好=${JSON.stringify(ld.lex.get("你好"))} ，=${ld.tok.get("，")}`;
+// a clause that trims to nothing folds its mark into the previous clause
+out.orphanPunct = eq(clauses("甲， ，乙"), [
+  { text: "甲", punct: "，" },
+  { text: "乙", punct: "" },
+]) && clauses("甲， ，乙")[0] // fold happened, mark not lost
+  ? "ok (orphan mark folds back)" : `FAIL ${JSON.stringify(clauses("甲， ，乙"))}`;
 
-// word match beats per-char, punct token stays inside its clause, len sums
-// to the full text, only the last item flushes
-const items = lexItems("你好，好吗。", ld);
-const i0 = items[0], i1 = items[1];
-out.items =
-  items.length === 2 &&
-  eq(i0.ids, addBlank([1, 2, 3, 4, 5])) && eq(i0.tones, addBlank([2, 2, 3, 3, 0])) &&
-  i0.punct === "，" && i0.len === 3 && !i0.flush &&
-  eq(i1.ids, addBlank([3, 4, 7, 6])) && i1.punct === "。" && i1.len === 3 && i1.flush
-    ? "ok (word match, aliases, len, flush)"
-    : `FAIL ${JSON.stringify(items)}`;
-
-out.addBlank = eq(addBlank([7]), [0, 7, 0]) && eq(addBlank([]), [0])
-  ? "ok" : `FAIL ${JSON.stringify(addBlank([7]))}`;
+// ids walk the phoneme strings in lockstep; 0/1/2 are structural and consume
+// no phoneme; a symbol the model lacks is dropped and counted
+const MAP = { a: [40], b: [41] };
+out.remap = eq(remapIds(MAP, [1, 90, 91, 2], ["a", "b"]), { ids: [1, 40, 41, 2], miss: 0 })
+  && eq(remapIds(MAP, [1, 90, 91, 2], ["a", "zz"]), { ids: [1, 40, 2], miss: 1 })
+  ? "ok (lockstep remap, miss counted)"
+  : `FAIL ${JSON.stringify(remapIds(MAP, [1, 90, 91, 2], ["a", "zz"]))}`;
 
 // 1 s of tone then 1 s of silence → tail cut to 80 ms of the silence
 const f32 = new Float32Array(RATE * 2);

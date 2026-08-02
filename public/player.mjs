@@ -19,7 +19,7 @@
 //   locked, and the system keeps the page alive to buffer ahead.
 // - CHAIN (everything else): the double-buffered element swap. Chrome and
 //   Firefox happily chain play() from the `ended` handler in background.
-// - WASM (offline, wasm-tts.mjs): in-browser MeloTTS — no network after the
+// - WASM (offline, wasm-tts.mjs): in-browser piper 華言 — no network after the
 //   one-time voice pack download. Selected automatically when the pack is
 //   in the cache (downloaded by /wasmtest, never by the reader — ▶ must
 //   not quietly pull 180 MB over cellular); localStorage bw_tts="stream"
@@ -44,7 +44,7 @@ let wasmOn = false;
 const useWasm = () => wasmOn;
 wasmTts.packReady().then((r) => {
   wasmOn = r && localStorage.getItem("bw_tts") !== "stream";
-  console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline melo)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
+  console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline huayan)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
 });
 
 // reader internals, injected once by app.js
@@ -577,7 +577,7 @@ function streamAdvanceChunk(d) {
   streamPlayFrom(ci, 0);
 }
 
-// ---------- WASM engine (offline melo, wasm-tts.mjs) ----------
+// ---------- WASM engine (offline huayan, wasm-tts.mjs) ----------
 //
 // Synthesis streams sentence-sized WAV units into `queue`; playback chains
 // them through the same two chain elements with strict alternation (the

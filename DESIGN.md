@@ -162,28 +162,33 @@ the pre-publication history, which lives in the owner's private archive.
   which is how the Workers-AI MeloTTS breakage was confirmed. Rejected
   alternatives: Web Speech API (iOS pauses it on lock), Azure/OpenAI TTS
   (~$200/novel).
-- **Offline TTS (2026-08-02).** `wasm-tts.mjs` runs MeloTTS-zh fp32 under
-  onnxruntime-web in a Worker: lexicon frontend (opencc t2cn → greedy
-  longest match → AddBlank), page-spliced punctuation pauses — ×1.7
-  realtime on the phone with 4 wasm threads. (A 台灣讀音 lexicon overlay
-  shipped briefly and was removed 2026-08-03 — mainland-model readings
-  stay stock until a real zh_TW voice exists; the vetted word list lives
-  in git history as TW_LEXICON.) The worker lame-encodes each sentence unit
-  to mp3 and playback appends them to ONE ManagedMediaSource timeline
-  (plain MediaSource on Chrome, so the same path is testable headless):
-  chain-swapping blob WAVs died after ~5 min locked with a play() that
-  never settled — no new-element play() survives the lock screen
-  long-term, same lesson as the STREAM engine. The engine's flight
-  recorder mirrors the timeline to `/api/testlog?page=player`. Threads
-  need `crossOriginIsolated`: `public/_headers` puts COOP/COEP on every
-  page. The ~180 MB voice pack is downloaded ONLY by
-  the `/wasmtest` diagnostic (never by ▶ — cellular) into the
-  `bw-wasmtts` cache both pages share; `packReady()` flips the reader to
-  this engine, eviction falls back to STREAM, `localStorage
-  bw_tts="stream"` forces the online engines. Model binaries come from
-  the `wasmtts-assets-v1` GitHub release via the allowlisted
-  `/api/wasmtts/` proxy. The fanchen-C voice (faster, 187 speakers,
-  zhuyin lexicon) stayed a diagnostic option — melo won by ear.
+- **Offline TTS (2026-08-02, voice swapped 2026-08-03).** `wasm-tts.mjs`
+  runs piper 華言 (zh_CN-huayan-medium) under onnxruntime-web in a Worker,
+  ONE thread: espeak phonemize on the main thread (piper_phonemize wasm,
+  `-l cmn` reads traditional text — no opencc), ids remapped through the
+  model's own phoneme_id_map, page-spliced punctuation pauses (espeak ate
+  the commas, so the model never learned a pause). MeloTTS fp32 shipped
+  first — ×1.7 realtime needed 4 wasm threads, which cooked the phone
+  (user 08-03), so melo and the `bw_tts_threads` knob went; huayan medium
+  holds realtime single-threaded. The melo engine incl. the vetted
+  台灣讀音 overlay lives in git history (`git show
+  1bc494f:public/wasm-tts.mjs`) until a real zh_TW voice exists. The
+  worker lame-encodes each sentence unit to mp3 and playback appends them
+  to ONE ManagedMediaSource timeline (plain MediaSource on Chrome, so the
+  same path is testable headless): chain-swapping blob WAVs died after
+  ~5 min locked with a play() that never settled — no new-element play()
+  survives the lock screen long-term, same lesson as the STREAM engine.
+  The engine's flight recorder mirrors the timeline to
+  `/api/testlog?page=player`. `public/_headers` keeps COOP/COEP on every
+  page for the /wasmtest thread experiments, but the reader no longer
+  needs isolation. The ~60 MB voice pack (model + config +
+  piper_phonemize.data) is downloaded ONLY by the `/wasmtest` diagnostic
+  (never by ▶ — cellular) into the `bw-wasmtts` cache both pages share;
+  `packReady()` flips the reader to this engine, eviction falls back to
+  STREAM, `localStorage bw_tts="stream"` forces the online engines. Model
+  binaries come from the `wasmtts-assets-v1` GitHub release via the
+  allowlisted `/api/wasmtts/` proxy. The fanchen-C voice (faster, 187
+  speakers, zhuyin lexicon) stayed a diagnostic option.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:
