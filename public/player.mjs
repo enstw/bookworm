@@ -130,6 +130,9 @@ function makeAudio() {
     updatePlayerBar();
   }));
   a.addEventListener("pause", active(() => {
+    // a pause that is not the unit finishing = someone (iOS?) stopped us
+    if (useWasm() && !a.ended && a.currentSrc.startsWith("blob:"))
+      wlog(`句${wasm.nextPlay} 暫停 @${a.currentTime.toFixed(1)}/${(a.duration || 0).toFixed(1)}s vis=${document.visibilityState}`);
     player.playing = false;
     if (msn) msn.playbackState = "paused";
     updatePlayerBar();
@@ -139,7 +142,14 @@ function makeAudio() {
   // the unlock silence also ends — it must not advance the narration
   a.addEventListener("ended", active(() => {
     if (a.currentSrc.startsWith("data:")) return;
-    if (useWasm()) { wasm.active = false; wasmTrim(); wasmPump(); return; }
+    if (useWasm()) {
+      wlog(`句${wasm.nextPlay} 播畢 vis=${document.visibilityState}`);
+      wasm.active = false;
+      wasm.wake?.(); // synthesis may be sleeping on backpressure — refill now
+      wasmTrim();
+      wasmPump();
+      return;
+    }
     advanceChunk(1);
   }));
   a.addEventListener("error", () => {
@@ -261,6 +271,7 @@ function playerPlayPause() {
 }
 
 export function closePlayer() {
+  if (useWasm() && wasm.queue.length) wlog("關閉");
   player.on = false;
   player.playing = false;
   player.chapIdx = -1;
@@ -558,10 +569,57 @@ export const wasm = {
   synthDone: false,  // book finished synthesizing; drain then closePlayer
   cur: null,         // unit currently playing (position mapping)
   pendingOpen: false, // chapter crossed while hidden; DOM catches up on show
+  wake: null,        // resolver that un-sleeps backpressured synthesis NOW
 };
+
+// ---- flight recorder ----------------------------------------------------
+// Background/lock behaviour only exists on the phone and the phone has no
+// console: while the wasm engine drives, mirror the /wasmtest timeline into
+// /api/testlog (page=player) — unit synth ×N, play()/播畢 with visibility,
+// queue depth heartbeat. A log that stops mid-line with no error is itself
+// the diagnosis (iOS killed or suspended the page). Read back with
+// /api/testlog?page=player.
+const wlog = (() => {
+  let buf = [], timer = 0, t0 = 0, device = "";
+  try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
+  const flush = () => {
+    timer = 0;
+    if (!buf.length) return;
+    const body = JSON.stringify({ page: "player", device, data: buf.join("\n") });
+    buf = [];
+    try {
+      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
+        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+    } catch { /* offline is fine */ }
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (!t0) return; // never used — stay silent
+    line("vis=" + document.visibilityState);
+    if (document.visibilityState === "hidden") { clearTimeout(timer); flush(); }
+  });
+  addEventListener("pagehide", () => { if (t0) { clearTimeout(timer); flush(); } });
+  function line(s) {
+    if (!t0) t0 = performance.now();
+    buf.push(((performance.now() - t0) / 1000).toFixed(1) + "s " + s);
+    if (!timer) timer = setTimeout(flush, 1500);
+  }
+  return line;
+})();
+
+let wasmHb = 0;
+function wasmHbStart() {
+  if (wasmHb) return;
+  wasmHb = setInterval(() => {
+    if (!player.on || !useWasm()) { clearInterval(wasmHb); wasmHb = 0; return; }
+    const a = player.audio;
+    wlog(`♥ vis=${document.visibilityState} 播=${player.playing && wasm.cur ? `句${wasm.nextPlay} ${a?.currentTime.toFixed(0)}s/${wasm.cur.secs.toFixed(0)}s` : "無"} 佇${wasm.queue.length - wasm.nextPlay}(${Math.round(wasmQueuedSecs())}s) ${wasm.synthDone ? "合成畢" : "合成中"}`);
+  }, 10000);
+}
 
 function wasmTeardown() {
   wasm.gen++;
+  wasm.wake?.();
+  wasm.wake = null;
   for (const u of wasm.queue) URL.revokeObjectURL(u.url);
   wasm.queue = [];
   wasm.nextPlay = 0;
@@ -592,6 +650,8 @@ function wasmPlayFrom(ci, off) {
   player.status = "loading"; // first audio lands when unit 1 is synthesized
   updatePlayerBar();
   setMediaSession();
+  wlog(`start ci${ci} k${player.chunkIdx} off${off}`);
+  wasmHbStart();
   wasmSynthLoop(gen, ci, chunks, player.chunkIdx);
 }
 
@@ -602,10 +662,12 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
   let eng;
   try {
     eng = await wasmTts.ensureEngine();
+    wlog(`引擎 ${wasmTts.engineInfo.threads}緒 tw=${wasmTts.engineInfo.tw} isolated=${crossOriginIsolated}`);
   } catch (e) {
     // pack half-evicted or init failure: this device cannot run the engine
     // now — fall back to the online engines for the rest of the session
     console.warn("wasm-tts unavailable, falling back:", e);
+    wlog(`引擎失敗 ${e?.message ?? e} → 回線上引擎`);
     wasmOn = false;
     if (player.on && gen === wasm.gen) playFrom(state.idx, state.off);
     return;
@@ -631,18 +693,28 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
           start: c.start + Math.round(u.frac0 * c.chars),
           chars: Math.max(1, Math.round((u.frac1 - u.frac0) * c.chars)),
         });
+        wlog(`句${wasm.queue.length} 合成${(u.ms / 1000).toFixed(1)}s → 音${u.secs.toFixed(1)}s ×${(u.secs * 1000 / (u.ms || 1)).toFixed(1)} vis=${document.visibilityState}`);
         wasmPump();
-        while (gen === wasm.gen && wasmQueuedSecs() > 90)
-          await new Promise((r) => setTimeout(r, 1000));
+        // ≲90 s synthesized ahead. Sleep on a timer AND a wake handle: iOS
+        // throttles background timers, but `ended` pings wake directly, so
+        // refill stays event-driven no matter what the clock does.
+        let slept = false;
+        while (gen === wasm.gen && wasmQueuedSecs() > 90) {
+          slept = true;
+          await new Promise((r) => { wasm.wake = r; setTimeout(r, 1000); });
+          wasm.wake = null;
+        }
+        if (slept && gen === wasm.gen) wlog(`合成續 佇${Math.round(wasmQueuedSecs())}s vis=${document.visibilityState}`);
         return gen === wasm.gen;
       });
       if (!ok || gen !== wasm.gen) return;
       k += 1;
     }
-    if (gen === wasm.gen) { wasm.synthDone = true; wasmPump(); }
+    if (gen === wasm.gen) { wasm.synthDone = true; wlog("全書合成畢"); wasmPump(); }
   } catch (e) {
     if (gen !== wasm.gen) return;
     console.warn("wasm-tts synth:", e);
+    wlog(`合成錯誤 ${e?.message ?? e}`);
     player.status = "error";
     updatePlayerBar();
   }
@@ -665,9 +737,10 @@ function wasmPump() {
   wasm.nextPlay++;
   wasm.active = true;
   a.src = u.url;
+  const n = wasm.nextPlay;
   a.play().then(
-    () => { player.status = ""; updatePlayerBar(); },
-    () => { player.status = "error"; updatePlayerBar(); retryOnVisible(); },
+    () => { wlog(`句${n} play() ok 音${u.secs.toFixed(1)}s vis=${document.visibilityState}`); player.status = ""; updatePlayerBar(); },
+    (e) => { wlog(`句${n} play() 拒 ${e?.name} vis=${document.visibilityState}`); player.status = "error"; updatePlayerBar(); retryOnVisible(); },
   );
   wasmPosition(u);
   updatePlayerBar();

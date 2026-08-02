@@ -764,7 +764,8 @@ async function speak(text, tag) {
   if (!items.length) throw new Error("前端無輸出");
   const rate = config.audio.sample_rate;
   const presynth = $("presynth").checked;
-  log(`${tag} ${v.label} 分段${chunks.length} → 子句${items.length}，前端 ${((performance.now() - tp) / 1000).toFixed(1)}s${phMiss ? `（丟符號 ${phMiss}）` : ""}${presynth ? "（先合成再播）" : ""}`);
+  const sidNote = v.frontend === "vits" ? `〔說話人 ${$("sidIn").value}〕` : "";
+  log(`${tag} ${v.label}${sidNote} 分段${chunks.length} → 子句${items.length}，前端 ${((performance.now() - tp) / 1000).toFixed(1)}s${phMiss ? `（丟符號 ${phMiss}）` : ""}${presynth ? "（先合成再播）" : ""}`);
   let audioS = 0, synthS = 0, unitK = 0, synthSeq = 0;
   let acc = [], accLen = 0, accMs = 0;
   const emit = () => {
