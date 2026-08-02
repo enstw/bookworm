@@ -187,8 +187,11 @@ the pre-publication history, which lives in the owner's private archive.
   `packReady()` flips the reader to this engine, eviction falls back to
   STREAM, `localStorage bw_tts="stream"` forces the online engines. Model
   binaries come from the `wasmtts-assets-v1` GitHub release via the
-  allowlisted `/api/wasmtts/` proxy. The fanchen-C voice (faster, 187
-  speakers, zhuyin lexicon) stayed a diagnostic option.
+  allowlisted `/api/wasmtts/` proxy. The fanchen-C voice (187 speakers,
+  zhuyin lexicon) stayed a diagnostic option — faster than melo, but ~7×
+  the CPU of huayan-medium per audio second (measured ×1.1 vs ×7.6
+  realtime, single wasm thread, desktop 08-03): on the phone it would
+  need the multi-thread path huayan exists to avoid.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:
