@@ -28,6 +28,12 @@ const BUNDLES = [
   { pkg: "@diffusionstudio/piper-wasm", src: "build/piper_phonemize.wasm", dst: "wasmtts/piper_phonemize.wasm" },
   // UMD build: the page's inference worker loads it via importScripts
   { pkg: "onnxruntime-web", src: "dist/ort.min.js", dst: "wasmtts/ort-umd.min.js" },
+  // mp3 encoder for the offline TTS engine: iOS only keeps lock-screen
+  // audio alive on ONE continuous ManagedMediaSource timeline, and MSE
+  // does not eat WAV — the synth worker encodes each unit to mp3 frames.
+  // importScripts-style global (the npm main entry has the MPEGMode bug;
+  // this bundle is self-contained). LGPL-2.1 — see node_modules/lamejs/LICENSE.
+  { pkg: "lamejs", src: "lame.min.js", dst: "wasmtts/lame.min.js" },
   // the 後端=webgpu experiment rides a NEWER ort (aliased package): its
   // webgpu EP matured well past 1.18. UMD for importScripts, plus the
   // ASYNCIFY loader mjs that wasmPaths points at — 1.27's webgpu lives in

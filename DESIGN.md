@@ -164,11 +164,17 @@ the pre-publication history, which lives in the owner's private archive.
   (~$200/novel).
 - **Offline TTS (2026-08-02).** `wasm-tts.mjs` runs MeloTTS-zh fp32 under
   onnxruntime-web in a Worker: native-accent lexicon frontend (opencc
-  t2cn → greedy longest match → AddBlank), page-spliced punctuation
-  pauses, sentence-sized WAV units chained through the CHAIN elements —
-  measured ×1.7 realtime on the phone with 4 wasm threads, lock-screen
-  clean. Threads need `crossOriginIsolated`: `public/_headers` puts
-  COOP/COEP on every page. The ~180 MB voice pack is downloaded ONLY by
+  t2cn → greedy longest match → AddBlank), a 台灣讀音 overlay
+  (TW_LEXICON), page-spliced punctuation pauses — ×1.7 realtime on the
+  phone with 4 wasm threads. The worker lame-encodes each sentence unit
+  to mp3 and playback appends them to ONE ManagedMediaSource timeline
+  (plain MediaSource on Chrome, so the same path is testable headless):
+  chain-swapping blob WAVs died after ~5 min locked with a play() that
+  never settled — no new-element play() survives the lock screen
+  long-term, same lesson as the STREAM engine. The engine's flight
+  recorder mirrors the timeline to `/api/testlog?page=player`. Threads
+  need `crossOriginIsolated`: `public/_headers` puts COOP/COEP on every
+  page. The ~180 MB voice pack is downloaded ONLY by
   the `/wasmtest` diagnostic (never by ▶ — cellular) into the
   `bw-wasmtts` cache both pages share; `packReady()` flips the reader to
   this engine, eviction falls back to STREAM, `localStorage

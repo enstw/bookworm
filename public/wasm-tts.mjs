@@ -224,6 +224,7 @@ onmessage = async (e) => {
   try {
     if (m.type === "init") {
       importScripts(URL.createObjectURL(new Blob([m.ortJs], { type: "text/javascript" })));
+      importScripts(URL.createObjectURL(new Blob([m.lameJs], { type: "text/javascript" })));
       rt = self.ort;
       const wasmURL = URL.createObjectURL(new Blob([m.wasm], { type: "application/wasm" }));
       rt.env.wasm.wasmPaths = { [m.threads > 1 ? "ort-wasm-simd-threaded.wasm" : "ort-wasm-simd.wasm"]: wasmURL };
@@ -243,6 +244,22 @@ onmessage = async (e) => {
       });
       const pcm = new Float32Array(out.y.data);
       postMessage({ type: "pcm", k: m.k, pcm, ms: performance.now() - t }, [pcm.buffer]);
+    } else if (m.type === "mp3") {
+      // one self-contained mp3 stream per unit; frames concatenate cleanly
+      // in a sequence-mode SourceBuffer
+      const f = m.pcm, n = f.length;
+      const i16 = new Int16Array(n);
+      for (let i = 0; i < n; i++) i16[i] = Math.max(-1, Math.min(1, f[i])) * 32767 | 0;
+      const enc = new self.lamejs.Mp3Encoder(1, m.rate, 96);
+      const parts = [];
+      for (let o = 0; o < n; o += 1152) parts.push(enc.encodeBuffer(i16.subarray(o, Math.min(n, o + 1152))));
+      parts.push(enc.flush());
+      let len = 0;
+      for (const p of parts) len += p.length;
+      const buf = new Uint8Array(len);
+      let o = 0;
+      for (const p of parts) { buf.set(p, o); o += p.length; }
+      postMessage({ type: "mp3", k: m.k, buf: buf.buffer }, [buf.buffer]);
     }
   } catch (err) {
     postMessage({ type: "err", k: m.k, msg: String(err?.message ?? err) });
@@ -263,10 +280,11 @@ export function ensureEngine() {
     // bw_tts_threads: battery-vs-speed A/B knob (melo needs ≥2 for realtime)
     const threads = crossOriginIsolated
       ? Math.max(1, Math.min(4, +localStorage.getItem("bw_tts_threads") || navigator.hardwareConcurrency || 1)) : 1;
-    const [model, wasm, ortJs, tokTxt, lexTxt, OpenCC] = await Promise.all([
+    const [model, wasm, ortJs, lameJs, tokTxt, lexTxt, OpenCC] = await Promise.all([
       cachedBuf("/api/wasmtts/melo-zh_en.onnx"),
       cachedBuf("/api/wasmtts/" + (threads > 1 ? "ort-wasm-simd-threaded.wasm" : "ort-wasm-simd.wasm")),
       cachedBuf("/vendor/wasmtts/ort-umd.min.js"),
+      cachedBuf("/vendor/wasmtts/lame.min.js"),
       cachedBuf("/api/wasmtts/melo-tokens.txt"),
       cachedBuf("/api/wasmtts/melo-lexicon.txt"),
       import("/vendor/opencc-t2cn.js"),
@@ -286,24 +304,29 @@ export function ensureEngine() {
       r?.(m.type === "err" ? null : m);
     };
     let seq = 0;
-    const synth = (item) => new Promise((r) => {
+    const call = (msg, transfer) => new Promise((r) => {
       pending.set(++seq, r);
-      worker.postMessage({ type: "synth", k: seq, ids: item.ids, tones: item.tones });
+      worker.postMessage({ ...msg, k: seq }, transfer);
     });
+    const synth = (item) => call({ type: "synth", ids: item.ids, tones: item.tones });
+    const encodeMp3 = (pcm) => call({ type: "mp3", pcm, rate: RATE }, [pcm.buffer]);
     const up = await new Promise((r) => {
       pending.set(undefined, r);
-      worker.postMessage({ type: "init", model, wasm, ortJs, threads }, [model, wasm, ortJs]);
+      worker.postMessage({ type: "init", model, wasm, ortJs, lameJs, threads }, [model, wasm, ortJs, lameJs]);
     });
     if (up === null) { worker.terminate(); throw new Error("wasm-tts init failed"); }
     engineInfo.threads = threads;
     engineInfo.tw = tw;
     console.log(`wasm-tts ready: melo fp32, ${threads} thread(s), tw readings ${tw ? "on" : "off"}`);
 
-    // Synthesize one chunk's prompt text as a stream of sentence-sized WAV
-    // units. onUnit({blob, secs, frac0, frac1}) — fracs are the unit's span
-    // over the prompt (proportional char mapping, like the other engines);
-    // await its return value for backpressure, return false to abort.
-    async function speakChunk(prompt, onUnit) {
+    // Synthesize one chunk's prompt text as a stream of sentence-sized
+    // units. onUnit({blob|buf, secs, frac0, frac1}) — fracs are the unit's
+    // span over the prompt (proportional char mapping, like the other
+    // engines); await its return value for backpressure, return false to
+    // abort. mp3=true yields mp3 frames (unit.buf) for the MediaSource
+    // path instead of a WAV blob — iOS only keeps lock-screen audio on one
+    // continuous timeline, and MSE does not eat WAV.
+    async function speakChunk(prompt, onUnit, mp3 = false) {
       const items = lexItems(t2cn(prompt), lex);
       const total = items.reduce((s, it) => s + it.len, 0) || 1;
       let acc = [], accLen = 0, accMs = 0, accSrc = 0, srcDone = 0;
@@ -313,7 +336,6 @@ export function ensureEngine() {
         let o = 0;
         for (const p of acc) { pcm.set(p, o); o += p.length; }
         const unit = {
-          blob: mkWav(pcm, RATE),
           secs: pcm.length / RATE,
           ms: accMs, // compute time — the flight recorder's ×N
           frac0: srcDone / total,
@@ -321,6 +343,11 @@ export function ensureEngine() {
         };
         acc = []; accLen = 0; accMs = 0;
         srcDone += accSrc; accSrc = 0;
+        if (mp3) {
+          const r = await encodeMp3(pcm); // transfers pcm away
+          if (!r) return true; // encode failure drops the unit, not the book
+          unit.buf = r.buf;
+        } else unit.blob = mkWav(pcm, RATE);
         return (await onUnit(unit)) !== false;
       };
       for (const item of items) {

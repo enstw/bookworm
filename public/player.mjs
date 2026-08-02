@@ -20,19 +20,26 @@
 // - CHAIN (everything else): the double-buffered element swap. Chrome and
 //   Firefox happily chain play() from the `ended` handler in background.
 // - WASM (offline, wasm-tts.mjs): in-browser MeloTTS — no network after the
-//   one-time voice pack download. Chain-style blob-WAV swap on the same two
-//   elements; the /wasmtest rounds proved iOS 26 chains play() from `ended`
-//   across alternating elements under the lock screen, and that ×1.7
-//   realtime synthesis keeps the queue ahead of playback there. Selected
-//   automatically when the pack is in the cache (downloaded by /wasmtest,
-//   never by the reader — ▶ must not quietly pull 180 MB over cellular);
-//   localStorage bw_tts="stream" forces the online engines back.
+//   one-time voice pack download. Selected automatically when the pack is
+//   in the cache (downloaded by /wasmtest, never by the reader — ▶ must
+//   not quietly pull 180 MB over cellular); localStorage bw_tts="stream"
+//   forces the online engines back. Playback rides the SAME MediaSource
+//   discipline as STREAM: the synth worker encodes each unit to mp3 and
+//   the units are appended to one continuous timeline. The chain-swap
+//   variant died on the phone after ~5 min locked — a play() at a unit
+//   boundary just never settled (no resolve, no reject): iOS quietly
+//   withdraws the new-element entitlement, exactly the lesson the STREAM
+//   engine encodes. Blob-WAV chain remains only for browsers with no MSE.
 
 import * as ttsCore from "/tts-core.mjs";
 import * as wasmTts from "/wasm-tts.mjs";
 
 const MMS = globalThis.ManagedMediaSource;
 export const useStream = !!MMS?.isTypeSupported?.("audio/mpeg");
+// the wasm engine can ride plain MediaSource too (desktop Chrome — which
+// also makes the phone's exact playback path testable headless)
+const LocalMS = MMS ?? globalThis.MediaSource;
+const wasmStreamOk = !!LocalMS?.isTypeSupported?.("audio/mpeg");
 let wasmOn = false;
 const useWasm = () => wasmOn;
 wasmTts.packReady().then((r) => {
@@ -74,7 +81,7 @@ export function togglePlayer() {
   // bless the element(s) inside this tap: iOS only lets an element play()
   // outside a gesture (chunk swaps happen on `ended`) after it has played
   // within one — a beat of silence counts
-  if (useStream && !useWasm()) {
+  if (useWasm() ? wasmStreamOk : useStream) {
     ensureStreamEl();
     unlockAudio(stream.el);
   } else {
@@ -100,6 +107,14 @@ export function visibleCatchup() {
     stream.pendingOpen = false;
     wasm.pendingOpen = false;
     openChapter(state.idx, state.off);
+  }
+  // a play() the lock screen left PENDING forever (neither resolved nor
+  // rejected — the 5-minute chain death) re-arms nothing; kick playback
+  // when the user comes back, unless they paused on purpose
+  if (useWasm() && player.on && !player.playing && !wasm.userPaused
+    && (stream.local || wasm.queue.length)) {
+    wlog("visible 恢復踢");
+    wasmReplay();
   }
 }
 
@@ -259,8 +274,14 @@ function advanceChapter(d) {
 }
 
 function playerPlayPause() {
-  const a = useStream && !useWasm() ? stream.el : player.audio;
-  if (player.playing) { a?.pause(); flush(); return; }
+  const a = (useWasm() ? wasmStreamOk : useStream) ? stream.el : player.audio;
+  if (player.playing) {
+    if (useWasm()) { wasm.userPaused = true; wlog("使用者暫停"); }
+    a?.pause();
+    flush();
+    return;
+  }
+  wasm.userPaused = false;
   if (player.status === "error") {
     if (useWasm()) return wasmReplay();
     return useStream ? streamPlayFrom(state.idx, state.off) : playChunk(Math.max(0, player.chunkIdx));
@@ -305,6 +326,7 @@ export const stream = {
   fetching: false,
   pendingOpen: false, // chapter crossed while hidden; DOM catches up on show
   gen: 0,            // rebuild generation — stale async work checks this
+  local: false,      // fed by the wasm engine's mp3 units, not /api/tts
 };
 
 const bufferedEnd = (sb) => (sb.buffered.length ? sb.buffered.end(sb.buffered.length - 1) : 0);
@@ -349,6 +371,7 @@ function streamTeardown() {
   stream.chunksBy.clear();
   stream.fetching = false;
   stream.pendingOpen = false;
+  stream.local = false;
 }
 
 function streamPlayFrom(ci, off) {
@@ -373,6 +396,7 @@ function streamPlayFrom(ci, off) {
 // (re)build the MediaSource and start playing at chunk k of chapter ci
 function streamStart(ci, k) {
   const gen = ++stream.gen;
+  stream.local = false;
   ensureStreamEl();
   stream.sb = null;
   stream.segs = [];
@@ -405,6 +429,7 @@ function streamStart(ci, k) {
 // append the next chunk when the buffer runs low; kicked by sourceopen,
 // updateend, startstreaming, and timeupdate
 async function feedStream(gen) {
+  if (stream.local) return wasmFeedLocal(gen);
   const { sb, ms, el } = stream;
   if (gen !== stream.gen || !sb || sb.updating || stream.fetching) return;
   trimStream();
@@ -506,7 +531,8 @@ function onStreamTime() {
   const chapterCrossed = seg.ci !== player.chapIdx;
   if (chapterCrossed) {
     player.chapIdx = seg.ci;
-    player.chunks = stream.chunksBy.get(seg.ci) ?? player.chunks;
+    // local-feed segs carry their chapter's chunk list (chunksBy is net-only)
+    player.chunks = stream.chunksBy.get(seg.ci) ?? seg.chunks ?? player.chunks;
   }
   if (player.chunkIdx !== seg.k) { player.chunkIdx = seg.k; updatePlayerBar(); }
   if (chapterCrossed) setMediaSession();
@@ -563,13 +589,14 @@ function streamAdvanceChunk(d) {
 
 export const wasm = {
   gen: 0,
-  queue: [],         // {url, secs, ci, k, start, chars, chunks}
-  nextPlay: 0,       // queue index of the next unit to play
-  active: false,     // a unit is in the audio element right now
+  queue: [],         // {buf|url, secs, ci, k, start, chars, chunks}
+  nextPlay: 0,       // queue index of the next unit to append/play
+  active: false,     // chain mode: a unit is in the audio element right now
   synthDone: false,  // book finished synthesizing; drain then closePlayer
-  cur: null,         // unit currently playing (position mapping)
+  cur: null,         // chain mode: unit currently playing (position mapping)
   pendingOpen: false, // chapter crossed while hidden; DOM catches up on show
   wake: null,        // resolver that un-sleeps backpressured synthesis NOW
+  userPaused: false, // deliberate ⏸ — the visible-recovery kick must not undo it
 };
 
 // ---- flight recorder ----------------------------------------------------
@@ -611,8 +638,12 @@ function wasmHbStart() {
   if (wasmHb) return;
   wasmHb = setInterval(() => {
     if (!player.on || !useWasm()) { clearInterval(wasmHb); wasmHb = 0; return; }
-    const a = player.audio;
-    wlog(`♥ vis=${document.visibilityState} 播=${player.playing && wasm.cur ? `句${wasm.nextPlay} ${a?.currentTime.toFixed(0)}s/${wasm.cur.secs.toFixed(0)}s` : "無"} 佇${wasm.queue.length - wasm.nextPlay}(${Math.round(wasmQueuedSecs())}s) ${wasm.synthDone ? "合成畢" : "合成中"}`);
+    const played = stream.local
+      ? (player.playing && stream.el ? `@${stream.el.currentTime.toFixed(0)}s` : "無")
+      : (player.playing && wasm.cur ? `句${wasm.nextPlay} ${player.audio?.currentTime.toFixed(0)}s/${wasm.cur.secs.toFixed(0)}s` : "無");
+    const buffered = stream.local && stream.sb && stream.el
+      ? `緩${Math.max(0, bufferedEnd(stream.sb) - stream.el.currentTime).toFixed(0)}s ` : "";
+    wlog(`♥ vis=${document.visibilityState} 播=${played} ${buffered}佇${wasm.queue.length - wasm.nextPlay}(${Math.round(wasmQueuedSecs())}s) ${wasm.synthDone ? "合成畢" : "合成中"}`);
   }, 10000);
 }
 
@@ -620,13 +651,14 @@ function wasmTeardown() {
   wasm.gen++;
   wasm.wake?.();
   wasm.wake = null;
-  for (const u of wasm.queue) URL.revokeObjectURL(u.url);
+  for (const u of wasm.queue) if (u.url) URL.revokeObjectURL(u.url);
   wasm.queue = [];
   wasm.nextPlay = 0;
   wasm.active = false;
   wasm.synthDone = false;
   wasm.cur = null;
   wasm.pendingOpen = false;
+  wasm.userPaused = false;
 }
 
 function wasmPlayFrom(ci, off) {
@@ -650,13 +682,80 @@ function wasmPlayFrom(ci, off) {
   player.status = "loading"; // first audio lands when unit 1 is synthesized
   updatePlayerBar();
   setMediaSession();
-  wlog(`start ci${ci} k${player.chunkIdx} off${off}`);
+  wlog(`start ci${ci} k${player.chunkIdx} off${off} ${wasmStreamOk ? "mms" : "chain"}`);
   wasmHbStart();
+  if (wasmStreamOk) wasmStreamStart();
   wasmSynthLoop(gen, ci, chunks, player.chunkIdx);
 }
 
-const wasmQueuedSecs = () =>
-  wasm.queue.slice(wasm.nextPlay).reduce((s, u) => s + u.secs, 0);
+// one continuous mp3 timeline for the wasm units — the STREAM engine's
+// machinery (element, seg map, trim, position sync) with a local feed
+function wasmStreamStart() {
+  const gen = ++stream.gen;
+  stream.local = true;
+  ensureStreamEl();
+  stream.sb = null;
+  stream.segs = [];
+  stream.pendingSeg = null;
+  stream.fetching = false;
+  const ms = new LocalMS();
+  stream.ms = ms;
+  const url = URL.createObjectURL(ms);
+  ms.addEventListener("sourceopen", () => {
+    URL.revokeObjectURL(url);
+    if (gen !== stream.gen) return;
+    const sb = ms.addSourceBuffer("audio/mpeg");
+    sb.mode = "sequence";
+    sb.addEventListener("updateend", () => onStreamUpdateEnd(gen));
+    stream.sb = sb;
+    wasmFeedLocal(gen);
+  });
+  ms.addEventListener("startstreaming", () => wasmFeedLocal(gen)); // MMS only
+  stream.el.src = url;
+  stream.el.play().then(
+    () => wlog(`stream play() ok vis=${document.visibilityState}`),
+    (e) => { wlog(`stream play() 拒 ${e?.name} vis=${document.visibilityState}`); player.status = "error"; updatePlayerBar(); },
+  );
+}
+
+// append the next synthesized unit; kicked by sourceopen, updateend,
+// startstreaming, timeupdate (via feedStream redirect) and each new unit
+function wasmFeedLocal(gen) {
+  const { sb } = stream;
+  if (gen !== stream.gen || !sb || sb.updating) return;
+  trimStream();
+  if (sb.updating) return; // trim in progress; updateend re-kicks
+  const u = wasm.queue[wasm.nextPlay];
+  if (!u) {
+    if (wasm.synthDone && !stream.pendingSeg && stream.ms?.readyState === "open") {
+      try { stream.ms.endOfStream(); } catch { /* mid-update */ }
+    }
+    return;
+  }
+  wasm.nextPlay++;
+  stream.pendingSeg = { ci: u.ci, k: u.k, start: u.start, chars: u.chars, chunks: u.chunks };
+  try {
+    sb.appendBuffer(u.buf);
+  } catch (e) {
+    // quota or state hiccup: retry this unit on the next kick
+    wlog(`append 錯 ${e?.name} vis=${document.visibilityState}`);
+    stream.pendingSeg = null;
+    wasm.nextPlay--;
+    return;
+  }
+  wlog(`句${wasm.nextPlay} append 音${u.secs.toFixed(1)}s vis=${document.visibilityState}`);
+  wasmTrim();
+  wasm.wake?.(); // one unit left the queue — synthesis may resume
+}
+
+// audio synthesized but not yet heard: un-appended units, plus (local
+// stream mode) whatever sits in the SourceBuffer ahead of the playhead
+function wasmQueuedSecs() {
+  let s = wasm.queue.slice(wasm.nextPlay).reduce((a, u) => a + u.secs, 0);
+  if (stream.local && stream.sb && stream.el)
+    s += Math.max(0, bufferedEnd(stream.sb) - stream.el.currentTime);
+  return s;
+}
 
 async function wasmSynthLoop(gen, ci, chunks, k) {
   let eng;
@@ -688,7 +787,7 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
       const ok = await eng.speakChunk(ttsCore.ttsPrompt(c.text), async (u) => {
         if (gen !== wasm.gen) return false;
         wasm.queue.push({
-          url: URL.createObjectURL(u.blob),
+          ...(stream.local ? { buf: u.buf } : { url: URL.createObjectURL(u.blob) }),
           secs: u.secs, ci, k, chunks,
           start: c.start + Math.round(u.frac0 * c.chars),
           chars: Math.max(1, Math.round((u.frac1 - u.frac0) * c.chars)),
@@ -706,7 +805,7 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
         }
         if (slept && gen === wasm.gen) wlog(`合成續 佇${Math.round(wasmQueuedSecs())}s vis=${document.visibilityState}`);
         return gen === wasm.gen;
-      });
+      }, stream.local);
       if (!ok || gen !== wasm.gen) return;
       k += 1;
     }
@@ -721,6 +820,7 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
 }
 
 function wasmPump() {
+  if (stream.local) return wasmFeedLocal(stream.gen);
   if (wasm.active || !player.on) return;
   const u = wasm.queue[wasm.nextPlay];
   if (!u) {
@@ -754,16 +854,35 @@ function wasmTrim() {
   }
 }
 
-// re-play the unit that last failed (or paused in error) — used by the
-// visible-again retry and the ▶ button in error state
+// resume/retry playback — the visible-again retry and ▶ in error state
 function wasmReplay() {
+  if (stream.local) {
+    stream.el?.play().catch(() => { /* bar shows state */ });
+    return;
+  }
   wasm.nextPlay = Math.max(0, wasm.nextPlay - 1);
   wasm.active = false;
   wasmPump();
 }
 
-// ⏮/⏭ over synthesized units; ⏭ past the queue jumps synthesis forward
+// ⏮/⏭. Local-stream mode moves at CHUNK grain like the net stream engine:
+// seek within the buffered timeline when the target chunk is still there,
+// restart synthesis at that chunk otherwise. Chain mode moves over units.
 function wasmSkip(d) {
+  if (stream.local) {
+    const k = player.chunkIdx + d;
+    const seg = stream.segs.find((s) => s.ci === player.chapIdx && s.k === k);
+    if (seg && stream.el) {
+      stream.el.currentTime = seg.t0 + 0.01;
+      stream.el.play().catch(() => { /* already playing or blocked */ });
+      return;
+    }
+    const c = player.chunks[k];
+    if (c) return wasmPlayFrom(player.chapIdx, c.start);
+    const ci = player.chapIdx + (d < 0 ? -1 : 1);
+    if (ci < 0 || ci >= state.manifest.chapters.length) return closePlayer();
+    return wasmPlayFrom(ci, 0);
+  }
   const t = Math.max(0, wasm.nextPlay - 1 + d);
   if (t < wasm.queue.length) {
     player.audio.pause();
