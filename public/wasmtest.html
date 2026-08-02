@@ -64,7 +64,10 @@
     <li>「短句」聽音質並給單句 RTF；換語音重按即可 A/B。</li>
     <li>鎖屏測試：按「連續朗讀」，開始出聲後鎖屏 60 秒再解鎖 —
       時間軸看鎖屏中「合成」有沒有繼續、「play()」有沒有被拒。</li>
-    <li>×N＝實時倍率（音訊秒÷合成秒），&gt;1 才可能邊播邊合成。</li>
+    <li>×N＝實時倍率（音訊秒÷合成秒），&gt;1 才可能邊播邊合成；
+      不足 1 的語音（melo）鎖屏會斷 — 勾「先全部合成再播」，合成時開著螢幕，
+      出聲後再鎖屏。</li>
+    <li>標點停頓由頁面統一插入（模型尾端靜音先剪掉再補），兩引擎一致。</li>
   </ol>
   <p>時間軸同步上傳：<code>/api/testlog?page=wasmtest</code>；♥ 心跳每 5 秒。</p>
 
@@ -82,6 +85,7 @@
     <button id="bShort">短句</button>
     <button id="bLong">連續朗讀（鎖屏用）</button>
     <button id="bStop">停止</button>
+    <label><input type="checkbox" id="presynth"> 先全部合成再播</label>
   </div>
 
   <div id="log"></div>
@@ -325,21 +329,48 @@ function remapIds(ids, phonemes) {
   }
   return out;
 }
-async function piperUnits(texts) {
+// Clause split for pause control: espeak erases commas (they reach the
+// model as plain spaces, and training saw the same pipeline, so the model
+// never learned a pause symbol — why 華言 ran through 標點 without
+// stopping). The page splits at clause punctuation, phonemizes each clause
+// as its own entry (one output line per entry — a bare clause has no
+// sentence enders, so lines map 1:1), and splices real silence downstream.
+const CLAUSE_RE = /([。！？；：，、!?;:,])/;
+function clauses(text) {
+  const parts = text.split(CLAUSE_RE);
+  const out = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const t = parts[i].trim();
+    const punct = parts[i + 1] ?? "";
+    if (t) out.push({ text: t, punct });
+    else if (out.length && punct) out[out.length - 1].punct = punct;
+  }
+  return out;
+}
+async function piperItems(texts) {
+  const cls = texts.flatMap((t) => {
+    const cs = clauses(t);
+    if (cs.length) cs[cs.length - 1].flush = true; // a chunk boundary emits
+    return cs;
+  });
   const out = [], errs = [];
   const mod = await createPiperPhonemize({
-    print: (l) => { try { const j = JSON.parse(l); out.push({ ids: remapIds(j.phoneme_ids, j.phonemes), tones: null }); } catch { errs.push(l); } },
+    print: (l) => { try { const j = JSON.parse(l); out.push(remapIds(j.phoneme_ids, j.phonemes)); } catch { errs.push(l); } },
     printErr: (l) => errs.push(l),
     locateFile: (f) => "/vendor/wasmtts/" + f,
     getPreloadedPackage: () => piperData,
   });
   try {
-    mod.callMain(["-l", "cmn", "--input", JSON.stringify(texts.map((text) => ({ text }))), "--espeak_data", "/espeak-ng-data"]);
+    mod.callMain(["-l", "cmn", "--input", JSON.stringify(cls.map((c) => ({ text: c.text }))), "--espeak_data", "/espeak-ng-data"]);
   } catch (e) {
     if (!out.length) throw e;
   }
   if (errs.length) log(`音素器 stderr ${errs.length} 行：${String(errs[0]).slice(0, 80)}`);
-  return out;
+  if (out.length !== cls.length) {
+    log(`音素行 ${out.length} ≠ 子句 ${cls.length} — 停頓退化為固定值`);
+    return out.map((ids) => ({ ids, tones: null, punct: "。", flush: false }));
+  }
+  return out.map((ids, i) => ({ ids, tones: null, punct: cls[i].punct, flush: !!cls[i].flush }));
 }
 
 // ---- melo frontend: sherpa's melo-tts-lexicon.cc, reimplemented ---------
@@ -384,11 +415,19 @@ const addBlank = (x) => {
   for (let i = 0; i < x.length; i++) out[i * 2 + 1] = x[i];
   return out;
 };
-const MELO_PUNCT = ".!?,。！？，";
-function meloUnits(text) {
+// Clause-level items like piper's, but the flushing punctuation KEEPS its
+// token inside the clause: melo learned punctuation prosody (the rising ？,
+// the comma dip) and trimTail removes only the rendered silence after it.
+const MELO_FLUSH = "。！？，、；：.!?,;:";
+function meloItems(text) {
   const units = [...text.toLowerCase()];
   const out = [];
   let ids = [], tones = [];
+  const emit = (punct) => {
+    if (!ids.length) return;
+    out.push({ ids: addBlank(ids), tones: addBlank(tones), punct, flush: false });
+    ids = []; tones = [];
+  };
   for (let i = 0; i < units.length;) {
     let step = 1;
     for (let L = Math.min(8, units.length - i); L >= 1; L--) {
@@ -398,17 +437,31 @@ function meloUnits(text) {
       if (L === 1) {
         const t = meloLex.tok.get(w);
         if (t !== undefined) { ids.push(t); tones.push(0); }
-        else if (w.trim()) phMiss++;
+        else if (w.trim() && !MELO_FLUSH.includes(w)) phMiss++;
       }
     }
     i += step;
-    if (MELO_PUNCT.includes(units[i - 1]) && ids.length) {
-      out.push({ ids: addBlank(ids), tones: addBlank(tones) });
-      ids = []; tones = [];
-    }
+    if (MELO_FLUSH.includes(units[i - 1])) emit(units[i - 1]);
   }
-  if (ids.length) out.push({ ids: addBlank(ids), tones: addBlank(tones) });
+  emit("");
+  if (out.length) out[out.length - 1].flush = true;
   return out;
+}
+
+// ---- pause ownership --------------------------------------------------
+// The phone run told both pause stories at once: 華言 has none (espeak ate
+// the commas) and melo's read as 停頓太久 — its rendered punct silence plus
+// one chain swap per 逗號 (89 one-second clauses in the log). Same cure for
+// both: every clause tail is trimmed to ≤80 ms of silence, the page splices
+// its own per-mark silence, and clauses accumulate into sentence-sized
+// units so the chain swaps at 句號 pace, not 逗號 pace.
+const PAUSE_MS = { "。": 450, "！": 450, "？": 450, "；": 320, "：": 260, "，": 200, "、": 160, ".": 450, "!": 450, "?": 450, ";": 320, ":": 260, ",": 200 };
+const UNIT_ENDERS = "。！？.!?";
+const UNIT_MAX_S = 12;
+function trimTail(f32, rate) {
+  let end = f32.length;
+  while (end > 0 && Math.abs(f32[end - 1]) < 0.004) end--;
+  return f32.subarray(0, Math.min(f32.length, end + Math.floor(rate * 0.08)));
 }
 
 // Float32 PCM → 16-bit mono WAV blob (what <audio> can play from a blob URL)
@@ -508,25 +561,43 @@ async function speak(text, tag) {
   const texts = chunks.map((c) => ttsCore.ttsPrompt(c.text));
   phMiss = 0;
   const tp = performance.now();
-  const units = v.frontend === "piper"
-    ? await piperUnits(texts)
-    : texts.flatMap((s) => meloUnits(t2cn(s)));
-  if (!units.length) throw new Error("前端無輸出");
+  const items = v.frontend === "piper"
+    ? await piperItems(texts)
+    : texts.flatMap((s) => meloItems(t2cn(s)));
+  if (!items.length) throw new Error("前端無輸出");
   const rate = config.audio.sample_rate;
-  log(`${tag} ${v.label} 分段${chunks.length} → 句${units.length}，前端 ${((performance.now() - tp) / 1000).toFixed(1)}s${phMiss ? `（丟符號 ${phMiss}）` : ""}`);
-  let audioS = 0, synthS = 0;
-  for (const [i, unit] of units.entries()) {
+  const presynth = $("presynth").checked;
+  log(`${tag} ${v.label} 分段${chunks.length} → 子句${items.length}，前端 ${((performance.now() - tp) / 1000).toFixed(1)}s${phMiss ? `（丟符號 ${phMiss}）` : ""}${presynth ? "（先合成再播）" : ""}`);
+  let audioS = 0, synthS = 0, unitK = 0, synthSeq = 0;
+  let acc = [], accLen = 0, accMs = 0;
+  const emit = () => {
+    if (!acc.length) return;
+    const pcm = new Float32Array(accLen);
+    let o = 0;
+    for (const p of acc) { pcm.set(p, o); o += p.length; }
+    const secs = pcm.length / rate;
+    queue.push({ k: ++unitK, blob: mkWav(pcm, rate), secs });
+    log(`句${unitK} 合成${(accMs / 1000).toFixed(1)}s → 音${secs.toFixed(1)}s ×${(secs * 1000 / accMs).toFixed(1)} vis=${document.visibilityState}`);
+    acc = []; accLen = 0; accMs = 0;
+    if (!presynth) pump();
+  };
+  for (const item of items) {
     if (token !== run) return;
-    const r = await synthInWorker(i + 1, unit);
-    if (!r || token !== run) { if (!r) log(`句${i + 1} 合成失敗`); continue; }
-    const secs = r.pcm.length / rate;
-    audioS += secs; synthS += r.ms / 1000;
-    log(`句${i + 1}/${units.length} 合成${(r.ms / 1000).toFixed(1)}s → 音${secs.toFixed(1)}s ×${(secs * 1000 / r.ms).toFixed(1)} vis=${document.visibilityState}`);
-    queue.push({ k: i + 1, blob: mkWav(r.pcm, rate), secs });
-    pump();
+    const r = await synthInWorker(`s${++synthSeq}`, item);
+    if (!r || token !== run) { if (!r) log("子句合成失敗"); continue; }
+    const pcm = trimTail(r.pcm, rate);
+    const gap = new Float32Array(Math.floor(rate * (PAUSE_MS[item.punct] ?? (item.punct ? 300 : 80)) / 1000));
+    acc.push(pcm, gap);
+    accLen += pcm.length + gap.length;
+    accMs += r.ms;
+    audioS += (pcm.length + gap.length) / rate;
+    synthS += r.ms / 1000;
+    if (UNIT_ENDERS.includes(item.punct) || item.flush || accLen / rate >= UNIT_MAX_S) emit();
   }
+  emit();
   if (token !== run) return;
   synthDone = true;
+  if (presynth) pump();
   if (synthS) log(`${tag} ${v.label} 合成完：音${audioS.toFixed(0)}s／算${synthS.toFixed(0)}s ×${(audioS / synthS).toFixed(1)} 實時`);
 }
 
