@@ -8,7 +8,7 @@
           locked with audio playing through the media path;
        3. whether a CHAIN-style double-buffered <audio> swap advances across
           sentence boundaries under lock (play() rejections are logged).
-     Two engine families behind one selector:
+     Three engine families behind one selector:
        - piper (huayan x_low / medium): espeak-ng phonemizer (piper_phonemize
          wasm), ids re-mapped through each model's own phoneme_id_map;
        - MeloTTS zh (int8 / fp32, sherpa-onnx export): no espeak — the page
@@ -16,7 +16,15 @@
          per-char fallback, punctuation flushes a sentence, AddBlank
          interspersal, tones), with opencc t2cn first because the lexicon's
          multi-char words are simplified and word matches carry the tone
-         sandhi that per-char fallback loses.
+         sandhi that per-char fallback loses;
+       - fanchen-C (VITS-fast-fine-tuning, sherpa-onnx export): zhuyin-symbol
+         lexicon where tone marks are tokens (no separate tones tensor),
+         same greedy matcher and t2cn, 187 speakers behind a sid input,
+         16 kHz — picked over the 8 kHz icefall-aishell3 export and the
+         muddier zh-ll/laozhe voices by a Whisper intelligibility bench.
+     The wasm backend can use threads: the worker route serves /wasmtest
+     with COOP/COEP so crossOriginIsolated holds and ort's threaded build
+     (SharedArrayBuffer + embedded pthread workers) runs melo past ×1.
      Small glue is vendored (/vendor/); the large binaries come from the
      wasmtts-assets GitHub release through the /api/wasmtts/ same-origin
      proxy (the release host sends no CORS headers) and are cached in the
@@ -43,8 +51,9 @@
     .btns { margin: 10px 0 6px; display: flex; flex-wrap: wrap; gap: 4px;
       align-items: center; }
     .btns b { width: 100%; }
-    button, select { font: inherit; padding: 7px 9px; border: 1px solid #a05e2a;
-      background: #fffdf8; border-radius: 6px; max-width: 100%; }
+    button, select, input[type=number] { font: inherit; padding: 7px 9px;
+      border: 1px solid #a05e2a; background: #fffdf8; border-radius: 6px;
+      max-width: 100%; }
     button:disabled { opacity: 0.5; }
     a { color: #a05e2a; }
     ol { margin: 6px 0 6px 1.4em; color: #6b6257; }
@@ -68,8 +77,12 @@
       不足 1 的語音（melo）鎖屏會斷 — 勾「先全部合成再播」，合成時開著螢幕，
       出聲後再鎖屏。</li>
     <li>標點停頓由頁面統一插入（模型尾端靜音先剪掉再補），兩引擎一致。</li>
-    <li>「後端 webgpu」把推理搬上 GPU（ort 1.27 jsep）— 同一語音兩個後端
-      各跑一次「短句」，×N 直接對比；不支援的算子自動退回 CPU，數字已含。</li>
+    <li>「執行緒 自動」：isolated=true（上表）時 wasm 後端用多核心跑，
+      切「執行緒 1」重跑「短句」可對比 ×N — melo 過 1 的關鍵。</li>
+    <li>fanchen-C 是 187 人合訓的原生中文模型（16kHz）——「說話人」0–186
+      換音色不用重載，預設 25（Whisper 聽寫最清楚的一位）。</li>
+    <li>「後端 webgpu」實測比 CPU 慢（VITS 算子小而多，GPU 往返吃掉收益），
+      留作對照。</li>
   </ol>
   <p>時間軸同步上傳：<code>/api/testlog?page=wasmtest</code>；♥ 心跳每 5 秒。</p>
 
@@ -79,13 +92,19 @@
       <option value="x_low">華言 x_low（20MB·無聲調）</option>
       <option value="melo8">MeloTTS int8（51MB）</option>
       <option value="melo32">MeloTTS fp32（163MB）</option>
+      <option value="fanchen">fanchen-C（121MB·187聲）</option>
     </select>
     <select id="epSel">
       <option value="wasm" selected>後端 wasm（CPU）</option>
       <option value="webgpu">後端 webgpu</option>
     </select>
+    <select id="thSel">
+      <option value="auto" selected>執行緒 自動</option>
+      <option value="1">執行緒 1</option>
+    </select>
     <button id="bPrep">準備引擎</button>
     <button id="bClear">清除快取</button>
+    <label>說話人 <input id="sidIn" type="number" min="0" max="186" value="25" style="width: 4.5em"></label>
   </div>
   <div class="btns"><b>朗讀</b>
     <button id="bShort">短句</button>
@@ -161,6 +180,7 @@ const VOICES = {
   medium: { label: "華言 medium", frontend: "piper", model: "zh_CN-huayan-medium.onnx", cfg: "zh_CN-huayan-medium.onnx.json" },
   melo8: { label: "MeloTTS int8", frontend: "melo", model: "melo-zh_en.int8.onnx" },
   melo32: { label: "MeloTTS fp32", frontend: "melo", model: "melo-zh_en.onnx" },
+  fanchen: { label: "fanchen-C", frontend: "vits", model: "fanchen-c.onnx" },
 };
 const voiceSel = document.getElementById("voiceSel");
 const voice = () => VOICES[voiceSel.value];
@@ -214,11 +234,15 @@ onmessage = async (e) => {
       } else {
         importScripts(m.base + "/vendor/wasmtts/ort-umd.min.js");
         rt = self.ort;
-        rt.env.wasm.wasmPaths = { "ort-wasm-simd.wasm": wasmURL };
+        // the threaded build spawns its pthread workers from an embedded
+        // blob (1.18 ships no separate .worker.js), so only the wasm binary
+        // name changes; isolation is inherited from the COOP/COEP document
+        rt.env.wasm.wasmPaths = { [m.threads > 1 ? "ort-wasm-simd-threaded.wasm" : "ort-wasm-simd.wasm"]: wasmURL };
+        if (m.threads > 1) extra = "，執行緒 " + m.threads + "（worker isolated=" + self.crossOriginIsolated + "）";
         opts = undefined;
       }
       kind = m.kind;
-      rt.env.wasm.numThreads = 1;
+      rt.env.wasm.numThreads = m.ep === "webgpu" ? 1 : m.threads;
       const t = performance.now();
       session = await rt.InferenceSession.create(new Uint8Array(m.model), opts);
       postMessage({ type: "ready", ms: performance.now() - t, extra });
@@ -233,6 +257,15 @@ onmessage = async (e) => {
             noise_scale: new rt.Tensor("float32", [m.scales[0]]),
             length_scale: new rt.Tensor("float32", [m.scales[1]]),
             noise_scale_w: new rt.Tensor("float32", [m.scales[2]]),
+          }
+        : kind === "vits"
+        ? {
+            x: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
+            x_length: new rt.Tensor("int64", [m.ids.length]),
+            noise_scale: new rt.Tensor("float32", [m.scales[0]]),
+            length_scale: new rt.Tensor("float32", [m.scales[1]]),
+            noise_scale_w: new rt.Tensor("float32", [m.scales[2]]),
+            sid: new rt.Tensor("int64", [m.sid]),
           }
         : {
             input: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
@@ -251,6 +284,7 @@ onmessage = async (e) => {
 let piperData = null;   // shared by both piper voices
 let config = null;      // per-voice: { audio: {sample_rate}, inference: {...}, phoneme_id_map? }
 let meloLex = null;     // { tok: Map, lex: Map } — shared by both melo voices
+let vitsLex = null;     // fanchen's zhuyin lexicon, same shape
 let t2cn = null;
 let worker = null;
 let ready = null;
@@ -272,31 +306,47 @@ function resetEngine(why) {
 }
 voiceSel.onchange = () => resetEngine(`語音切換 → ${voice().label}`);
 epSel.onchange = () => resetEngine(`後端切換 → ${epSel.value}`);
+const thSel = document.getElementById("thSel");
+thSel.onchange = () => resetEngine(`執行緒切換 → ${thSel.value}`);
+// wasm threads need SharedArrayBuffer, which needs the COOP/COEP headers the
+// worker attaches to /wasmtest — isolated=false here means an offline load
+// fell back to the cached shell, or the headers got lost; threads stay at 1
+const wasmThreads = () =>
+  epSel.value === "wasm" && thSel.value !== "1" && crossOriginIsolated
+    ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
 
 function ensureEngine() {
   return ready ??= (async () => {
     navigator.storage?.persist?.().catch(() => {});
     const v = voice();
     const ep = epSel.value;
+    const threads = wasmThreads();
     const t = performance.now();
-    const jobs = [cachedBuf(v.model), cachedBuf(ep === "webgpu" ? "ort-wasm-simd-threaded.asyncify.wasm" : "ort-wasm-simd.wasm")];
+    const ortAsset = ep === "webgpu" ? "ort-wasm-simd-threaded.asyncify.wasm"
+      : threads > 1 ? "ort-wasm-simd-threaded.wasm" : "ort-wasm-simd.wasm";
+    const jobs = [cachedBuf(v.model), cachedBuf(ortAsset)];
     if (v.frontend === "piper") {
       jobs.push(cachedBuf(v.cfg), piperData ? null : cachedBuf("piper_phonemize.data"));
-    } else {
+    } else if (v.frontend === "melo") {
       jobs.push(meloLex ? null : cachedBuf("melo-tokens.txt"), meloLex ? null : cachedBuf("melo-lexicon.txt"));
+    } else {
+      jobs.push(vitsLex ? null : cachedBuf("fanchen-tokens.txt"), vitsLex ? null : cachedBuf("fanchen-lexicon.txt"));
     }
     const [model, ortWasm, a, b] = await Promise.all(jobs);
     if (v.frontend === "piper") {
       config = JSON.parse(new TextDecoder().decode(a));
       if (b) piperData = b;
     } else {
-      // sherpa's export carries these in onnx metadata, unreadable from ort-web;
-      // values mirror sherpa-onnx's melo defaults (sample_rate from the export)
-      config = { audio: { sample_rate: 44100 }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 } };
+      // sherpa's exports carry these in onnx metadata, unreadable from
+      // ort-web; scales mirror sherpa-onnx's defaults, sample_rate each
+      // model's own (metadata dumped offline: melo 44100, fanchen 16000)
+      config = { audio: { sample_rate: v.frontend === "melo" ? 44100 : 16000 }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 } };
       if (a) {
         const tp = performance.now();
-        meloLex = parseMeloLexicon(new TextDecoder().decode(a), new TextDecoder().decode(b));
-        log(`melo 詞典 ${meloLex.lex.size} 詞，解析 ${((performance.now() - tp) / 1000).toFixed(1)}s`);
+        const parsed = v.frontend === "melo"
+          ? (meloLex = parseMeloLexicon(new TextDecoder().decode(a), new TextDecoder().decode(b)))
+          : (vitsLex = parseZhuyinLexicon(new TextDecoder().decode(a), new TextDecoder().decode(b)));
+        log(`詞典 ${parsed.lex.size} 詞，解析 ${((performance.now() - tp) / 1000).toFixed(1)}s`);
       }
       if (!t2cn) {
         const OpenCC = await import("/vendor/opencc-t2cn.js");
@@ -320,7 +370,7 @@ function ensureEngine() {
     };
     worker.onerror = (e) => log(`worker error ${e.message}`);
     const up = new Promise((r) => pending.set("ready", r));
-    worker.postMessage({ type: "init", base: location.origin, kind: v.frontend, ep, model, wasm: ortWasm }, [model, ortWasm]);
+    worker.postMessage({ type: "init", base: location.origin, kind: v.frontend, ep, threads, model, wasm: ortWasm }, [model, ortWasm]);
     // the "ready" resolver hands back null when init errored — surface that
     // as a failure here, or speak() would march on into a session-less worker
     if ((await up) === null) {
@@ -368,6 +418,7 @@ async function mainGpuInit(model, ortWasm) {
 async function synthesize(k, unit) {
   const { noise_scale, length_scale, noise_w } = config.inference;
   const scales = [noise_scale, length_scale, noise_w];
+  const sid = Math.max(0, +document.getElementById("sidIn").value || 0);
   if (mainGpu) {
     const { rt, session } = mainGpu;
     const t = performance.now();
@@ -380,6 +431,15 @@ async function synthesize(k, unit) {
           noise_scale: new rt.Tensor("float32", [scales[0]]),
           length_scale: new rt.Tensor("float32", [scales[1]]),
           noise_scale_w: new rt.Tensor("float32", [scales[2]]),
+        }
+      : voice().frontend === "vits"
+      ? {
+          x: new rt.Tensor("int64", unit.ids, [1, unit.ids.length]),
+          x_length: new rt.Tensor("int64", [unit.ids.length]),
+          noise_scale: new rt.Tensor("float32", [scales[0]]),
+          length_scale: new rt.Tensor("float32", [scales[1]]),
+          noise_scale_w: new rt.Tensor("float32", [scales[2]]),
+          sid: new rt.Tensor("int64", [sid]),
         }
       : {
           input: new rt.Tensor("int64", unit.ids, [1, unit.ids.length]),
@@ -396,7 +456,7 @@ async function synthesize(k, unit) {
   }
   return new Promise((r) => {
     pending.set(k, r);
-    worker.postMessage({ type: "synth", k, ids: unit.ids, tones: unit.tones, scales });
+    worker.postMessage({ type: "synth", k, ids: unit.ids, tones: unit.tones, scales, sid });
   });
 }
 
@@ -506,33 +566,67 @@ function parseMeloLexicon(tokTxt, lexTxt) {
   lex.set("嗯", lex.get("恩"));
   return { tok, lex };
 }
+// fanchen (VITS-fast-fine-tuning) lexicon: word zhuyin-symbol… — the tone
+// marks ˉˊˇˋ˙ are tokens themselves, so a line is word + token list and
+// there is no tone column. Entries stored [ids, null] to share lexItems
+// with melo. tokens.txt knows only full-width ，。！？—…; ascii marks and
+// the missing 、：； alias to the nearest known mark — the model only
+// shapes prosody with it, the page's spliced silence owns pause length.
+function parseZhuyinLexicon(tokTxt, lexTxt) {
+  const tok = new Map();
+  for (const line of tokTxt.split("\n")) {
+    const p = line.split(/\s+/).filter(Boolean);
+    if (p.length === 2) tok.set(p[0], +p[1]);
+  }
+  tok.set(" ", tok.get("_"));
+  for (const [a, b] of [[",", "，"], [".", "。"], ["!", "！"], ["?", "？"], ["、", "，"], ["：", "，"], ["；", "，"], [":", "，"], [";", "，"]])
+    if (!tok.has(a) && tok.has(b)) tok.set(a, tok.get(b));
+  const lex = new Map();
+  for (const line of lexTxt.split("\n")) {
+    const p = line.split(/\s+/).filter(Boolean);
+    if (p.length < 2) continue;
+    const w = p[0].toLowerCase();
+    if (lex.has(w)) continue;
+    const ids = new Array(p.length - 1);
+    let ok = true;
+    for (let i = 1; i < p.length; i++) {
+      const id = tok.get(p[i]);
+      if (id === undefined) { ok = false; break; }
+      ids[i - 1] = id;
+    }
+    if (ok) lex.set(w, [ids, null]);
+  }
+  return { tok, lex };
+}
 const addBlank = (x) => {
   const out = new Array(x.length * 2 + 1).fill(0);
   for (let i = 0; i < x.length; i++) out[i * 2 + 1] = x[i];
   return out;
 };
 // Clause-level items like piper's, but the flushing punctuation KEEPS its
-// token inside the clause: melo learned punctuation prosody (the rising ？,
-// the comma dip) and trimTail removes only the rendered silence after it.
+// token inside the clause: these models learned punctuation prosody (the
+// rising ？, the comma dip) and trimTail removes only the rendered silence
+// after it. Shared by melo (toned: parallel tones stream) and fanchen
+// (toned=false: tone marks already sit inside the id stream).
 const MELO_FLUSH = "。！？，、；：.!?,;:";
-function meloItems(text) {
+function lexItems(text, ld, toned) {
   const units = [...text.toLowerCase()];
   const out = [];
   let ids = [], tones = [];
   const emit = (punct) => {
     if (!ids.length) return;
-    out.push({ ids: addBlank(ids), tones: addBlank(tones), punct, flush: false });
+    out.push({ ids: addBlank(ids), tones: toned ? addBlank(tones) : null, punct, flush: false });
     ids = []; tones = [];
   };
   for (let i = 0; i < units.length;) {
     let step = 1;
     for (let L = Math.min(8, units.length - i); L >= 1; L--) {
       const w = units.slice(i, i + L).join("");
-      const hit = meloLex.lex.get(w);
-      if (hit) { ids.push(...hit[0]); tones.push(...hit[1]); step = L; break; }
+      const hit = ld.lex.get(w);
+      if (hit) { ids.push(...hit[0]); if (toned) tones.push(...hit[1]); step = L; break; }
       if (L === 1) {
-        const t = meloLex.tok.get(w);
-        if (t !== undefined) { ids.push(t); tones.push(0); }
+        const t = ld.tok.get(w);
+        if (t !== undefined) { ids.push(t); if (toned) tones.push(0); }
         else if (w.trim() && !MELO_FLUSH.includes(w)) phMiss++;
       }
     }
@@ -582,7 +676,8 @@ let active = false;
 let synthDone = true;
 players.forEach((a) => {
   a.preload = "auto";
-  a.onended = () => { log(`句${a.dataset.k} 播畢`); URL.revokeObjectURL(a.src); active = false; pump(); };
+  // dataset.k = "" marks the primer's 50 ms of silence — not a real unit
+  a.onended = () => { URL.revokeObjectURL(a.src); if (!a.dataset.k) return; log(`句${a.dataset.k} 播畢`); active = false; pump(); };
   // clearing src also fires error — only a blob src is a real playback fault
   a.onerror = () => { if (!a.src.startsWith("blob:")) return; log(`句${a.dataset.k} audio error`); active = false; pump(); };
 });
@@ -591,7 +686,7 @@ players.forEach((a) => {
 // both elements swallow 50 ms of silence inside the tap that starts a test
 function prime() {
   const s = URL.createObjectURL(mkWav(new Float32Array(800), 16000));
-  players.forEach((a) => { a.src = s; a.play().then(() => a.pause(), () => {}); });
+  players.forEach((a) => { a.dataset.k = ""; a.src = s; a.play().then(() => a.pause(), () => {}); });
 }
 function pump() {
   if (active) return;
@@ -659,7 +754,7 @@ async function speak(text, tag) {
   const tp = performance.now();
   const items = v.frontend === "piper"
     ? await piperItems(texts)
-    : texts.flatMap((s) => meloItems(t2cn(s)));
+    : texts.flatMap((s) => lexItems(t2cn(s), v.frontend === "melo" ? meloLex : vitsLex, v.frontend === "melo"));
   if (!items.length) throw new Error("前端無輸出");
   const rate = config.audio.sample_rate;
   const presynth = $("presynth").checked;

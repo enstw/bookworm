@@ -1,7 +1,8 @@
 // Bookworm worker: serves chapter files from R2, reading positions from D1,
 // and on-demand TTS audio (Workers AI MeloTTS, cached in R2).
 // Static assets (the reader app) are served directly by the assets binding;
-// this worker only runs for /api/* and /books/* (see run_worker_first).
+// this worker only runs for /api/*, /books/*, /admin and /wasmtest (see
+// run_worker_first).
 
 import { chunkChapter, ttsPrompt } from "../public/tts-core.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
@@ -65,6 +66,17 @@ export default {
       if (path.startsWith("/books/")) return await serveBook(request, env, path);
       if (path === "/admin")
         return await env.ASSETS.fetch(new URL("/admin.html", url.origin));
+      // /wasmtest needs COOP/COEP (crossOriginIsolated → SharedArrayBuffer →
+      // ort wasm threads), which the assets binding cannot attach — so this
+      // one page runs worker-first and gets its headers here. Same-origin
+      // subresources need no CORP under require-corp. Delete with /wasmtest.
+      if (path === "/wasmtest") {
+        const res = await env.ASSETS.fetch(new URL("/wasmtest.html", url.origin));
+        const headers = new Headers(res.headers);
+        headers.set("cross-origin-opener-policy", "same-origin");
+        headers.set("cross-origin-embedder-policy", "require-corp");
+        return new Response(res.body, { status: res.status, headers });
+      }
     } catch (err) {
       return json({ error: String(err?.message ?? err) }, 500);
     }
@@ -459,7 +471,9 @@ const WASMTTS_FILES = new Set([
   "zh_CN-huayan-x_low.onnx", "zh_CN-huayan-x_low.onnx.json",
   "zh_CN-huayan-medium.onnx", "zh_CN-huayan-medium.onnx.json",
   "melo-zh_en.onnx", "melo-zh_en.int8.onnx", "melo-lexicon.txt", "melo-tokens.txt",
-  "piper_phonemize.data", "ort-wasm-simd.wasm", "ort-wasm-simd-threaded.asyncify.wasm",
+  "fanchen-c.onnx", "fanchen-lexicon.txt", "fanchen-tokens.txt",
+  "piper_phonemize.data", "ort-wasm-simd.wasm", "ort-wasm-simd-threaded.wasm",
+  "ort-wasm-simd-threaded.asyncify.wasm",
 ]);
 
 async function serveWasmttsAsset(path) {

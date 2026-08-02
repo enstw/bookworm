@@ -7,7 +7,7 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/books/*", "/admin"]
+    "run_worker_first": ["/api/*", "/books/*", "/admin", "/wasmtest"]
   },
   "d1_databases": [
     {
