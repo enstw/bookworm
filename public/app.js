@@ -24,6 +24,23 @@ function el(tag, attrs = {}, ...children) {
 // when the service worker served a cached copy.
 const BUILD = "dev";
 
+// ---------- the network cap ----------
+//
+// A dying cellular connection does not FAIL fetches, it hangs them for 60+ s.
+// Every boot-path request that has something local to fall back on is capped
+// here instead of waiting that out: past the cap the local copy wins and the
+// next flush (or the next boot) reconciles. That is what "the app takes
+// forever to open on bad signal" actually is — not a slow answer, but a
+// question nobody was ever going to answer.
+//
+// The rule for using it: cap a request only when losing it costs nothing.
+// A request with no local fallback (a book never cached, a shelf never seen)
+// is deliberately left uncapped — there the network is the only answer, and
+// cutting it short turns merely slow into broken. The service worker draws
+// the same line with the same number (NET_MS in sw.js).
+const NET_MS = 1000;
+const capped = (ms = NET_MS) => ({ signal: AbortSignal.timeout(ms) });
+
 // ---------- settings (font size / theme / paper color, per device) ----------
 
 // paper colors: the [data-bg] values, in cycle order; "" is the theme
@@ -626,10 +643,17 @@ async function renderLibrary() {
   renderMessage(brand(), t("lib.loading"));
   let books;
   let stale = false;
+  // the last shelf this device saw, read BEFORE the request because it also
+  // decides how long to wait for one: with a list to show, a hung connection
+  // costs a second and the shelf comes up marked stale; with nothing to show,
+  // the cap would only turn a slow open into a failed one
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem("bw_books")); } catch { /* ignore */ }
+  const haveCached = Array.isArray(cached);
   try {
     // the key cookie says who is asking; the server adds that reader's
     // per-book progress (the same chars-based pct as the reader's line)
-    const res = await fetch("/api/books");
+    const res = await fetch("/api/books", haveCached ? capped() : undefined);
     if (res.status === 401) {
       if (await reauth()) return renderLibrary();
       return renderKeyGate(renderLibrary, !!getKey());
@@ -646,9 +670,9 @@ async function renderLibrary() {
       for (const b of books) if (b.id) localStorage.setItem(`bw_book_${b.slug}`, b.id);
     } catch { /* full */ }
   } catch (err) {
-    // offline (or a dead API): fall back to the last list we saw
-    try { books = JSON.parse(localStorage.getItem("bw_books")); } catch { /* ignore */ }
-    if (!Array.isArray(books)) {
+    // offline, capped, or a dead API: fall back to the last list we saw
+    books = cached;
+    if (!haveCached) {
       return renderMessage(brand(), [
         t("lib.loadFail", err.message),
         el("button", { class: "linklike", onclick: renderLibrary }, t("lib.retry")),
@@ -1044,7 +1068,9 @@ function posKey() {
 // instead of an error page.
 async function resolveBookId(slug) {
   try {
-    const res = await fetch(`/api/books/${encodeURIComponent(slug)}`);
+    // capped: the fallback below is a pure guess the device can make on its
+    // own, so a hung lookup is never worth waiting for
+    const res = await fetch(`/api/books/${encodeURIComponent(slug)}`, capped());
     if (res.ok) {
       const book = (await res.json()).book;
       if (book?.id) {
@@ -1082,18 +1108,23 @@ async function initReader(slug) {
   // revoked key (the gate's business), the second a bad slug
   let denied = false;
   const loadManifest = async () => {
+    // what the device already holds decides how long the server gets: with a
+    // copy in hand a hung connection costs a second, without one the network
+    // is the only way to open this book at all and must be given its time.
+    // (The service worker caps the same request when it is in charge; the
+    // page's own cap is what covers a first open, before it has claimed.)
+    const hit = "caches" in window
+      ? await caches.match(bookUrl("manifest.json"))
+      : null;
     let m = null;
     try {
-      const res = await fetch(bookUrl("manifest.json"));
+      const res = await fetch(bookUrl("manifest.json"), hit ? capped() : undefined);
       if (res.status === 401) denied = true;
       else if (res.ok) m = await res.json();
-    } catch { /* offline — try the offline cache below */ }
+    } catch { /* offline, or capped — the cached copy below */ }
     // the offline copy also serves a revoked device that still holds the
     // book: revocation fences the server, not what a phone already has
-    if (!m && "caches" in window) {
-      const hit = await caches.match(bookUrl("manifest.json"));
-      if (hit) m = await hit.json();
-    }
+    if (!m && hit) m = await hit.json();
     return m;
   };
   // A remembered mapping is taken as-is: ids never change, so this saves a
@@ -1189,12 +1220,13 @@ async function resolvePosition() {
   try { local = JSON.parse(localStorage.getItem(posKey())); } catch { /* ignore */ }
   let remote = null;
   try {
-    // a dying cellular connection hangs fetches rather than failing them;
-    // resuming must not wait a minute on a bookmark the device already holds
-    // — past the cap the local copy wins and the next flush reconciles
+    // capped: resuming must not wait on a bookmark the device already holds.
+    // Losing this race cannot lose progress — the server takes a position
+    // write only when its updated_at is newer (LWW), so the local-wins flush
+    // that follows a timeout can never clobber a fresher remote bookmark.
     const res = await fetch(
       `/api/position?book=${encodeURIComponent(state.id)}&user=${encodeURIComponent(state.uid)}`,
-      { signal: AbortSignal.timeout(4000) },
+      capped(),
     );
     const data = await res.json();
     if (data.position) {
@@ -1806,9 +1838,10 @@ async function resolveSettings(uid) {
   const localTs = Number(localStorage.getItem("bw_settings_ts")) || 0;
   let remote = null;
   try {
-    const res = await fetch(`/api/settings?user=${encodeURIComponent(uid)}`, {
-      signal: AbortSignal.timeout(4000),
-    });
+    // capped for the same reason as the position, and safe for the same
+    // reason: settings are LWW by updated_at too, so a timed-out reconcile
+    // re-pushes local rather than losing a newer server row
+    const res = await fetch(`/api/settings?user=${encodeURIComponent(uid)}`, capped());
     if (!res.ok) return;
     const data = await res.json();
     if (data.settings) remote = data;

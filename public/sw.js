@@ -12,6 +12,13 @@
 // fetches, it hangs them for 60+ s — which reads as "the app doesn't work
 // offline". After NET_MS we serve the cached copy; the network fetch keeps
 // running (waitUntil) so the cache still gets refreshed for next time.
+//
+// NET_MS only ever shortcuts to something already cached (see the
+// `res ?? cached ?? net` in each handler): with no cached copy the handler
+// still waits the network out, because there is nothing else to serve. That
+// is what makes a cap this short safe — one second of patience is the most
+// a re-open can cost, and a build that lost the race arrives on the next
+// one (checkVersion in app.js is what makes that visible).
 
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
@@ -21,7 +28,7 @@ const SHELL = "bw-shell-v12";
 // works with no network — its big binaries live in their own bw-wasmtts
 // cache; the vendor URL is unversioned like fonts (bump SHELL on dep bumps)
 const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/vendor/opencc-t2cn.js", "/manifest.webmanifest"];
-const NET_MS = 3500;
+const NET_MS = 1000; // mirrors NET_MS in app.js — the same line, drawn twice
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_ASSETS)));

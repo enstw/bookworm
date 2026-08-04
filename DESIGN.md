@@ -146,10 +146,28 @@ the pre-publication history, which lives in the owner's private archive.
   become what every reopen runs into; the shelf's explicit address is
   `/?shelf`; enrolling via `/?key=` still ends on the shelf (a key link is
   device setup, not reading). The resume is all-local, and the position
-  reconcile carries a 4 s abort — a dying cellular link hangs fetches, and
-  reading must not wait on a bookmark the device already holds. The legacy
+  reconcile is capped (see 開機的網路上限 below) — reading must not wait on a
+  bookmark the device already holds. The legacy
   `/<book>/<uid>` route is deleted, not shimmed. An online not-found forgets
   `bw_last_book`; an offline not-found forgets nothing.
+- **開機的網路上限 — 1 s (2026-08-04).** A dying cellular link does not fail
+  fetches, it hangs them for 60+ s, so "opening takes forever on bad signal"
+  is never a slow answer — it is a question nobody was going to answer.
+  `NET_MS = 1000` caps it, once in `public/app.js` (`capped()`) and once in
+  `public/sw.js`, and the rule for applying it is the same in both: **cap a
+  request only when losing it costs nothing.** Capped, because the device
+  already holds an answer — position, settings, slug→id, the shelf list when
+  `bw_books` exists, the manifest when a cached copy exists. Uncapped,
+  because the network is the only answer and a cap would turn slow into
+  broken — a first-ever shelf, a book never cached, an uncached chapter; the
+  sw.js handlers get this for free from `res ?? cached ?? net`. Losing a
+  capped race cannot lose data: positions and settings are LWW by
+  `updated_at` server-side, so the local-wins push that follows a timeout
+  can never clobber a fresher row. Measured on the primed offline-e2e
+  profile against a server that accepts TCP and never answers: 11.1 s → 3.1 s
+  to rendered chapter text. `/api/version` deliberately keeps its 4 s — it
+  blocks nothing, and a 1 s cap would just make the update notice never show
+  on a slow link.
 - **TTS (2026-07-15 onward).** Three engines in `player.mjs`: WASM
   (offline, preferred when available), STREAM (`ManagedMediaSource`, one
   continuous mp3 timeline — no chunk boundary ever needs `play()` while
