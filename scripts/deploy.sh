@@ -106,6 +106,19 @@ if [[ -n "$URL" ]]; then
   # Bearer, which also proves the ADMIN_TOKEN secret actually landed
   echo "==> smoke probe: $URL/api/books"
   curl -fsS -H "authorization: Bearer $ADMIN_TOKEN" "$URL/api/books" && echo
+
+  # 新版本已上線: app.js's checkVersion only runs while a page is open, so an
+  # installed phone nobody opened never hears about a deploy. The worker
+  # announces its own stamp and keeps its own exactly-once record, so this is
+  # safe to call on every deploy — a re-run or a rollback stays silent. Never
+  # fatal: the deploy has already succeeded by the time we get here.
+  echo "==> announcing the build"
+  if ANNOUNCE=$(curl -fsS -X POST -H "authorization: Bearer $ADMIN_TOKEN" \
+       "$URL/api/admin/announce-build"); then
+    echo "    $ANNOUNCE"
+  else
+    echo "    (announcement failed — the deploy itself is fine)" >&2
+  fi
   echo
   echo "✓ deployed: $URL"
   echo "  publish a book:  node scripts/publish-book.mjs out/<slug> --url $URL --token \$ADMIN_TOKEN"

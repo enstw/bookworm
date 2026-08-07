@@ -145,8 +145,11 @@ self.addEventListener("message", (e) => {
   else e.source?.postMessage(reply);
 });
 
-// Web Push: 新書上架 (see pushNewBook in the worker). iOS requires every
-// push event to show a notification — no silent pushes.
+// Web Push: 新書上架 (pushNewBook) and 新版本已上線 (announceBuild), both in
+// the worker. Nothing here is per-kind — the payload carries the title, body
+// and tap target — so a new kind of announcement needs no service worker
+// change, and therefore no SHELL bump to reach installed phones. iOS requires
+// every push event to show a notification: no silent pushes, no quiet badge.
 self.addEventListener("push", (e) => {
   let d = {};
   let parsed = "json";

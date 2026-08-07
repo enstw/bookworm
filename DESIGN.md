@@ -250,6 +250,23 @@ the pre-publication history, which lives in the owner's private archive.
   chain — worker send, push-service status, SW receipt, badge — logs to
   `testlog` page=push, and the 測試 button pushes the phone itself so each
   outcome names a different fix.
+- **A deploy announces itself (2026-08-08).** `checkVersion` in `app.js` can
+  only run while a page is open, so an installed phone nobody opened never
+  learns a newer shell exists. `deploy.sh` POSTs `/api/admin/announce-build`
+  after every successful deploy and `announceBuild` pushes 新版本已上線 down
+  the same channel 新書上架 uses, which is what puts the red dot on a closed
+  app. The worker announces its **own** stamp, never one the caller supplies:
+  the deploy hook says *when* to ring, the worker says *what shipped*.
+  Exactly-once is the `announced_builds` row, keyed on the **commit alone** —
+  re-running the deploy workflow restamps the clock but is the same version,
+  and a rollback lands on a build that already rang. The first build on a
+  fresh install is recorded silently (it is the install, not news), and a
+  `dev` stamp never rings at all. Tapping the banner opens the shell rather
+  than forcing a reload: `checkVersion` then raises 立即更新, and overriding
+  it here would fight that note's "seen it, not now" dismissal. Announcing
+  only *some* deploys was considered and dropped — a `sw.js` SHELL bump is
+  about cache invalidation, not about whether a change is worth hearing
+  about, and md-only pushes already skip the deploy entirely.
 - **testlog is the phone's console.** An iPhone has no console and a push
   lands with no page alive, so `/api/testlog` is unauthenticated by design,
   size-capped, self-pruned to the newest 500 rows — a permanent tenant. The

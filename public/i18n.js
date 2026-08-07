@@ -80,8 +80,8 @@ const BW_STRINGS = {
     "lib.admin": "管理",
     "lib.adminTitle": "上傳、改書名、改網址代稱、刪除（需要管理密鑰）",
 
-    // --- 新書通知 ---
-    "push.label": "新書通知：",
+    // --- 推播通知（新書上架、新版本已上線）---
+    "push.label": "新書與更新通知：",
     "push.blocked": "通知已被封鎖（在系統設定解除）",
     "push.subscribed": "已訂閱 · 點按取消",
     "push.subscribe": "點按訂閱",
@@ -353,8 +353,8 @@ const BW_STRINGS = {
     "lib.admin": "manage",
     "lib.adminTitle": "Upload, retitle, re-slug, delete (needs the admin key)",
 
-    // --- new-book push ---
-    "push.label": "New-book alerts: ",
+    // --- push (new books, new versions) ---
+    "push.label": "New-book & update alerts: ",
     "push.blocked": "Blocked — allow notifications in system settings",
     "push.subscribed": "Subscribed · tap to stop",
     "push.subscribe": "Tap to subscribe",

@@ -1,9 +1,16 @@
-// End-to-end proof of 新書通知 against a locally running worker: this
-// script IS the push service. It stands up a capture server, subscribes
-// that endpoint, publishes a book through the real admin route, then
-// DECRYPTS the notification the worker actually sent and checks the VAPID
-// JWT that carried it. Also covers validation, upsert, unsubscribe, the
-// re-publish (no duplicate announcement) case, and 410 pruning.
+// End-to-end proof of 新書上架 and 新版本已上線 notifications against a
+// locally running worker: this script IS the push service. It stands up a
+// capture server, subscribes that endpoint, publishes a book through the
+// real admin route, then DECRYPTS the notification the worker actually sent
+// and checks the VAPID JWT that carried it. Also covers validation, upsert,
+// unsubscribe, the re-publish (no duplicate announcement) case, and 410
+// pruning.
+//
+// The build announcement needs a STAMPED worker — announceBuild refuses to
+// ring for BUILD "dev" — so this script does deploy.sh's sed itself, on an
+// unstamped src/worker.js only, and puts the original bytes back in the
+// finally. Against a worker it did not start (BOOKWORM_URL) those checks
+// report skipped rather than quietly passing.
 //
 // Prereqs: a worker on :8787 with VAPID_PRIVATE_JWK and ADMIN_TOKEN in
 // .dev.vars — this script starts `wrangler dev` itself unless
@@ -13,6 +20,9 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // the API rightly requires https:// endpoints, so the loopback capture
 // server is registered straight into the local D1 instead of through
@@ -79,6 +89,28 @@ const authSecret = crypto.getRandomValues(new Uint8Array(16));
 const endpoint = `http://127.0.0.1:${CAP_PORT}/push/one`;
 const sub = { user: "pushtest", endpoint, p256dh: b64u.enc(uaRaw), auth: b64u.enc(authSecret) };
 
+// --- stamp a build in, the way deploy.sh does ---
+// announceBuild() refuses to ring for BUILD "dev", so without this the whole
+// 新版本 path is unreachable from a dev server. The original bytes are written
+// back in the finally — not `git checkout`, which would take unrelated edits
+// with it.
+const workerPath = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "worker.js");
+const workerSrc = readFileSync(workerPath, "utf8");
+const TEST_BUILD = "abc1234 · 2026-01-01 00:00";
+const stamped = !process.env.BOOKWORM_URL && workerSrc.includes('const BUILD = "dev";');
+if (stamped)
+  writeFileSync(workerPath,
+    workerSrc.replace('const BUILD = "dev";', `const BUILD = "${TEST_BUILD}";`));
+// every exit from here on goes through this, including the boot timeout below
+const unstamp = () => { if (stamped) writeFileSync(workerPath, workerSrc); };
+
+// This suite writes push_subs and announced_builds straight into local D1, so
+// it applies the schema itself: a table the dev server has never seen is not
+// a failure worth debugging, and the file is idempotent.
+execFileSync("pnpm",
+  ["exec", "wrangler", "d1", "execute", "bookworm", "--local", "--file=schema.sql"],
+  { stdio: "ignore" });
+
 // --- boot wrangler dev unless a worker was pointed at ---
 let dev = null;
 if (!process.env.BOOKWORM_URL) {
@@ -92,7 +124,7 @@ while (true) {
     const r = await fetch(`${BASE}/api/books`, { headers: { authorization: `Bearer ${TOKEN}` } });
     if (r.ok) break;
   } catch { /* not up yet */ }
-  if (Date.now() > deadline) { dev?.kill(); cap.close(); throw new Error("worker never came up"); }
+  if (Date.now() > deadline) { dev?.kill(); cap.close(); unstamp(); throw new Error("worker never came up"); }
   await sleep(500);
 }
 
@@ -301,6 +333,62 @@ try {
     ? "ok (測試 / 新書 / republish all logged)"
     : "FAIL " + JSON.stringify(joined.slice(0, 300));
 
+  // 10. 新版本已上線 — the same channel, triggered by the deploy hook rather
+  // than by a publish. deploy.sh calls it on EVERY deploy, so exactly-once is
+  // the whole feature: what must never happen is a banner per workflow re-run.
+  if (!stamped) {
+    out.announceGate = out.announceFirst = out.announce = out.announceOnce =
+      out.announceLog = "skipped (BOOKWORM_URL set, or src/worker.js already carries a stamp)";
+  } else {
+    // a trigger anyone could pull is a trigger anyone could ring the owner's
+    // phone with, so the admin gate is part of this route's contract
+    const naked = await fetch(`${BASE}/api/admin/announce-build`, { method: "POST" });
+    out.announceGate = naked.status === 401
+      ? "ok (401 without the admin Bearer)" : `FAIL ${naked.status}`;
+
+    d1(`INSERT OR REPLACE INTO push_subs (endpoint, user, p256dh, auth, created_at)
+        VALUES ('${endpoint}', 'pushtest', '${sub.p256dh}', '${sub.auth}', 0)`);
+
+    // a fresh install must not greet its owner with "there is a new version"
+    d1("DELETE FROM announced_builds");
+    captured.length = 0;
+    const a0 = await (await post("/api/admin/announce-build", {})).json();
+    await sleep(1000);
+    out.announceFirst = a0.announced === false && /first build/.test(a0.reason ?? "") &&
+      captured.length === 0
+      ? "ok (first build recorded, not announced)"
+      : `FAIL ${JSON.stringify(a0)} pushes=${captured.length}`;
+
+    // with a history behind it, the same call rings — once
+    d1(`DELETE FROM announced_builds;
+        INSERT INTO announced_builds (build, stamp, created_at) VALUES ('0000000', 'older', 0)`);
+    captured.length = 0;
+    const a1 = await (await post("/api/admin/announce-build", {})).json();
+    for (let i = 0; i < 40 && !captured.length; i++) await sleep(250);
+    const aPayload = captured.length
+      ? await decrypt(captured[0].body).catch((e) => ({ error: String(e) }))
+      : {};
+    // the body is the stamp the WORKER carries, never anything the caller
+    // sent: deploy.sh says when to ring, the worker says what shipped
+    out.announce = a1.announced === true && a1.subs === 1 && captured.length === 1 &&
+      aPayload.title === "新版本已上線" && aPayload.body === TEST_BUILD && aPayload.url === "/"
+      ? "ok (decrypted: 新版本已上線 / the worker's own stamp)"
+      : `FAIL ${JSON.stringify(a1)} ${JSON.stringify(aPayload)}`;
+
+    // ...and never again for the same commit
+    captured.length = 0;
+    const a2 = await (await post("/api/admin/announce-build", {})).json();
+    await sleep(2000);
+    out.announceOnce = a2.announced === false && a2.reason === "already announced" &&
+      captured.length === 0
+      ? "ok (silent on re-deploy)" : `FAIL ${JSON.stringify(a2)} pushes=${captured.length}`;
+
+    await sleep(500);
+    const alogs = (await (await fetch(`${BASE}/api/testlog?page=push&limit=20`)).json()).logs ?? [];
+    out.announceLog = alogs.some((l) => l.data.includes(`新版本 ${TEST_BUILD}: 1 訂閱`))
+      ? "ok (logged)" : "FAIL not in the push log";
+  }
+
   // cleanup: drop the books this test published, index rows and all — these
   // were published under prefix == slug, so the prefix is also the book id
   for (const s of [slug, slug2, slug3, slug4])
@@ -313,7 +401,10 @@ try {
     }
 } finally {
   cap.close();
+  // kill first, then unstamp: wrangler dev watches src/ and would hot-reload
+  // the worker out from under a test that has not finished reading its logs
   dev?.kill();
+  unstamp();
 }
 
 console.log(JSON.stringify(out, null, 2));

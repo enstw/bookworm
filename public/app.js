@@ -723,9 +723,9 @@ async function renderLibrary() {
         }, t("lib.change")),
         el("br"),
         t("lib.bookmarkHint")),
-      // 新書通知 (Web Push): rendered only where the platform can deliver —
-      // on iPhone that means the installed PWA; a Safari tab has no
-      // PushManager and the row simply doesn't exist
+      // 新書上架 / 新版本已上線 (Web Push): rendered only where the platform
+      // can deliver — on iPhone that means the installed PWA; a Safari tab
+      // has no PushManager and the row simply doesn't exist
       "PushManager" in window && "Notification" in window
         ? el("p", { class: "muted small" }, t("push.label"),
             el("button", { id: "pushBtn", class: "linklike", onclick: togglePush }, "…"),

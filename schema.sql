@@ -88,9 +88,21 @@ CREATE TABLE IF NOT EXISTS readers (
   created_at INTEGER NOT NULL DEFAULT 0
 );
 
--- Web Push subscriptions (新書上架通知), one row per browser push endpoint,
--- registered from the library footer. Rows are dropped when the push
--- service reports the endpoint gone (404/410) or the user unsubscribes.
+-- Builds that have already been announced by push (新版本已上線 — see
+-- announceBuild in the worker). Keyed on the COMMIT alone, not the whole
+-- stamp: re-running the deploy workflow on the same commit restamps the
+-- clock but is the same version, and a rollback lands on a build that
+-- already rang. Persistent like readers and positions — no DELETE here, or
+-- every deploy would re-announce the build it just wrote.
+CREATE TABLE IF NOT EXISTS announced_builds (
+  build      TEXT PRIMARY KEY,
+  stamp      TEXT    NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL DEFAULT 0
+);
+
+-- Web Push subscriptions (新書上架、新版本通知), one row per browser push
+-- endpoint, registered from the library footer. Rows are dropped when the
+-- push service reports the endpoint gone (404/410) or the user unsubscribes.
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint   TEXT PRIMARY KEY,
   user       TEXT NOT NULL DEFAULT '',
