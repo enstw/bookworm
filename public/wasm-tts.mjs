@@ -37,8 +37,8 @@ export const RATE = 16000; // the model's own rate; lame encodes at it directly
 // ---- segmentation ---------------------------------------------------------
 // One sentence, one unit. piper needed a clause-level split because espeak ate
 // the commas and the pauses had to be spliced back in downstream; Matcha reads
-// ，。！？ as real tokens and shapes the rest with scaleSilence, so the only
-// reason left to cut text up is latency and offset resolution.
+// ，。！？ as real tokens and pauses on them by itself, so the only reason left
+// to cut text up is latency and offset resolution.
 //
 // Spans, not strings: frac0/frac1 are the unit's share of the prompt, and
 // deriving them from indices keeps them exact instead of reconstructing them
@@ -172,8 +172,8 @@ onmessage = async (e) => {
       // noise 1 and length 1 are the defaults the phone was verified with, and
       // deliberately not sherpa's 0.667 noise. The silence is NOT left at its
       // ported default: scaleSilence is a pause CUTTER, not a pause generator —
-      // it finds every stretch of quiet over 0.2 s and shortens it to `scale`,
-      // and at sentence length the only silences that qualify are the model's
+      // it finds every stretch of quiet over 0.2 s and shortens it to that
+      // fraction, and at sentence length the only silences that qualify are the
       // own 。 and ， pauses. Measured on one paragraph: at 0.2 a comma is
       // 55 ms and a full stop 147 ms; at 1 (the pass short-circuits, waveform
       // untouched) they are 280 ms and 740 ms. The phone heard the first as no
