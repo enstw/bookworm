@@ -112,12 +112,30 @@ if [[ -n "$URL" ]]; then
   # announces its own stamp and keeps its own exactly-once record, so this is
   # safe to call on every deploy — a re-run or a rollback stays silent. Never
   # fatal: the deploy has already succeeded by the time we get here.
+  # The stamp goes along so the worker can tell us it is the version we just
+  # deployed. Cloudflare can still route this to the OLD isolate for a few
+  # seconds, and that one would announce ITS build, find it already recorded,
+  # and report success while the new build silently never rings — which is
+  # exactly what happened on the deploy of e96279f. Retry until the answer
+  # comes from the right worker.
   echo "==> announcing the build"
-  if ANNOUNCE=$(curl -fsS -X POST -H "authorization: Bearer $ADMIN_TOKEN" \
-       "$URL/api/admin/announce-build"); then
-    echo "    $ANNOUNCE"
-  else
+  # empty when the tree was dirty and nothing was stamped; the worker then
+  # skips the check and answers "unstamped build" anyway
+  WANT=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))' \
+    "${BUILD_ID:-}")
+  ANNOUNCE=""
+  for _ in $(seq 15); do
+    ANNOUNCE=$(curl -fsS -X POST -H "authorization: Bearer $ADMIN_TOKEN" \
+      "$URL/api/admin/announce-build?build=$WANT") || { ANNOUNCE=""; break; }
+    grep -q '"stale worker"' <<<"$ANNOUNCE" || break
+    sleep 2
+  done
+  if [[ -z "$ANNOUNCE" ]]; then
     echo "    (announcement failed — the deploy itself is fine)" >&2
+  elif grep -q '"stale worker"' <<<"$ANNOUNCE"; then
+    echo "    (still the old worker after 30 s — this build was not announced)" >&2
+  else
+    echo "    $ANNOUNCE"
   fi
   echo
   echo "✓ deployed: $URL"

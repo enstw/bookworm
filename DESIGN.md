@@ -266,7 +266,13 @@ the pre-publication history, which lives in the owner's private archive.
   it here would fight that note's "seen it, not now" dismissal. Announcing
   only *some* deploys was considered and dropped — a `sw.js` SHELL bump is
   about cache invalidation, not about whether a change is worth hearing
-  about, and md-only pushes already skip the deploy entirely.
+  about, and md-only pushes already skip the deploy entirely. The hook does
+  pass the stamp it deployed, for one reason: **the edge can still be running
+  the previous version seconds after `wrangler deploy` returns.** The deploy
+  of `e96279f` landed on the old isolate, which announced *its* stamp, found
+  it already recorded and reported success — so the build that had just
+  shipped never rang and never would. A mismatch now answers `stale worker`
+  and `deploy.sh` retries for 30 s.
 - **testlog is the phone's console.** An iPhone has no console and a push
   lands with no page alive, so `/api/testlog` is unauthenticated by design,
   size-capped, self-pruned to the newest 500 rows — a permanent tenant. The

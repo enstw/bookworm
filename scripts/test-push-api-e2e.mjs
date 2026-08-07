@@ -103,6 +103,9 @@ if (stamped)
     workerSrc.replace('const BUILD = "dev";', `const BUILD = "${TEST_BUILD}";`));
 // every exit from here on goes through this, including the boot timeout below
 const unstamp = () => { if (stamped) writeFileSync(workerPath, workerSrc); };
+// deploy.sh names the build it just deployed, and the worker refuses to answer
+// for any other one — see the stale-isolate note in announceBuild
+const announceUrl = (b) => `/api/admin/announce-build?build=${encodeURIComponent(b)}`;
 
 // This suite writes push_subs and announced_builds straight into local D1, so
 // it applies the schema itself: a table the dev server has never seen is not
@@ -337,8 +340,9 @@ try {
   // than by a publish. deploy.sh calls it on EVERY deploy, so exactly-once is
   // the whole feature: what must never happen is a banner per workflow re-run.
   if (!stamped) {
-    out.announceGate = out.announceFirst = out.announce = out.announceOnce =
-      out.announceLog = "skipped (BOOKWORM_URL set, or src/worker.js already carries a stamp)";
+    out.announceGate = out.announceStale = out.announceFirst = out.announce =
+      out.announceOnce = out.announceLog =
+      "skipped (BOOKWORM_URL set, or src/worker.js already carries a stamp)";
   } else {
     // a trigger anyone could pull is a trigger anyone could ring the owner's
     // phone with, so the admin gate is part of this route's contract
@@ -349,10 +353,27 @@ try {
     d1(`INSERT OR REPLACE INTO push_subs (endpoint, user, p256dh, auth, created_at)
         VALUES ('${endpoint}', 'pushtest', '${sub.p256dh}', '${sub.auth}', 0)`);
 
-    // a fresh install must not greet its owner with "there is a new version"
+    // A call that lands on the previous version — Cloudflare kept routing to
+    // it for seconds after `wrangler deploy` returned — must not answer for a
+    // build it isn't. Left unchecked it recorded the OLD stamp as announced
+    // and reported success, and the build that had just shipped never rang.
     d1("DELETE FROM announced_builds");
     captured.length = 0;
-    const a0 = await (await post("/api/admin/announce-build", {})).json();
+    const aS = await (await post(announceUrl("9999999 · 2099-01-01 00:00"), {})).json();
+    await sleep(500);
+    const staleRows = JSON.parse(
+      d1("SELECT COUNT(*) n FROM announced_builds"))[0]?.results?.[0]?.n;
+    out.announceStale = aS.announced === false && aS.reason === "stale worker" &&
+      captured.length === 0 && staleRows === 0
+      ? "ok (a stamp that isn't ours announces nothing and records nothing)"
+      : `FAIL ${JSON.stringify(aS)} pushes=${captured.length} rows=${staleRows}`;
+
+    // a fresh install must not greet its owner with "there is a new version"
+    // (from here on the calls carry the matching stamp, the way deploy.sh
+    // does, which is also what proves the guard lets the right one through)
+    d1("DELETE FROM announced_builds");
+    captured.length = 0;
+    const a0 = await (await post(announceUrl(TEST_BUILD), {})).json();
     await sleep(1000);
     out.announceFirst = a0.announced === false && /first build/.test(a0.reason ?? "") &&
       captured.length === 0
@@ -363,7 +384,7 @@ try {
     d1(`DELETE FROM announced_builds;
         INSERT INTO announced_builds (build, stamp, created_at) VALUES ('0000000', 'older', 0)`);
     captured.length = 0;
-    const a1 = await (await post("/api/admin/announce-build", {})).json();
+    const a1 = await (await post(announceUrl(TEST_BUILD), {})).json();
     for (let i = 0; i < 40 && !captured.length; i++) await sleep(250);
     const aPayload = captured.length
       ? await decrypt(captured[0].body).catch((e) => ({ error: String(e) }))
@@ -377,7 +398,7 @@ try {
 
     // ...and never again for the same commit
     captured.length = 0;
-    const a2 = await (await post("/api/admin/announce-build", {})).json();
+    const a2 = await (await post(announceUrl(TEST_BUILD), {})).json();
     await sleep(2000);
     out.announceOnce = a2.announced === false && a2.reason === "already announced" &&
       captured.length === 0

@@ -726,6 +726,16 @@ async function pushNewBook(env, ctx, title) {
 // workflow, a rollback, or a second call by hand all stay silent.
 async function announceBuild(request, env, ctx) {
   if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+  // The edge can still be serving the PREVIOUS version a second after
+  // `wrangler deploy` returns, and deploy.sh calls this immediately. Measured
+  // on the deploy of e96279f: the call landed on the old isolate, which read
+  // its own stamp (45c24a1), found it already recorded and reported success —
+  // so the build that had just shipped never rang, and never would. The caller
+  // says which build it deployed; anything else is a stale isolate to retry,
+  // not an answer to believe.
+  const want = new URL(request.url).searchParams.get("build");
+  if (want && want !== BUILD)
+    return json({ announced: false, reason: "stale worker", build: BUILD });
   // An unstamped worker is a local `wrangler deploy` with edits in the tree
   // (see deploy.sh) or `wrangler dev`. "dev" is not a version anyone can be
   // told to update to, and a dev run must never ring the owner's phone.
