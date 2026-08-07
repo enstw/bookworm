@@ -209,8 +209,13 @@ the pre-publication history, which lives in the owner's private archive.
   `OVERRIDES` one line at a time from listening tests, each with a pinned
   case in `scripts/test-wasm-frontend.mjs`; a flat table cannot disambiguate
   著, and guessing entries up front just moves the error. Pauses are the
-  model's own punctuation tokens plus `scaleSilence` — the piper-era
-  `PAUSE_MS` splicing existed only because espeak ate the commas. One
+  model's own punctuation tokens at their own length: `silenceScale: 1`,
+  overriding the ported default of 0.2, which shortens every silence over
+  0.2 s to a fifth — that is precisely the 。 and ， pauses, and on the phone
+  it read as not pausing at punctuation at all (2026-08-08). 0.2 came from
+  the bench, where a pause is dead time nobody is listening through. The
+  piper-era `PAUSE_MS` splicing existed only because espeak ate the commas
+  and is not coming back — the knob here is `silenceScale`. One
   sentence is one unit (`segments()`, reusing `ENDERS`/`CLOSERS` from
   `tts-core.mjs` so the two splitters cannot drift); the worker
   lame-encodes each to mp3 and playback appends them to ONE

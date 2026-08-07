@@ -169,9 +169,15 @@ onmessage = async (e) => {
         tokensText: new TextDecoder().decode(m.tokens),
         pronunciationOverrides: m.overrides,
       });
-      // every knob at its default — the configuration that was verified on the
-      // phone (noise 1, length 1, silence 0.2), not sherpa's 0.667
-      engine = self.MatchaSynthesis.createEngine({ ORT: rt });
+      // noise 1 and length 1 are the defaults the phone was verified with, and
+      // deliberately not sherpa's 0.667 noise. The silence is NOT left at its
+      // ported default: scaleSilence(0.2) hunts down every stretch of quiet
+      // longer than 0.2 s and shortens it to a fifth, which is the model's own
+      // 。 and ， pauses and nothing else. On the phone that read as not
+      // pausing at punctuation at all (2026-08-08). At 1 it short-circuits and
+      // the model's own timing survives — sherpa's default too; 0.2 came from
+      // the bench, where waiting through pauses is a cost with no reader.
+      engine = self.MatchaSynthesis.createEngine({ ORT: rt, silenceScale: 1 });
       const info = await engine.init({
         acousticModel: new Uint8Array(m.acoustic),
         vocoderModel: new Uint8Array(m.vocoder),
