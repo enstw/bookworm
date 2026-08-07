@@ -208,14 +208,20 @@ the pre-publication history, which lives in the owner's private archive.
   銀行 as yín xíng, 看著 as kàn zhù, 會計 as huì jì. Corrections accrue in
   `OVERRIDES` one line at a time from listening tests, each with a pinned
   case in `scripts/test-wasm-frontend.mjs`; a flat table cannot disambiguate
-  著, and guessing entries up front just moves the error. Pauses are the
-  model's own punctuation tokens at their own length: `silenceScale: 1`,
-  overriding the ported default of 0.2, which shortens every silence over
-  0.2 s to a fifth — that is precisely the 。 and ， pauses, and on the phone
-  it read as not pausing at punctuation at all (2026-08-08). 0.2 came from
-  the bench, where a pause is dead time nobody is listening through. The
+  著, and guessing entries up front just moves the error. **Pauses are the
+  model's own, unedited: `silenceScale: 1`** (2026-08-08), overriding the
+  ported default of 0.2 — `scaleSilence` is not a pause generator but a pause
+  *cutter*, a hand-written pass that finds every silence over 0.2 s and
+  shortens it to a fifth, and at 1 it returns the waveform untouched.
+  Measured on one paragraph, silent runs at 0.2 vs 1: **， 55 ms → 280 ms,
+  。 147 ms → 740 ms.** wasmtts ships the same 0.2 default, so the bench it
+  came from is no counter-example: it suppresses commas there too. The
   piper-era `PAUSE_MS` splicing existed only because espeak ate the commas
-  and is not coming back — the knob here is `silenceScale`. One
+  and is not coming back. One caveat measured at the same time: an isolated
+  sentence carries ~590 ms of trailing and ~140 ms of leading silence, so a
+  unit JOIN pays both (740 ms) where the model rendering the same two
+  sentences in one pass pauses 306 ms. If that ever reads as draggy the fix
+  is packing several sentences into one unit, not re-arming the cutter. One
   sentence is one unit (`segments()`, reusing `ENDERS`/`CLOSERS` from
   `tts-core.mjs` so the two splitters cannot drift); the worker
   lame-encodes each to mp3 and playback appends them to ONE

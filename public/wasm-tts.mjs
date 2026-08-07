@@ -171,12 +171,13 @@ onmessage = async (e) => {
       });
       // noise 1 and length 1 are the defaults the phone was verified with, and
       // deliberately not sherpa's 0.667 noise. The silence is NOT left at its
-      // ported default: scaleSilence(0.2) hunts down every stretch of quiet
-      // longer than 0.2 s and shortens it to a fifth, which is the model's own
-      // 。 and ， pauses and nothing else. On the phone that read as not
-      // pausing at punctuation at all (2026-08-08). At 1 it short-circuits and
-      // the model's own timing survives — sherpa's default too; 0.2 came from
-      // the bench, where waiting through pauses is a cost with no reader.
+      // ported default: scaleSilence is a pause CUTTER, not a pause generator —
+      // it finds every stretch of quiet over 0.2 s and shortens it to `scale`,
+      // and at sentence length the only silences that qualify are the model's
+      // own 。 and ， pauses. Measured on one paragraph: at 0.2 a comma is
+      // 55 ms and a full stop 147 ms; at 1 (the pass short-circuits, waveform
+      // untouched) they are 280 ms and 740 ms. The phone heard the first as no
+      // punctuation at all, which it effectively is.
       engine = self.MatchaSynthesis.createEngine({ ORT: rt, silenceScale: 1 });
       const info = await engine.init({
         acousticModel: new Uint8Array(m.acoustic),
