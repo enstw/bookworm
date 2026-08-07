@@ -342,14 +342,18 @@ function ensureStreamEl() {
   a.addEventListener("playing", () => {
     player.playing = true; player.status = "";
     if (msn) msn.playbackState = "playing";
+    slog("播放");
     updatePlayerBar();
   });
   a.addEventListener("pause", () => {
     player.playing = false;
     if (msn) msn.playbackState = "paused";
+    slog("暫停");
     updatePlayerBar();
   });
-  a.addEventListener("waiting", () => { player.status = "loading"; updatePlayerBar(); });
+  // 待料 = the timeline ran dry; 停滯 = the element gave up waiting for it
+  a.addEventListener("waiting", () => { player.status = "loading"; slog("待料"); updatePlayerBar(); });
+  a.addEventListener("stalled", () => slog("停滯"));
   a.addEventListener("timeupdate", onStreamTime);
   // the unlock silence (data: URI) also ends — only a real stream ending
   // means the whole book finished
@@ -390,7 +394,10 @@ function streamPlayFrom(ci, off) {
   stream.chunksBy.set(ci, chunks);
   player.chapIdx = ci;
   player.chunks = chunks;
-  streamStart(ci, ttsCore.chunkIndexFor(chunks, off));
+  const k = ttsCore.chunkIndexFor(chunks, off);
+  wlog(`start ci${ci} k${k} off${off} 線上串流`);
+  hbStart();
+  streamStart(ci, k);
 }
 
 // (re)build the MediaSource and start playing at chunk k of chapter ci
@@ -418,7 +425,8 @@ function streamStart(ci, k) {
     feedStream(gen);
   });
   // the managed source tells us when it wants data (incl. from lock screen)
-  ms.addEventListener("startstreaming", () => feedStream(gen));
+  ms.addEventListener("startstreaming", () => { slog("要料"); feedStream(gen); });
+  ms.addEventListener("endstreaming", () => slog("停料"));
   stream.el.src = url;
   player.status = "loading";
   stream.el.play().catch(() => { player.status = "error"; updatePlayerBar(); });
@@ -599,13 +607,21 @@ export const wasm = {
   userPaused: false, // deliberate ⏸ — the visible-recovery kick must not undo it
 };
 
+// how far ahead of the playhead synthesis may get before it sleeps
+const AHEAD_S = 90;
+
 // ---- flight recorder ----------------------------------------------------
 // Background/lock behaviour only exists on the phone and the phone has no
-// console: while the wasm engine drives, mirror the /wasmtest timeline into
+// console: while a listening session runs, mirror the /wasmtest timeline into
 // /api/testlog (page=player) — unit synth ×N, play()/播畢 with visibility,
-// queue depth heartbeat. A log that stops mid-line with no error is itself
-// the diagnosis (iOS killed or suspended the page). Read back with
-// /api/testlog?page=player.
+// media-element transitions, queue depth heartbeat. A log that stops mid-line
+// with no error is itself the diagnosis (iOS killed or suspended the page).
+// Read back with /api/testlog?page=player.
+//
+// Both stream engines record, not just the wasm one: they share the element
+// and the MediaSource discipline, so "the online engine did the same thing" is
+// what separates a platform rule from an engine bug — and there is no other
+// way to find that out from an iPhone.
 const wlog = (() => {
   let buf = [], timer = 0, t0 = 0, device = "";
   try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
@@ -633,17 +649,39 @@ const wlog = (() => {
   return line;
 })();
 
-let wasmHb = 0;
-function wasmHbStart() {
-  if (wasmHb) return;
-  wasmHb = setInterval(() => {
-    if (!player.on || !useWasm()) { clearInterval(wasmHb); wasmHb = 0; return; }
-    const played = stream.local
+// One line of media-element truth, for exactly the lock-screen/background
+// question: of "iOS paused us", "the timeline ran dry" and "the page was
+// frozen", which actually happened. The third has no event to listen for — it
+// shows as a GAP in the recorder's own clock — which is why the dull lines earn
+// their place as much as the alarming ones. 段 is the buffered range count: a
+// timeline the media stack purged under us looks different from one we simply
+// stopped feeding.
+function slog(what) {
+  if (!player.on) return; // teardown pauses the element; that is not news
+  const a = stream.el;
+  const ahead = stream.sb && a ? Math.max(0, bufferedEnd(stream.sb) - a.currentTime) : 0;
+  wlog(`${what} @${(a?.currentTime ?? 0).toFixed(0)}s 緩${ahead.toFixed(0)}s 段${stream.sb?.buffered.length ?? 0}`
+    + (stream.local ? ` 佇${wasm.queue.length - wasm.nextPlay}` : "")
+    + ` vis=${document.visibilityState}`
+    + (stream.ms && "streaming" in stream.ms ? ` 串${stream.ms.streaming}` : ""));
+}
+
+let hb = 0;
+function hbStart() {
+  if (hb) return;
+  hb = setInterval(() => {
+    if (!player.on) { clearInterval(hb); hb = 0; return; }
+    const onStream = !!stream.ms; // either stream engine owns the timeline
+    const played = onStream
       ? (player.playing && stream.el ? `@${stream.el.currentTime.toFixed(0)}s` : "無")
       : (player.playing && wasm.cur ? `句${wasm.nextPlay} ${player.audio?.currentTime.toFixed(0)}s/${wasm.cur.secs.toFixed(0)}s` : "無");
-    const buffered = stream.local && stream.sb && stream.el
+    const buffered = onStream && stream.sb && stream.el
       ? `緩${Math.max(0, bufferedEnd(stream.sb) - stream.el.currentTime).toFixed(0)}s ` : "";
-    wlog(`♥ vis=${document.visibilityState} 播=${played} ${buffered}佇${wasm.queue.length - wasm.nextPlay}(${Math.round(wasmQueuedSecs())}s) ${wasm.synthDone ? "合成畢" : "合成中"}`);
+    // the synthesis queue exists only under the wasm engine; the online one
+    // fetches straight into the SourceBuffer, so 緩 already says everything
+    const synth = useWasm()
+      ? `佇${wasm.queue.length - wasm.nextPlay}(${Math.round(wasmQueuedSecs())}s) ${wasm.synthDone ? "合成畢" : "合成中"}` : "";
+    wlog(`♥ vis=${document.visibilityState} 播=${played} ${buffered}${synth}`);
   }, 10000);
 }
 
@@ -683,7 +721,7 @@ function wasmPlayFrom(ci, off) {
   updatePlayerBar();
   setMediaSession();
   wlog(`start ci${ci} k${player.chunkIdx} off${off} ${wasmStreamOk ? "mms" : "chain"}`);
-  wasmHbStart();
+  hbStart();
   if (wasmStreamOk) wasmStreamStart();
   wasmSynthLoop(gen, ci, chunks, player.chunkIdx);
 }
@@ -710,7 +748,8 @@ function wasmStreamStart() {
     stream.sb = sb;
     wasmFeedLocal(gen);
   });
-  ms.addEventListener("startstreaming", () => wasmFeedLocal(gen)); // MMS only
+  ms.addEventListener("startstreaming", () => { slog("要料"); wasmFeedLocal(gen); }); // MMS only
+  ms.addEventListener("endstreaming", () => slog("停料"));                            // MMS only
   stream.el.src = url;
   stream.el.play().then(
     () => wlog(`stream play() ok vis=${document.visibilityState}`),
@@ -727,6 +766,12 @@ function wasmFeedLocal(gen) {
   if (sb.updating) return; // trim in progress; updateend re-kicks
   const u = wasm.queue[wasm.nextPlay];
   if (!u) {
+    // Nothing left to append means the SourceBuffer is the whole runway, and
+    // synthesis may be asleep on backpressure with only its 1 s timer to wake
+    // it. A backgrounded page's timers do not fire — playback progress is the
+    // one clock iOS keeps honest, so ring the handle from here as the runway
+    // shortens rather than trusting setTimeout to notice.
+    if (wasmQueuedSecs() <= AHEAD_S) wasm.wake?.();
     if (wasm.synthDone && !stream.pendingSeg && stream.ms?.readyState === "open") {
       try { stream.ms.endOfStream(); } catch { /* mid-update */ }
     }
@@ -794,11 +839,11 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
         });
         wlog(`句${wasm.queue.length} 合成${(u.ms / 1000).toFixed(1)}s → 音${u.secs.toFixed(1)}s ×${(u.secs * 1000 / (u.ms || 1)).toFixed(1)} vis=${document.visibilityState}`);
         wasmPump();
-        // ≲90 s synthesized ahead. Sleep on a timer AND a wake handle: iOS
-        // throttles background timers, but `ended` pings wake directly, so
-        // refill stays event-driven no matter what the clock does.
+        // ≲AHEAD_S synthesized ahead. Sleep on a timer AND a wake handle: iOS
+        // throttles background timers, but playback pings wake directly (see
+        // wasmFeedLocal), so refill stays event-driven whatever the clock does.
         let slept = false;
-        while (gen === wasm.gen && wasmQueuedSecs() > 90) {
+        while (gen === wasm.gen && wasmQueuedSecs() > AHEAD_S) {
           slept = true;
           await new Promise((r) => { wasm.wake = r; setTimeout(r, 1000); });
           wasm.wake = null;
