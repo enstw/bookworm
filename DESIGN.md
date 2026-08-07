@@ -196,7 +196,9 @@ the pre-publication history, which lives in the owner's private archive.
   Matcha replaced piper 華言 on quality — 90 vs 60 in a blind listening
   test (Kokoro 80), piper marked 外國腔 — at comparable cost: measured RTF
   0.1317–0.1360 (×7.3–7.6 realtime) single-threaded on desktop, and
-  verified on the phone by the owner before the swap. piper, its espeak
+  verified on the phone by the owner before the swap, and the integration —
+  pack download, MediaSource timeline, lock-screen readout — passed on device
+  after it (2026-08-08). piper, its espeak
   phonemizer and the melo-era 台灣讀音 overlay live in git history.
   **簡繁直輸: traditional and simplified text go straight into the lexicon,
   with no OpenCC anywhere.** The cost is measured and accepted, not
