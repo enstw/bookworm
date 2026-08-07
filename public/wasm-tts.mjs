@@ -1,67 +1,81 @@
-// Offline TTS engine: piper 華言 (zh_CN-huayan-medium) under onnxruntime-web,
-// single-threaded. Melo fp32 hit ×1.7 realtime with 4 wasm threads but cooked
-// the phone (user 08-03) — huayan medium keeps realtime on ONE thread, so the
-// threads knob (bw_tts_threads) and the threaded ort build went with it; the
-// vetted melo TW-lexicon work survives at `git show 1bc494f:public/wasm-tts.mjs`.
-// player.mjs owns playback; this module owns synthesis: assets → espeak
-// phonemize (piper_phonemize wasm, main thread — milliseconds per chunk) →
-// clause items → Worker inference → sentence-sized units with page-spliced
-// pauses. espeak's "cmn" voice reads traditional text directly — no OpenCC.
+// Offline TTS engine: Matcha zh-en (matcha-icefall-zh-en) under
+// onnxruntime-web, ONE wasm thread, no WebGPU. It replaced piper 華言, which
+// scored 60 to Matcha's 90 in a blind listening test at roughly the same CPU
+// cost; the piper engine, its espeak phonemizer and the melo-era TW lexicon
+// survive at `git show <the commit before this one>:public/wasm-tts.mjs`.
+// player.mjs owns playback; this module owns synthesis: assets → lexicon
+// lookup → Worker inference → one sentence per unit.
+//
+// Two models, not one. The acoustic model emits a mel spectrogram and Vocos
+// turns it into magnitude + phase, which matcha-synthesis.js inverse-FFTs into
+// audio — so both sessions must be live at once, and dropping the raw ONNX
+// buffers the moment the sessions exist is load-bearing on a phone, not an
+// optimisation.
+//
+// 簡繁直輸: traditional and simplified text both go straight into the lexicon,
+// with no OpenCC anywhere. That is a decision with a known cost — see the
+// header of matcha-frontend.js — and corrections arrive as override entries
+// backed by listening tests, not as a conversion layer.
 //
 // The big binaries ride the same "bw-wasmtts" Cache API bucket as /wasmtest
-// (same /api/wasmtts/ keys), so a phone that ran the medium diagnostic
-// already holds the pack — packReady() is what flips the reader to this
-// engine. The pack is only ever downloaded by /wasmtest, never here: a tap
-// on ▶ must not quietly pull 60 MB over cellular.
+// (same /api/wasmtts/ keys), so a phone that ran the diagnostic already holds
+// the pack — packReady() is what flips the reader to this engine. The pack is
+// only ever downloaded by /wasmtest, never here: a tap on ▶ must not quietly
+// pull 137 MB over cellular.
 //
 // Pure text helpers live up top with no browser APIs so node tests can
 // import them (see scripts/test-wasm-frontend.mjs).
 
-// ---- frontend: clause split + espeak id remap -----------------------------
-// espeak erases commas (they reach the model as plain spaces, and training
-// saw the same pipeline, so the model never learned a pause symbol). Split at
-// clause punctuation, phonemize each clause as its own entry, splice real
-// silence downstream. Orphan punctuation (a clause that trimmed to nothing)
-// folds into the previous clause's mark.
-const CLAUSE_RE = /([。！？；：，、!?;:,])/;
-export function clauses(text) {
-  const parts = text.split(CLAUSE_RE);
+// Relative, unlike player.mjs's absolute "/tts-core.mjs": this module is also
+// imported straight off disk by scripts/test-wasm-frontend.mjs, where a
+// root-absolute specifier would point at the filesystem root. "./" resolves to
+// /tts-core.mjs in the browser and public/tts-core.mjs in node.
+import { ENDERS, CLOSERS } from "./tts-core.mjs";
+
+export const RATE = 16000; // the model's own rate; lame encodes at it directly
+
+// ---- segmentation ---------------------------------------------------------
+// One sentence, one unit. piper needed a clause-level split because espeak ate
+// the commas and the pauses had to be spliced back in downstream; Matcha reads
+// ，。！？ as real tokens and shapes the rest with scaleSilence, so the only
+// reason left to cut text up is latency and offset resolution.
+//
+// Spans, not strings: frac0/frac1 are the unit's share of the prompt, and
+// deriving them from indices keeps them exact instead of reconstructing them
+// from lengths that normalisation has already changed.
+const SEG_MAX = 72; // longer than this and the wait for first audio shows
+const SEG_TARGET = 60;
+const SEG_PAUSES = "，、：,;";
+
+export function segments(prompt) {
   const out = [];
-  for (let i = 0; i < parts.length; i += 2) {
-    const t = parts[i].trim();
-    const punct = parts[i + 1] ?? "";
-    if (t) out.push({ text: t, punct });
-    else if (out.length && punct) out[out.length - 1].punct = punct;
+  let s = 0;
+  for (let i = 0; i < prompt.length; i++) {
+    if (!ENDERS.includes(prompt[i])) continue;
+    let e = i + 1;
+    while (e < prompt.length && CLOSERS.includes(prompt[e])) e++;
+    push(s, e);
+    s = e;
+    i = e - 1;
   }
+  if (s < prompt.length) push(s, prompt.length);
   return out;
-}
 
-// The CLI's built-in id table is NEWER than the model's phoneme_id_map, so
-// ids are rebuilt through the model's own map: keep the structural 0/1/2
-// (pad/BOS/EOS — they only exist in the id stream), re-map the rest by
-// walking ids and phoneme strings in lockstep. Symbols the model lacks are
-// dropped and counted (medium keeps espeak's tone digits).
-export function remapIds(map, ids, phonemes) {
-  const out = [];
-  let p = 0, miss = 0;
-  for (const id of ids) {
-    if (id <= 2) { out.push(id); continue; }
-    const hit = map[phonemes[p++]];
-    if (hit) out.push(hit[0]);
-    else miss++;
+  // A "sentence" with no terminal mark for hundreds of chars is common in
+  // dialogue-heavy prose; sub-split it at secondary pauses the way
+  // chunkChapter's subSplit does, hard-cutting only as a last resort.
+  function push(a, b) {
+    if (!prompt.slice(a, b).trim()) return; // whitespace-only: nothing to say
+    if (b - a <= SEG_MAX) return void out.push({ text: prompt.slice(a, b), start: a, end: b });
+    let cut = a;
+    for (let i = a; i < b; i++) {
+      if ((SEG_PAUSES.includes(prompt[i]) && i + 1 - cut >= SEG_TARGET) || i + 1 - cut >= SEG_MAX) {
+        out.push({ text: prompt.slice(cut, i + 1), start: cut, end: i + 1 });
+        cut = i + 1;
+      }
+    }
+    if (cut < b) out.push({ text: prompt.slice(cut, b), start: cut, end: b });
   }
-  return { ids: out, miss };
-}
-
-// ---- pause ownership (values validated by ear on-device) ------------------
-export const PAUSE_MS = { "。": 450, "！": 450, "？": 450, "；": 320, "：": 260, "，": 200, "、": 160, ".": 450, "!": 450, "?": 450, ";": 320, ":": 260, ",": 200 };
-export const UNIT_ENDERS = "。！？.!?";
-export const UNIT_MAX_S = 12;
-
-export function trimTail(f32, rate) {
-  let end = f32.length;
-  while (end > 0 && Math.abs(f32[end - 1]) < 0.004) end--;
-  return f32.subarray(0, Math.min(f32.length, end + Math.floor(rate * 0.08)));
 }
 
 // Float32 PCM → 16-bit mono WAV (what <audio> can play from a blob URL)
@@ -77,17 +91,43 @@ export function mkWav(f32, rate) {
   return new Blob([v.buffer], { type: "audio/wav" });
 }
 
+// ---- pronunciation overrides ----------------------------------------------
+// Grown one line at a time from listening tests, never designed up front.
+// Keys are the literal text as it appears in a book — there is no conversion
+// step — and a single-char key is shadowed wherever a longer lexicon match
+// wins, so prefer whole words. Every entry that lands here gets a case in the
+// MATCHA_MODEL_DIR-gated block of scripts/test-wasm-frontend.mjs.
+export const OVERRIDES = {
+  // Absent from the lexicon in both spellings, so per-char fallback says
+  // la1 ji1 — the mainland reading. Confirmed by ear in the wasmtts iPhone run.
+  "垃圾": "le4 se4",
+};
+
 // ---- assets ---------------------------------------------------------------
 const CACHE = "bw-wasmtts"; // shared with /wasmtest — one download, two pages
-const MODEL_FILES = ["zh_CN-huayan-medium.onnx", "zh_CN-huayan-medium.onnx.json", "piper_phonemize.data"];
 
-// pack = the model files /wasmtest downloads; the small ort/phonemizer pieces
-// fetch on demand (and cache) because they are cheap even on cellular
+// The pack /wasmtest downloads. ort's wasm is 12.9 MB and belongs in the gate:
+// unlike the piper era's small glue files, losing it means a 13 MB cellular
+// re-download, not a rounding error. Sizes are what the progress bar counts.
+export const PACK_FILES = [
+  { name: "matcha-acoustic-steps3.onnx", bytes: 75717082, label: "聲學模型" },
+  { name: "matcha-vocos-16khz-univ.onnx", bytes: 53882848, label: "聲碼器" },
+  { name: "matcha-lexicon.txt", bytes: 1400278, label: "詞典" },
+  { name: "matcha-tokens.txt", bytes: 21146, label: "音素表" },
+  { name: "ort-1.26.0-dev-wasm-simd-threaded.wasm", bytes: 12942611, label: "推論引擎" },
+];
+
+// The ort build this engine was verified against, byte-for-byte. The release
+// filename carries the version, so a bump that forgets to re-cut the release
+// 404s instead of drifting; this catches the other direction — a re-cut release
+// under the same name — and says so, rather than failing inside instantiation.
+const ORT_WASM_BYTES = 12942611;
+
 export async function packReady() {
   try {
     const cache = await caches.open(CACHE);
-    for (const f of MODEL_FILES)
-      if (!(await cache.match("/api/wasmtts/" + f))) return false;
+    for (const f of PACK_FILES)
+      if (!(await cache.match("/api/wasmtts/" + f.name))) return false;
     return true;
   } catch { return false; } // private mode: no cache, no pack
 }
@@ -105,41 +145,59 @@ async function cachedBuf(url) {
 }
 
 // ---- inference worker -----------------------------------------------------
-// session.run blocks JS for a second-plus per unit — in a Worker that never
-// touches the main thread's chain-swap `ended` handlers. The ort UMD and
-// wasm arrive as buffers (blob importScripts), so the worker works offline
-// and never re-downloads.
+// session.run blocks JS for hundreds of ms per sentence — in a Worker that
+// never touches the main thread's playback handlers. Everything the worker
+// needs arrives as a buffer and is importScripts'd from a blob URL, so it
+// works offline and never re-downloads. The one exception is ort's loader
+// glue: ort import()s it by URL, which a blob cannot satisfy in a classic
+// worker, so it stays a same-origin asset and rides the service worker shell.
 const WORKER_SRC = `
-let session, rt, scales; // rt, not ort: the UMD script declares the global "ort" itself
+let rt, frontend, engine; // rt, not ort: the UMD script declares the global "ort" itself
 onmessage = async (e) => {
   const m = e.data;
   try {
     if (m.type === "init") {
-      importScripts(URL.createObjectURL(new Blob([m.ortJs], { type: "text/javascript" })));
-      importScripts(URL.createObjectURL(new Blob([m.lameJs], { type: "text/javascript" })));
+      const js = (buf) => URL.createObjectURL(new Blob([buf], { type: "text/javascript" }));
+      importScripts(js(m.ortJs), js(m.lameJs), js(m.frontendJs), js(m.synthesisJs));
       rt = self.ort;
-      const wasmURL = URL.createObjectURL(new Blob([m.wasm], { type: "application/wasm" }));
-      rt.env.wasm.wasmPaths = { "ort-wasm-simd.wasm": wasmURL };
       rt.env.wasm.numThreads = 1;
-      scales = Float32Array.from(m.scales);
-      session = await rt.InferenceSession.create(new Uint8Array(m.model));
-      postMessage({ type: "ready" });
-    } else if (m.type === "synth") {
-      const t = performance.now();
-      const out = await session.run({
-        input: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
-        input_lengths: new rt.Tensor("int64", [m.ids.length]),
-        scales: new rt.Tensor("float32", scales),
+      rt.env.wasm.proxy = false;
+      rt.env.wasm.wasmBinary = m.ortWasm;
+      rt.env.wasm.wasmPaths = { mjs: m.glueUrl };
+      frontend = self.MatchaFrontend.createFrontend({
+        lexiconText: new TextDecoder().decode(m.lexicon),
+        tokensText: new TextDecoder().decode(m.tokens),
+        pronunciationOverrides: m.overrides,
       });
-      const pcm = new Float32Array((out.output ?? out.y).data);
-      postMessage({ type: "pcm", k: m.k, pcm, ms: performance.now() - t }, [pcm.buffer]);
-    } else if (m.type === "mp3") {
+      // every knob at its default — the configuration that was verified on the
+      // phone (noise 1, length 1, silence 0.2), not sherpa's 0.667
+      engine = self.MatchaSynthesis.createEngine({ ORT: rt });
+      const info = await engine.init({
+        acousticModel: new Uint8Array(m.acoustic),
+        vocoderModel: new Uint8Array(m.vocoder),
+      });
+      postMessage({ type: "ready", initMs: info.wallMs, lexiconSize: frontend.lexiconSize });
+    } else if (m.type === "speak") {
+      const t = performance.now();
+      // one unknown glyph must never stop a book: drop it and count it
+      const f = frontend.tokensFor(m.text, { allowUnknown: true });
+      if (!f.ids.length) return postMessage({ type: "spoke", k: m.k, empty: true });
+      const s = await engine.synthesize(f.ids, {});
+      const w = s.waveform;
+      // a numerical blow-up is silence or NaN, and both play as a dead unit the
+      // reader cannot distinguish from a pause — refuse it here instead
+      if (w.finiteSamples !== s.samples.length || w.peak === 0 || w.rms === 0)
+        throw new Error("waveform not audible (peak " + w.peak + ", rms " + w.rms + ")");
+      const ms = performance.now() - t;
+      if (!m.mp3) {
+        const pcm = s.samples;
+        return postMessage({ type: "spoke", k: m.k, pcm, secs: s.audioSeconds, ms, unknown: f.unknown.length }, [pcm.buffer]);
+      }
       // one self-contained mp3 stream per unit; frames concatenate cleanly
       // in a sequence-mode SourceBuffer
-      const f = m.pcm, n = f.length;
-      const i16 = new Int16Array(n);
-      for (let i = 0; i < n; i++) i16[i] = Math.max(-1, Math.min(1, f[i])) * 32767 | 0;
-      const enc = new self.lamejs.Mp3Encoder(1, m.rate, 96);
+      const n = s.samples.length, i16 = new Int16Array(n);
+      for (let i = 0; i < n; i++) i16[i] = Math.max(-1, Math.min(1, s.samples[i])) * 32767 | 0;
+      const enc = new self.lamejs.Mp3Encoder(1, s.sampleRate, 96);
       const parts = [];
       for (let o = 0; o < n; o += 1152) parts.push(enc.encodeBuffer(i16.subarray(o, Math.min(n, o + 1152))));
       parts.push(enc.flush());
@@ -148,52 +206,33 @@ onmessage = async (e) => {
       const buf = new Uint8Array(len);
       let o = 0;
       for (const p of parts) { buf.set(p, o); o += p.length; }
-      postMessage({ type: "mp3", k: m.k, buf: buf.buffer }, [buf.buffer]);
+      postMessage({ type: "spoke", k: m.k, buf: buf.buffer, secs: s.audioSeconds, ms, unknown: f.unknown.length }, [buf.buffer]);
     }
   } catch (err) {
     postMessage({ type: "err", k: m.k, msg: String(err?.message ?? err) });
   }
 };`;
 
-export let RATE = 22050; // reassigned from the voice config at init
-
 // what init actually decided — the player's flight recorder reads this
 export const engineInfo = { threads: 0 };
 
-let engine = null; // singleton promise — model stays loaded across sessions
+let engine = null; // singleton promise — models stay loaded across sessions
 
 // → { speakChunk } — throws when init fails (player falls back to stream)
 export function ensureEngine() {
   return engine ??= (async () => {
     navigator.storage?.persist?.().catch(() => {});
-    const [model, cfgBuf, phData, phJs, phWasm, wasm, ortJs, lameJs] = await Promise.all([
-      cachedBuf("/api/wasmtts/zh_CN-huayan-medium.onnx"),
-      cachedBuf("/api/wasmtts/zh_CN-huayan-medium.onnx.json"),
-      cachedBuf("/api/wasmtts/piper_phonemize.data"),
-      cachedBuf("/vendor/wasmtts/piper_phonemize.js"),
-      cachedBuf("/vendor/wasmtts/piper_phonemize.wasm"),
-      cachedBuf("/api/wasmtts/ort-wasm-simd.wasm"),
-      cachedBuf("/vendor/wasmtts/ort-umd.min.js"),
-      cachedBuf("/vendor/wasmtts/lame.min.js"),
-    ]);
-    const config = JSON.parse(new TextDecoder().decode(cfgBuf));
-    RATE = config.audio?.sample_rate ?? RATE;
-    const scales = [
-      config.inference?.noise_scale ?? 0.667,
-      config.inference?.length_scale ?? 1,
-      config.inference?.noise_w ?? 0.8,
-    ];
-    // classic script, no module export — load once from cache via blob URL so
-    // it works offline like everything else
-    if (!globalThis.createPiperPhonemize) {
-      await new Promise((res, rej) => {
-        const s = document.createElement("script");
-        s.src = URL.createObjectURL(new Blob([phJs], { type: "text/javascript" }));
-        s.onload = res;
-        s.onerror = () => rej(new Error("piper_phonemize.js load failed"));
-        document.head.append(s);
-      });
-    }
+    const [acoustic, vocoder, lexicon, tokens, ortWasm, ortJs, lameJs, frontendJs, synthesisJs] =
+      await Promise.all([
+        ...PACK_FILES.map((f) => cachedBuf("/api/wasmtts/" + f.name)),
+        cachedBuf("/vendor/wasmtts/ort-wasm.min.js"),
+        cachedBuf("/vendor/wasmtts/lame.min.js"),
+        cachedBuf("/matcha-frontend.js"),
+        cachedBuf("/matcha-synthesis.js"),
+      ]);
+    if (ortWasm.byteLength !== ORT_WASM_BYTES)
+      throw new Error(`ort wasm is ${ortWasm.byteLength} B, expected ${ORT_WASM_BYTES} — the release and package.json disagree; re-cut the release or re-verify on device`);
+
     const worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
     const pending = new Map();
     worker.onmessage = (e) => {
@@ -208,109 +247,58 @@ export function ensureEngine() {
       pending.set(++seq, r);
       worker.postMessage({ ...msg, k: seq }, transfer);
     });
-    const synth = (item) => call({ type: "synth", ids: item.ids });
-    const encodeMp3 = (pcm) => call({ type: "mp3", pcm, rate: RATE }, [pcm.buffer]);
     const up = await new Promise((r) => {
       pending.set(undefined, r);
-      worker.postMessage({ type: "init", model, wasm, ortJs, lameJs, scales }, [model, wasm, ortJs, lameJs]);
+      worker.postMessage(
+        { type: "init", ortJs, lameJs, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens,
+          overrides: OVERRIDES, glueUrl: new URL("/vendor/wasmtts/ort-wasm-simd-threaded.mjs", location.origin).href },
+        [ortJs, lameJs, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens],
+      );
     });
     if (up === null) { worker.terminate(); throw new Error("wasm-tts init failed"); }
     engineInfo.threads = 1;
-    console.log(`wasm-tts ready: huayan-medium ${RATE}Hz, 1 thread`);
-    // the melo era left ~170 MB in this cache; reclaim it so iOS quota
-    // pressure doesn't evict the pack we actually use (/wasmtest re-downloads
-    // on demand if a diagnostic wants melo back)
+    console.log(`wasm-tts ready: matcha zh-en ${RATE}Hz, 1 thread, ${up.lexiconSize} lexicon entries, init ${Math.round(up.initMs)}ms`);
+
+    // Everything this engine does not use is dead weight in a cache iOS evicts
+    // under pressure — and the piper/melo/fanchen era left several hundred MB
+    // of it. Sweep by keep-set rather than by name so this never needs editing
+    // again; /wasmtest re-downloads on demand if a diagnostic wants something.
     caches.open(CACHE).then(async (c) => {
-      for (const f of ["melo-zh_en.onnx", "melo-lexicon.txt", "melo-tokens.txt", "ort-wasm-simd-threaded.wasm"])
-        if (await c.delete("/api/wasmtts/" + f)) console.log("wasm-tts: evicted stale " + f);
+      const keep = new Set(PACK_FILES.map((f) => "/api/wasmtts/" + f.name));
+      for (const req of await c.keys()) {
+        const p = new URL(req.url).pathname;
+        if (!keep.has(p) && await c.delete(req)) console.log("wasm-tts: evicted stale " + p);
+      }
     }).catch(() => {});
 
-    // One prompt → clause items. A fresh emscripten module per call — the
-    // CLI's main() is not reentrant; instantiation is milliseconds and the
-    // wasm/data buffers are reused. Each item carries `len`, the count of
-    // source code points it covers, so playback can map audio back to char
-    // offsets; a phoneme-line/clause count mismatch degrades to even weights.
-    async function piperItems(prompt) {
-      const cls = clauses(prompt);
-      if (!cls.length) return [];
-      cls[cls.length - 1].flush = true;
-      const lines = [], errs = [];
-      const mod = await createPiperPhonemize({
-        print: (l) => { try { lines.push(JSON.parse(l)); } catch { errs.push(l); } },
-        printErr: (l) => errs.push(l),
-        locateFile: (f) => "/vendor/wasmtts/" + f,
-        wasmBinary: phWasm,
-        getPreloadedPackage: () => phData,
-      });
-      try {
-        mod.callMain(["-l", "cmn", "--input", JSON.stringify(cls.map((c) => ({ text: c.text }))), "--espeak_data", "/espeak-ng-data"]);
-      } catch (e) {
-        if (!lines.length) throw e;
-      }
-      let miss = 0;
-      const idLines = lines.map((j) => {
-        const r = remapIds(config.phoneme_id_map, j.phoneme_ids, j.phonemes);
-        miss += r.miss;
-        return r.ids;
-      });
-      if (errs.length) console.warn(`piper phonemize stderr ${errs.length}:`, String(errs[0]).slice(0, 120));
-      if (miss) console.warn(`piper phonemize: ${miss} symbol(s) not in the model map`);
-      if (idLines.length !== cls.length) {
-        console.warn(`phoneme lines ${idLines.length} ≠ clauses ${cls.length} — pauses/offsets degrade to fixed`);
-        return idLines.map((ids, i) => ({ ids, punct: "。", len: 1, flush: i === idLines.length - 1 }));
-      }
-      return idLines.map((ids, i) => ({
-        ids,
-        punct: cls[i].punct,
-        len: [...cls[i].text].length + [...cls[i].punct].length,
-        flush: !!cls[i].flush,
-      }));
-    }
-
-    // Synthesize one chunk's prompt text as a stream of sentence-sized
-    // units. onUnit({blob|buf, secs, frac0, frac1}) — fracs are the unit's
-    // span over the prompt (proportional char mapping, like the other
-    // engines); await its return value for backpressure, return false to
-    // abort. mp3=true yields mp3 frames (unit.buf) for the MediaSource
-    // path instead of a WAV blob — iOS only keeps lock-screen audio on one
-    // continuous timeline, and MSE does not eat WAV.
+    // Synthesize one chunk's prompt text as a stream of sentence-sized units.
+    // onUnit({blob|buf, secs, frac0, frac1}) — fracs are the unit's span over
+    // the prompt (proportional char mapping, like the other engines); await
+    // its return value for backpressure, return false to abort. mp3=true
+    // yields mp3 frames (unit.buf) for the MediaSource path instead of a WAV
+    // blob — iOS only keeps lock-screen audio on one continuous timeline, and
+    // MSE does not eat WAV.
     async function speakChunk(prompt, onUnit, mp3 = false) {
-      const items = await piperItems(prompt);
-      const total = items.reduce((s, it) => s + it.len, 0) || 1;
-      let acc = [], accLen = 0, accMs = 0, accSrc = 0, srcDone = 0;
-      const emit = async () => {
-        if (!acc.length) return true;
-        const pcm = new Float32Array(accLen);
-        let o = 0;
-        for (const p of acc) { pcm.set(p, o); o += p.length; }
+      const segs = segments(prompt);
+      const total = prompt.length || 1;
+      let held = null; // start of a segment that produced nothing, folded forward
+      for (const s of segs) {
+        const r = await call({ type: "speak", text: s.text, mp3 });
+        // one unreadable sentence must not kill the readout; its span joins
+        // the next unit so the char mapping stays continuous
+        if (!r || r.empty) { held ??= s.start; continue; }
         const unit = {
-          secs: pcm.length / RATE,
-          ms: accMs, // compute time — the flight recorder's ×N
-          frac0: srcDone / total,
-          frac1: (srcDone + accSrc) / total,
+          secs: r.secs,
+          ms: r.ms, // compute time — the flight recorder's ×N
+          frac0: (held ?? s.start) / total,
+          frac1: s.end / total,
         };
-        acc = []; accLen = 0; accMs = 0;
-        srcDone += accSrc; accSrc = 0;
-        if (mp3) {
-          const r = await encodeMp3(pcm); // transfers pcm away
-          if (!r) return true; // encode failure drops the unit, not the book
-          unit.buf = r.buf;
-        } else unit.blob = mkWav(pcm, RATE);
-        return (await onUnit(unit)) !== false;
-      };
-      for (const item of items) {
-        const r = await synth(item);
-        if (!r) continue; // one bad clause must not kill the readout
-        const pcm = trimTail(r.pcm, RATE);
-        const gap = new Float32Array(Math.floor(RATE * (PAUSE_MS[item.punct] ?? (item.punct ? 300 : 80)) / 1000));
-        acc.push(pcm, gap);
-        accLen += pcm.length + gap.length;
-        accMs += r.ms;
-        accSrc += item.len;
-        if ((UNIT_ENDERS.includes(item.punct) || item.flush || accLen / RATE >= UNIT_MAX_S) && !(await emit()))
-          return false;
+        held = null;
+        if (mp3) unit.buf = r.buf;
+        else unit.blob = mkWav(r.pcm, RATE);
+        if ((await onUnit(unit)) === false) return false;
       }
-      return emit();
+      return true;
     }
     return { speakChunk };
   })().catch((e) => { engine = null; throw e; });

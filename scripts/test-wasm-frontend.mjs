@@ -1,51 +1,166 @@
-// Unit test for the offline TTS frontend (public/wasm-tts.mjs pure parts):
-// clause splitting for pause control, orphan-punct folding, espeak→model id
-// remapping with structural 0/1/2 pass-through and miss counting, and the
-// PCM helpers. No browser APIs — plain node.
+// Unit test for the offline TTS frontend: the pure parts of
+// public/wasm-tts.mjs (sentence segmentation, the WAV header, the override
+// table) and of public/matcha-frontend.js (number and punctuation
+// normalisation, lexicon parsing, greedy longest match). No browser APIs and
+// no model files — plain node, so it stays in the `pnpm test` chain.
+//
+// The cases that need the real 1.4 MB lexicon run only when MATCHA_MODEL_DIR
+// points at a directory holding matcha-icefall-zh-en's lexicon.txt and
+// tokens.txt. That is where golden token-id vectors live, and where the
+// traditional-reading table is pinned — see the note above it.
 //
 //   node scripts/test-wasm-frontend.mjs
+//   MATCHA_MODEL_DIR=~/workspace/wasmtts/platform/models/matcha-icefall-zh-en \
+//     node scripts/test-wasm-frontend.mjs
 
-import { clauses, remapIds, trimTail, mkWav, PAUSE_MS, UNIT_ENDERS, RATE }
-  from "../public/wasm-tts.mjs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { segments, mkWav, RATE, OVERRIDES, PACK_FILES } from "../public/wasm-tts.mjs";
+import "../public/matcha-frontend.js";
+
+const { createFrontend, normalizeNumbers, normalizePunctuation, parseLexicon, parseTokens } = globalThis.MatchaFrontend;
 
 const out = {};
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const texts = (p) => segments(p).map((s) => s.text);
 
-// clause per mark, the mark stays with its clause, the tail keeps its text
-out.clauses = eq(clauses("你好，好嗎。再見"), [
-  { text: "你好", punct: "，" },
-  { text: "好嗎", punct: "。" },
-  { text: "再見", punct: "" },
-]) ? "ok (split, punct kept, bare tail)" : `FAIL ${JSON.stringify(clauses("你好，好嗎。再見"))}`;
+// ---- segmentation ---------------------------------------------------------
 
-// a clause that trims to nothing folds its mark into the previous clause
-out.orphanPunct = eq(clauses("甲， ，乙"), [
-  { text: "甲", punct: "，" },
-  { text: "乙", punct: "" },
-]) && clauses("甲， ，乙")[0] // fold happened, mark not lost
-  ? "ok (orphan mark folds back)" : `FAIL ${JSON.stringify(clauses("甲， ，乙"))}`;
+// one unit per sentence; the mark stays with its sentence
+out.split = eq(texts("你好。好嗎？再見"), ["你好。", "好嗎？", "再見"])
+  ? "ok (one unit per sentence, mark kept)" : `FAIL ${JSON.stringify(texts("你好。好嗎？再見"))}`;
 
-// ids walk the phoneme strings in lockstep; 0/1/2 are structural and consume
-// no phoneme; a symbol the model lacks is dropped and counted
-const MAP = { a: [40], b: [41] };
-out.remap = eq(remapIds(MAP, [1, 90, 91, 2], ["a", "b"]), { ids: [1, 40, 41, 2], miss: 0 })
-  && eq(remapIds(MAP, [1, 90, 91, 2], ["a", "zz"]), { ids: [1, 40, 2], miss: 1 })
-  ? "ok (lockstep remap, miss counted)"
-  : `FAIL ${JSON.stringify(remapIds(MAP, [1, 90, 91, 2], ["a", "zz"]))}`;
+// a closing bracket belongs to the sentence it closes, never to the next one
+out.closers = eq(texts("「你來了。」她說。"), ["「你來了。」", "她說。"])
+  ? "ok (closer absorbed)" : `FAIL ${JSON.stringify(texts("「你來了。」她說。"))}`;
 
-// 1 s of tone then 1 s of silence → tail cut to 80 ms of the silence
-const f32 = new Float32Array(RATE * 2);
-for (let i = 0; i < RATE; i++) f32[i] = Math.sin(i / 10) * 0.5;
-const trimmed = trimTail(f32, RATE);
-out.trimTail = Math.abs(trimmed.length - RATE * 1.08) < RATE * 0.01
-  ? "ok (≤80ms tail)" : `FAIL len=${trimmed.length}`;
+// whitespace-only spans say nothing and must not become empty units
+out.blank = eq(segments(""), []) && eq(segments("   　  "), [])
+  ? "ok (nothing to say)" : `FAIL ${JSON.stringify(segments("   　  "))}`;
 
-const wav = mkWav(new Float32Array(100), 16000);
+// prose with no terminal mark still has to be cut, or first audio waits on a
+// paragraph-long synthesis; the cut lands on a secondary pause
+const long = "他一路走過長街，穿過市集，越過石橋，繞過廟口，聞著糖炒栗子的香氣，聽著小販的吆喝，看著孩童追逐嬉戲，想起許多年前的那個冬天，也是這樣的一個黃昏，母親牽著他的手走過同樣的路";
+const longSegs = segments(long);
+const longMax = Math.max(...longSegs.map((s) => s.end - s.start));
+out.resplit = longSegs.length > 1 && longMax <= 72 && longSegs.every((s) => /[，、：,;]$/.test(s.text) || s.end === long.length)
+  ? `ok (${longSegs.length} units, max ${longMax} ch, cut at pauses)`
+  : `FAIL ${longSegs.length} units, max ${longMax}: ${JSON.stringify(texts(long))}`;
+
+// The player turns frac0/frac1 into char offsets, so the spans must be ordered,
+// non-overlapping and inside the prompt — otherwise a bookmark lands in the
+// wrong paragraph and the reader silently jumps.
+const prompt = "第十二章　窗外。他看著窗外，銀行的招牌顯得格外明亮。「你來了。」她說。";
+const segs = segments(prompt);
+out.spans = segs.every((s, i) => s.start >= 0 && s.end <= prompt.length && s.end > s.start
+  && (i === 0 || s.start >= segs[i - 1].end))
+  && segs.at(-1).end === prompt.length
+  ? `ok (${segs.length} ordered spans tiling ${prompt.length} ch)`
+  : `FAIL ${JSON.stringify(segs)}`;
+
+// ---- helpers --------------------------------------------------------------
+
+const wav = mkWav(new Float32Array(100), RATE);
 out.mkWav = wav.size === 44 + 200 && wav.type === "audio/wav"
   ? "ok (header + 16-bit)" : `FAIL size=${wav.size}`;
 
-out.pauses = UNIT_ENDERS.includes("。") && PAUSE_MS["，"] === 200 && PAUSE_MS["。"] === 450
-  ? "ok" : "FAIL";
+out.rate = RATE === 16000 ? "ok (16 kHz, the model's own rate)" : `FAIL ${RATE}`;
+
+// the pack list is what packReady() gates on and what /wasmtest downloads; a
+// typo here silently means "no offline engine, ever"
+out.pack = PACK_FILES.length === 5 && PACK_FILES.every((f) => f.name && f.bytes > 0 && f.label)
+  ? `ok (5 files, ${(PACK_FILES.reduce((s, f) => s + f.bytes, 0) / 1048576).toFixed(0)} MiB)`
+  : `FAIL ${JSON.stringify(PACK_FILES)}`;
+
+// ---- text normalisation (pure, no lexicon) --------------------------------
+
+out.numbers = normalizeNumbers("第12章，日期2026年8月7日，14:30完成25.5%。")
+  === "第十二章，日期二零二六年八月七日，十四点三十分完成百分之二十五点五。"
+  ? "ok (chapter, date, clock, percent, decimal)"
+  : `FAIL ${normalizeNumbers("第12章，日期2026年8月7日，14:30完成25.5%。")}`;
+
+// Regression, upstream 05b5b35: quote marks used to reach the model as “ ”
+// tokens and were audibly pronounced. They must be deleted, not mapped.
+const quoted = normalizePunctuation("「清晨」，她說：“你好。” ‘再見。’");
+out.quotes = !/[「」『』《》“”‘’"]/.test(quoted)
+  ? `ok (stripped → ${quoted})` : `FAIL ${quoted}`;
+
+// ---- lexicon lookup, on a fixture small enough to read --------------------
+const FIX_TOKENS = ", 4\n. 5\nni3 10\nhao3 11\nshi4 12\njie4 13\nle4 14\nse4 15\nla1 16\nji1 17\n";
+const FIX_LEXICON = "你 ni3\n好 hao3\n你好 ni3 hao3\n世 shi4\n界 jie4\n世界 shi4 jie4\n垃 la1\n圾 ji1\n";
+const fix = createFrontend({ lexiconText: FIX_LEXICON, tokensText: FIX_TOKENS });
+
+out.parse = parseLexicon(FIX_LEXICON).lexicon.size === 8 && parseTokens(FIX_TOKENS).size === 10
+  ? "ok (first space splits lexicon, last space splits tokens)"
+  : `FAIL lex=${parseLexicon(FIX_LEXICON).lexicon.size} tok=${parseTokens(FIX_TOKENS).size}`;
+
+// the whole word wins over its characters — that is the only reason a lexicon
+// beats per-char fallback, and what traditional input mostly cannot reach
+out.longestMatch = eq(fix.tokensFor("你好世界。").ids, [10, 11, 12, 13, 5])
+  ? "ok (word beats char)" : `FAIL ${JSON.stringify(fix.tokensFor("你好世界。").ids)}`;
+
+// an override must beat the lexicon, including a word only reachable per-char
+const over = createFrontend({ lexiconText: FIX_LEXICON, tokensText: FIX_TOKENS, pronunciationOverrides: { "垃圾": "le4 se4" } });
+out.override = eq(fix.tokensFor("垃圾").ids, [16, 17]) && eq(over.tokensFor("垃圾").ids, [14, 15])
+  ? "ok (la1 ji1 → le4 se4)"
+  : `FAIL plain=${JSON.stringify(fix.tokensFor("垃圾").ids)} over=${JSON.stringify(over.tokensFor("垃圾").ids)}`;
+
+// One unknown glyph must never stop a book — the engine passes allowUnknown.
+let threw = false;
+try { fix.tokensFor("Z"); } catch { threw = true; }
+const lenient = fix.tokensFor("你Z好", { allowUnknown: true });
+out.unknown = threw && lenient.unknown.length === 1 && eq(lenient.ids, [10, 11])
+  ? "ok (throws by default, drops and counts when allowed)"
+  : `FAIL threw=${threw} ${JSON.stringify(lenient)}`;
+
+// every shipped override must be a real phone list, or it fails at synthesis
+out.overrides = Object.entries(OVERRIDES).every(([w, p]) => w.length && /^[a-z]+[1-5]( [a-z]+[1-5])*$/.test(p))
+  ? `ok (${Object.keys(OVERRIDES).length} entr${Object.keys(OVERRIDES).length === 1 ? "y" : "ies"})`
+  : `FAIL ${JSON.stringify(OVERRIDES)}`;
+
+// ---- with the real lexicon ------------------------------------------------
+const dir = process.env.MATCHA_MODEL_DIR;
+if (!dir) {
+  out.golden = "skipped (set MATCHA_MODEL_DIR to run)";
+  out.traditional = "skipped (set MATCHA_MODEL_DIR to run)";
+} else {
+  const real = createFrontend({
+    lexiconText: readFileSync(join(dir, "lexicon.txt"), "utf8"),
+    tokensText: readFileSync(join(dir, "tokens.txt"), "utf8"),
+    pronunciationOverrides: OVERRIDES,
+  });
+
+  // Byte-identical to sherpa-onnx 1.13.4's ids for the same text. Simplified
+  // on purpose: upstream's traditional vector only holds with OpenCC, and this
+  // engine has no conversion step.
+  const ids = real.tokensFor("清晨的阳光穿过窗帘。").ids;
+  out.golden = eq(ids, [1431, 292, 420, 1932, 661, 331, 679, 336, 992, 5])
+    ? "ok (matches sherpa-onnx)" : `FAIL ${JSON.stringify(ids)}`;
+
+  out.numbersReal = real.tokensFor("第12章，日期2026年8月7日，14:30完成25.5%。").unknown.length === 0
+    ? "ok (no unknown from digits)" : "FAIL";
+
+  out.packOverride = eq(real.tokensFor("垃圾。").phones, ["le4", "se4", "."])
+    ? "ok (垃圾 → le4 se4)" : `FAIL ${JSON.stringify(real.tokensFor("垃圾。").phones)}`;
+
+  // 簡繁直輸 has a known, accepted cost: the multi-char entries are
+  // overwhelmingly simplified, so traditional prose falls through to per-char
+  // readings. This table PINS THE CURRENT WRONG ANSWERS on purpose — when a
+  // listening test justifies an OVERRIDES entry, the matching line here flips
+  // to the right reading and this test is what proves the fix landed.
+  const TRADITIONAL = [
+    ["他看著窗外", ["ta1", "kan4", "zhu4", "chuang1", "wai4"]],   // 著: want zhe5
+    ["銀行", ["yin2", "xing2"]],                                   // want yin2 hang2
+    ["會計", ["hui4", "ji4"]],                                     // want kuai4 ji4
+    ["乾淨", ["qian2", "jing4"]],                                  // want gan1 jing4
+    ["顯得", ["xian3", "de2"]],                                    // want xian3 de5
+  ];
+  const drift = TRADITIONAL.filter(([t, want]) => !eq(real.tokensFor(t).phones, want))
+    .map(([t, want]) => `${t}: ${JSON.stringify(real.tokensFor(t).phones)} ≠ ${JSON.stringify(want)}`);
+  out.traditional = drift.length === 0
+    ? `ok (${TRADITIONAL.length} readings pinned — see the note, these are the accepted defects)`
+    : `FAIL — reading changed, update OVERRIDES and this table together:\n    ${drift.join("\n    ")}`;
+}
 
 console.log(JSON.stringify(out, null, 2));
 if (Object.values(out).some((v) => String(v).startsWith("FAIL"))) process.exit(1);

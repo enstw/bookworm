@@ -14,6 +14,7 @@
     "test:push": "node scripts/test-push-crypto.mjs && node scripts/test-push-api-e2e.mjs",
     "test:tts": "node scripts/test-tts-core.mjs",
     "test:tts-stream": "node scripts/test-tts-stream-e2e.mjs",
+    "test:tts-wasm": "node scripts/test-tts-wasm-e2e.mjs",
     "test:vertical": "node scripts/test-vertical-e2e.mjs",
     "test:bg": "node scripts/test-bg-e2e.mjs",
     "test:admin": "node scripts/test-admin-e2e.mjs",
@@ -23,11 +24,9 @@
     "test:offline": "node scripts/test-offline-e2e.mjs"
   },
   "devDependencies": {
-    "@diffusionstudio/piper-wasm": "1.0.0",
     "fflate": "^0.8.3",
     "lamejs": "^1.2.1",
-    "onnxruntime-web": "1.18.0",
-    "onnxruntime-web-gpu": "npm:onnxruntime-web@1.27.0",
+    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c",
     "opencc-js": "^1.4.1",
     "wrangler": "^4.114.0"
   }

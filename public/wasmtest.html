@@ -1,41 +1,23 @@
 <!doctype html>
-<!-- TEMPORARY diagnostic page (linked from /admin diagnostics): in-browser
-     WASM TTS experiment — candidate voices under onnxruntime-web, measured
-     for the three unknowns that decide whether WASM TTS can succeed
-     edge-tts:
-       1. RTF — audio seconds per compute second on THIS device;
-       2. whether inference (in a Worker) keeps running while the screen is
-          locked with audio playing through the media path;
-       3. whether a CHAIN-style double-buffered <audio> swap advances across
-          sentence boundaries under lock (play() rejections are logged).
-     Three engine families behind one selector:
-       - piper (huayan x_low / medium): espeak-ng phonemizer (piper_phonemize
-         wasm), ids re-mapped through each model's own phoneme_id_map;
-       - MeloTTS zh (int8 / fp32, sherpa-onnx export): no espeak — the page
-         reimplements sherpa's melo frontend (greedy longest lexicon match,
-         per-char fallback, punctuation flushes a sentence, AddBlank
-         interspersal, tones), with opencc t2cn first because the lexicon's
-         multi-char words are simplified and word matches carry the tone
-         sandhi that per-char fallback loses;
-       - fanchen-C (VITS-fast-fine-tuning, sherpa-onnx export): zhuyin-symbol
-         lexicon where tone marks are tokens (no separate tones tensor),
-         same greedy matcher and t2cn, 187 speakers behind a sid input,
-         16 kHz — picked over the 8 kHz icefall-aishell3 export and the
-         muddier zh-ll/laozhe voices by a Whisper intelligibility bench.
-     The wasm backend can use threads: the worker route serves /wasmtest
-     with COOP/COEP so crossOriginIsolated holds and ort's threaded build
-     (SharedArrayBuffer + embedded pthread workers) runs melo past ×1.
-     Small glue is vendored (/vendor/); the large binaries come from the
-     wasmtts-assets GitHub release through the /api/wasmtts/ same-origin
-     proxy (the release host sends no CORS headers) and are cached in the
-     Cache API, so a voice costs its download once — offline included.
-     Timeline uploads to /api/testlog (page=wasmtest), heartbeat gaps show
-     JS suspension, same instrument as /speechtest. Shares the real player's
-     chunker (/tts-core.mjs).
-     GRADUATED 2026-08-02: the reader now runs melo fp32 for real
-     (public/wasm-tts.mjs) — this page stays as the voice-pack manager (its
-     downloads fill the same bw-wasmtts cache packReady() checks; the reader
-     itself never downloads 180 MB) and as the A/B bench for future voices.
+<!-- Diagnostic page (linked from /admin diagnostics), and the ONLY thing that
+     downloads the offline voice pack: the reader must never pull 137 MB from a
+     tap on ▶, so /wasmtest fills the bw-wasmtts cache and packReady() in
+     wasm-tts.mjs is what then flips the reader to the offline engine.
+     The binaries come from the wasmtts-assets GitHub release through the
+     /api/wasmtts/ same-origin proxy (the release host sends no CORS headers)
+     and are cached in the Cache API, so the pack costs its download once —
+     offline included.
+     This page imports the real engine rather than reimplementing it. It used
+     to carry its own copy of the worker, frontend and chunker so it could A/B
+     five candidate voices, and that copy drifted from what actually shipped —
+     a bench that measures something other than the product answers the wrong
+     question. Now 短句 and 連續朗讀 drive the same speakChunk() the reader
+     does, so an RTF measured here is the reader's RTF.
+     What it still owns: the pack download with per-file progress, a CHAIN-style
+     two-<audio> playback (the reader uses a MediaSource timeline instead — this
+     one exists to keep the page independent of MSE support), and the timeline
+     upload to /api/testlog (page=wasmtest) with a ♥ heartbeat whose gaps show
+     JS suspension under lock.
      -->
 <html lang="zh-Hant">
 <head>
@@ -54,7 +36,7 @@
     .btns { margin: 10px 0 6px; display: flex; flex-wrap: wrap; gap: 4px;
       align-items: center; }
     .btns b { width: 100%; }
-    button, select, input[type=number] { font: inherit; padding: 7px 9px;
+    button, select { font: inherit; padding: 7px 9px;
       border: 1px solid #a05e2a; background: #fffdf8; border-radius: 6px;
       max-width: 100%; }
     button:disabled { opacity: 0.5; }
@@ -72,65 +54,44 @@
   <table><tbody id="ctx"></tbody></table>
 
   <ol>
-    <li>選語音後「準備引擎」——下載量見選單標示，之後走快取，離線也可。</li>
-    <li>「短句」聽音質並給單句 RTF；換語音重按即可 A/B。</li>
+    <li>「準備引擎」下載語音包（137MB，見下方逐檔進度），之後走快取，離線也可。</li>
+    <li>「短句」聽音質並給單句 RTF；「連續朗讀」跑長文並給整體 ×N。</li>
     <li>鎖屏測試：按「連續朗讀」，開始出聲後鎖屏 60 秒再解鎖 —
       時間軸看鎖屏中「合成」有沒有繼續、「play()」有沒有被拒。</li>
-    <li>×N＝實時倍率（音訊秒÷合成秒），&gt;1 才可能邊播邊合成；
-      不足 1 的語音（melo）鎖屏會斷 — 勾「先全部合成再播」，合成時開著螢幕，
-      出聲後再鎖屏。</li>
-    <li>標點停頓由頁面統一插入（模型尾端靜音先剪掉再補），兩引擎一致。</li>
-    <li>「執行緒 自動」：isolated=true（上表）時 wasm 後端用多核心跑，
-      切「執行緒 1」重跑「短句」可對比 ×N — melo 過 1 的關鍵。</li>
-    <li>fanchen-C 是 187 人合訓的原生中文模型（16kHz）——「說話人」0–186
-      換音色不用重載，預設 25（Whisper 聽寫最清楚的一位）。</li>
-    <li>MeloTTS fp32 按過「準備引擎」後，語音包已入快取 —
-      回到書頁按 ▶，閱讀器自動改用離線引擎（console 顯示
-      wasm (offline melo)；localStorage bw_tts="stream" 可強制回線上）。</li>
-    <li>「後端 webgpu」實測比 CPU 慢（VITS 算子小而多，GPU 往返吃掉收益），
-      留作對照。</li>
+    <li>×N＝實時倍率（音訊秒÷合成秒）。桌機實測約 ×7，遠高於邊播邊合成所需的 1。</li>
+    <li>停頓由模型自己的標點音素決定，本頁不再插入靜音 — 與閱讀器完全一致。</li>
+    <li>下載完成後回到書頁按 ▶，閱讀器自動改用離線引擎（console 顯示
+      wasm-tts ready: matcha zh-en；localStorage bw_tts="stream" 可強制回線上）。</li>
+    <li>繁體直接送入詞典，沒有 OpenCC：常用詞會有讀音誤差（銀行、看著），
+      修正以 wasm-tts.mjs 的 OVERRIDES 逐條累加，依聽測結果決定。</li>
   </ol>
   <p>時間軸同步上傳：<code>/api/testlog?page=wasmtest</code>；♥ 心跳每 5 秒。</p>
 
   <div class="btns"><b>引擎</b>
-    <select id="voiceSel">
-      <option value="medium" selected>華言 medium（60MB·有聲調）</option>
-      <option value="x_low">華言 x_low（20MB·無聲調）</option>
-      <option value="melo8">MeloTTS int8（51MB）</option>
-      <option value="melo32">MeloTTS fp32（163MB）</option>
-      <option value="fanchen">fanchen-C（121MB·187聲）</option>
-    </select>
-    <select id="epSel">
-      <option value="wasm" selected>後端 wasm（CPU）</option>
-      <option value="webgpu">後端 webgpu</option>
-    </select>
-    <select id="thSel">
-      <option value="auto" selected>執行緒 自動</option>
-      <option value="1">執行緒 1</option>
-    </select>
+    <span id="voiceLabel"></span>
     <button id="bPrep">準備引擎</button>
     <button id="bClear">清除快取</button>
-    <label>說話人 <input id="sidIn" type="number" min="0" max="186" value="25" style="width: 4.5em"></label>
   </div>
   <div class="btns"><b>朗讀</b>
     <button id="bShort">短句</button>
     <button id="bLong">連續朗讀（鎖屏用）</button>
     <button id="bStop">停止</button>
-    <label><input type="checkbox" id="presynth"> 先全部合成再播</label>
   </div>
 
   <div id="log"></div>
 </main>
 
-<script src="/vendor/wasmtts/piper_phonemize.js"></script>
 <script type="module">
 "use strict";
 import * as ttsCore from "/tts-core.mjs";
+import { ensureEngine, packReady, engineInfo, mkWav, PACK_FILES, RATE } from "/wasm-tts.mjs";
+
+const $ = (id) => document.getElementById(id);
 
 // ---- timeline: on-screen log + batched uploads (same shape as /speechtest)
 const t0 = performance.now();
 const stamp = () => ((performance.now() - t0) / 1000).toFixed(1) + "s";
-const logEl = document.getElementById("log");
+const logEl = $("log");
 let device = "";
 try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
 let buf = [];
@@ -159,17 +120,18 @@ document.addEventListener("visibilitychange", () => {
 addEventListener("pagehide", () => { clearTimeout(flushTimer); flush(); });
 
 // ---- context ------------------------------------------------------------
-// the canonical WASM-SIMD probe module: ort picks ort-wasm-simd.wasm only
-// when this validates, and simd is the variant the release hosts
+// the canonical WASM-SIMD probe module: ort picks its simd build only when
+// this validates, and simd is the variant the release hosts
 const SIMD = WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
 const standalone = matchMedia("(display-mode: standalone)").matches || !!navigator.standalone;
+const PACK_MB = PACK_FILES.reduce((s, f) => s + f.bytes, 0) / 1048576;
 const ctxRows = [
   ["mode", standalone ? "standalone（已安裝）" : "browser"],
-  ["wasm simd / 核心", `${SIMD ? "有" : "無"} / ${navigator.hardwareConcurrency ?? "?"}（isolated=${crossOriginIsolated}）`],
-  ["webgpu / mediaSession", `${"gpu" in navigator ? "有" : "無"} / ${"mediaSession" in navigator ? "有" : "無"}`],
+  ["wasm simd / 核心", `${SIMD ? "有" : "無"} / ${navigator.hardwareConcurrency ?? "?"}`],
+  ["mediaSession", "mediaSession" in navigator ? "有" : "無"],
   ["UA", navigator.userAgent.replace(/^Mozilla\/5\.0 \([^)]*\)\s*/, "").slice(0, 60)],
 ];
-document.getElementById("ctx").replaceChildren(...ctxRows.map(([k, v]) => {
+$("ctx").replaceChildren(...ctxRows.map(([k, v]) => {
   const tr = document.createElement("tr");
   for (const t of [k, v]) {
     const td = document.createElement("td");
@@ -179,501 +141,48 @@ document.getElementById("ctx").replaceChildren(...ctxRows.map(([k, v]) => {
   return tr;
 }));
 log(ctxRows.map(([k, v]) => k + "=" + v).join(" · "));
+$("voiceLabel").textContent = `Matcha zh-en（${PACK_MB.toFixed(0)}MB·${RATE / 1000}kHz）`;
+packReady().then((r) => log(`語音包 ${r ? "已就緒" : "未下載"}（${PACK_MB.toFixed(0)}MB）`));
 
-// ---- voices -------------------------------------------------------------
-const VOICES = {
-  x_low: { label: "華言 x_low", frontend: "piper", model: "zh_CN-huayan-x_low.onnx", cfg: "zh_CN-huayan-x_low.onnx.json" },
-  medium: { label: "華言 medium", frontend: "piper", model: "zh_CN-huayan-medium.onnx", cfg: "zh_CN-huayan-medium.onnx.json" },
-  melo8: { label: "MeloTTS int8", frontend: "melo", model: "melo-zh_en.int8.onnx" },
-  melo32: { label: "MeloTTS fp32", frontend: "melo", model: "melo-zh_en.onnx" },
-  fanchen: { label: "fanchen-C", frontend: "vits", model: "fanchen-c.onnx" },
-};
-const voiceSel = document.getElementById("voiceSel");
-const voice = () => VOICES[voiceSel.value];
-
-// ---- large binaries: /api/wasmtts proxy + Cache API ---------------------
+// ---- the pack -----------------------------------------------------------
+// The engine fetches these too, but silently and only when it starts; this
+// page is where a 137 MB download is a visible, per-file, interruptible act.
+// Same cache, same /api/wasmtts/ keys, so either path primes the other.
 const CACHE = "bw-wasmtts";
-async function cachedBuf(name) {
-  const url = "/api/wasmtts/" + name;
+async function fetchPack() {
   let cache = null;
   try { cache = await caches.open(CACHE); } catch { /* private mode: no cache */ }
-  let res = await cache?.match(url);
-  let how = "快取";
-  if (!res) {
+  let got = 0;
+  for (const f of PACK_FILES) {
+    const url = "/api/wasmtts/" + f.name;
+    if (await cache?.match(url)) { got += f.bytes; log(`${f.label} ${f.name} 快取`); continue; }
     const t = performance.now();
-    res = await fetch(url);
-    if (!res.ok) throw new Error(`${name} HTTP ${res.status}`);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${f.name} HTTP ${res.status}`);
     if (cache) await cache.put(url, res.clone());
+    const mb = (await res.arrayBuffer()).byteLength / 1048576;
     const s = (performance.now() - t) / 1000;
-    const mb = +(res.headers.get("content-length") ?? 0) / 1048576;
-    how = `網路 ${s.toFixed(1)}s${mb ? ` ${(mb / s).toFixed(1)}MB/s` : ""}`;
+    got += f.bytes;
+    log(`${f.label} ${f.name} ${mb.toFixed(1)}MB 網路 ${s.toFixed(1)}s ${(mb / s).toFixed(1)}MB/s — 累計 ${(got / 1048576).toFixed(0)}/${PACK_MB.toFixed(0)}MB`);
   }
-  const bytes = await res.arrayBuffer();
-  log(`${name} ${(bytes.byteLength / 1048576).toFixed(1)}MB ${how}`);
-  return bytes;
+  const est = await navigator.storage?.estimate?.().catch(() => null);
+  if (est) log(`儲存 ${(est.usage / 1048576).toFixed(0)}MB / 配額 ${(est.quota / 1048576).toFixed(0)}MB`);
 }
 
-// ---- engine: frontend on main (runs once per utterance), ort in a Worker
-// Inference must not run on the main thread: session.run blocks JS for
-// seconds at a time, which would delay the chain-swap 'ended' handlers and
-// make every lock-screen readout ambiguous (was it iOS, or our own stall?).
-// A Worker also answers the real production question — does iOS keep worker
-// JS running under lock while audio plays through the media path?
-const WORKER_SRC = `
-let session, rt, kind; // rt, not ort: the UMD script declares the global "ort" itself
-onmessage = async (e) => {
-  const m = e.data;
-  try {
-    if (m.type === "init") {
-      let extra = "";
-      const wasmURL = URL.createObjectURL(new Blob([m.wasm], { type: "application/wasm" }));
-      let opts;
-      if (m.ep === "webgpu") {
-        if (!self.navigator.gpu) throw new Error("worker 無 WebGPU（此平台不給 worker GPU）");
-        const ad = await self.navigator.gpu.requestAdapter();
-        if (!ad) throw new Error("requestAdapter 回 null");
-        extra = "，GPU " + (ad.info ? (ad.info.vendor + " " + ad.info.architecture) : "adapter ok");
-        importScripts(m.base + "/vendor/wasmtts/ort-webgpu.min.js");
-        rt = self.ort;
-        rt.env.wasm.wasmPaths = { mjs: m.base + "/vendor/wasmtts/ort-wasm-simd-threaded.asyncify.mjs", wasm: wasmURL };
-        opts = { executionProviders: ["webgpu"] };
-      } else {
-        importScripts(m.base + "/vendor/wasmtts/ort-umd.min.js");
-        rt = self.ort;
-        // the threaded build spawns its pthread workers from an embedded
-        // blob (1.18 ships no separate .worker.js), so only the wasm binary
-        // name changes; isolation is inherited from the COOP/COEP document
-        rt.env.wasm.wasmPaths = { [m.threads > 1 ? "ort-wasm-simd-threaded.wasm" : "ort-wasm-simd.wasm"]: wasmURL };
-        if (m.threads > 1) extra = "，執行緒 " + m.threads + "（worker isolated=" + self.crossOriginIsolated + "）";
-        opts = undefined;
-      }
-      kind = m.kind;
-      rt.env.wasm.numThreads = m.ep === "webgpu" ? 1 : m.threads;
-      const t = performance.now();
-      session = await rt.InferenceSession.create(new Uint8Array(m.model), opts);
-      postMessage({ type: "ready", ms: performance.now() - t, extra });
-    } else if (m.type === "synth") {
-      const t = performance.now();
-      const feeds = kind === "melo"
-        ? {
-            x: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
-            x_lengths: new rt.Tensor("int64", [m.ids.length]),
-            tones: new rt.Tensor("int64", m.tones, [1, m.tones.length]),
-            sid: new rt.Tensor("int64", [1]),
-            noise_scale: new rt.Tensor("float32", [m.scales[0]]),
-            length_scale: new rt.Tensor("float32", [m.scales[1]]),
-            noise_scale_w: new rt.Tensor("float32", [m.scales[2]]),
-          }
-        : kind === "vits"
-        ? {
-            x: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
-            x_length: new rt.Tensor("int64", [m.ids.length]),
-            noise_scale: new rt.Tensor("float32", [m.scales[0]]),
-            length_scale: new rt.Tensor("float32", [m.scales[1]]),
-            noise_scale_w: new rt.Tensor("float32", [m.scales[2]]),
-            sid: new rt.Tensor("int64", [m.sid]),
-          }
-        : {
-            input: new rt.Tensor("int64", m.ids, [1, m.ids.length]),
-            input_lengths: new rt.Tensor("int64", [m.ids.length]),
-            scales: new rt.Tensor("float32", m.scales),
-          };
-      const out = await session.run(feeds);
-      const pcm = new Float32Array((out.output ?? out.y).data);
-      postMessage({ type: "pcm", k: m.k, pcm, ms: performance.now() - t }, [pcm.buffer]);
-    }
-  } catch (err) {
-    postMessage({ type: "err", k: m.k, msg: String(err?.message ?? err) });
-  }
-};`;
-
-let piperData = null;   // shared by both piper voices
-let config = null;      // per-voice: { audio: {sample_rate}, inference: {...}, phoneme_id_map? }
-let meloLex = null;     // { tok: Map, lex: Map } — shared by both melo voices
-let vitsLex = null;     // fanchen's zhuyin lexicon, same shape
-let t2cn = null;
-let worker = null;
-let ready = null;
-let lastWorkerErr = "";
-let mainGpu = null;     // { rt, session } — webgpu on the main thread, for
-                        // platforms that give the page a GPU but not workers
-const pending = new Map();
-
-const epSel = document.getElementById("epSel");
-function resetEngine(why) {
-  stopAll();
-  worker?.terminate();
-  // release anything awaiting the dead worker, or a stale speak() run's
-  // await would hang on a promise nobody can settle
-  for (const [, r] of pending) r(null);
-  pending.clear();
-  worker = null; ready = null; config = null; mainGpu = null;
-  log(why);
-}
-voiceSel.onchange = () => resetEngine(`語音切換 → ${voice().label}`);
-epSel.onchange = () => resetEngine(`後端切換 → ${epSel.value}`);
-const thSel = document.getElementById("thSel");
-thSel.onchange = () => resetEngine(`執行緒切換 → ${thSel.value}`);
-// wasm threads need SharedArrayBuffer, which needs the COOP/COEP headers the
-// worker attaches to /wasmtest — isolated=false here means an offline load
-// fell back to the cached shell, or the headers got lost; threads stay at 1
-const wasmThreads = () =>
-  epSel.value === "wasm" && thSel.value !== "1" && crossOriginIsolated
-    ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
-
-function ensureEngine() {
-  return ready ??= (async () => {
-    navigator.storage?.persist?.().catch(() => {});
-    const v = voice();
-    const ep = epSel.value;
-    const threads = wasmThreads();
-    const t = performance.now();
-    const ortAsset = ep === "webgpu" ? "ort-wasm-simd-threaded.asyncify.wasm"
-      : threads > 1 ? "ort-wasm-simd-threaded.wasm" : "ort-wasm-simd.wasm";
-    const jobs = [cachedBuf(v.model), cachedBuf(ortAsset)];
-    if (v.frontend === "piper") {
-      jobs.push(cachedBuf(v.cfg), piperData ? null : cachedBuf("piper_phonemize.data"));
-    } else if (v.frontend === "melo") {
-      jobs.push(meloLex ? null : cachedBuf("melo-tokens.txt"), meloLex ? null : cachedBuf("melo-lexicon.txt"));
-    } else {
-      jobs.push(vitsLex ? null : cachedBuf("fanchen-tokens.txt"), vitsLex ? null : cachedBuf("fanchen-lexicon.txt"));
-    }
-    const [model, ortWasm, a, b] = await Promise.all(jobs);
-    if (v.frontend === "piper") {
-      config = JSON.parse(new TextDecoder().decode(a));
-      if (b) piperData = b;
-    } else {
-      // sherpa's exports carry these in onnx metadata, unreadable from
-      // ort-web; scales mirror sherpa-onnx's defaults, sample_rate each
-      // model's own (metadata dumped offline: melo 44100, fanchen 16000)
-      config = { audio: { sample_rate: v.frontend === "melo" ? 44100 : 16000 }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 } };
-      if (a) {
-        const tp = performance.now();
-        const parsed = v.frontend === "melo"
-          ? (meloLex = parseMeloLexicon(new TextDecoder().decode(a), new TextDecoder().decode(b)))
-          : (vitsLex = parseZhuyinLexicon(new TextDecoder().decode(a), new TextDecoder().decode(b)));
-        log(`詞典 ${parsed.lex.size} 詞，解析 ${((performance.now() - tp) / 1000).toFixed(1)}s`);
-      }
-      if (!t2cn) {
-        const OpenCC = await import("/vendor/opencc-t2cn.js");
-        t2cn = OpenCC.Converter({ from: "tw", to: "cn" });
-      }
-    }
-    worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
-    worker.onmessage = (e) => {
-      const m = e.data;
-      if (m.type === "ready") { log(`模型載入 ${(m.ms / 1000).toFixed(1)}s（合計 ${((performance.now() - t) / 1000).toFixed(1)}s${m.extra ?? ""}）`); pending.get("ready")?.(); }
-      else if (m.type === "pcm") { pending.get(m.k)?.(m); pending.delete(m.k); }
-      else if (m.type === "err") {
-        log(`worker 錯誤 ${m.msg}`);
-        lastWorkerErr = m.msg;
-        pending.get(m.k)?.(null);
-        pending.delete(m.k);
-        // an init-time error has no k: release the waiting ensureEngine so
-        // the button fails into the log instead of hanging forever
-        if (m.k === undefined) { pending.get("ready")?.(null); pending.delete("ready"); }
-      }
-    };
-    worker.onerror = (e) => log(`worker error ${e.message}`);
-    const up = new Promise((r) => pending.set("ready", r));
-    worker.postMessage({ type: "init", base: location.origin, kind: v.frontend, ep, threads, model, wasm: ortWasm }, [model, ortWasm]);
-    // the "ready" resolver hands back null when init errored — surface that
-    // as a failure here, or speak() would march on into a session-less worker
-    if ((await up) === null) {
-      // Safari 26 gives the page WebGPU but (unlike Chrome) not dedicated
-      // workers — fall back to a main-thread session so the phone still
-      // produces an RTF number. GPU-bound run() mostly yields, but expect
-      // some UI jank during synthesis. The buffers were transferred to the
-      // dead worker, so re-fetch from cache.
-      if (ep === "webgpu" && lastWorkerErr.includes("無 WebGPU")) {
-        worker.terminate(); worker = null;
-        log("worker 無 WebGPU — 改在主執行緒跑（合成中 UI 可能卡）");
-        const [m2, w2] = await Promise.all([cachedBuf(v.model), cachedBuf("ort-wasm-simd-threaded.asyncify.wasm")]);
-        await mainGpuInit(m2, w2);
-      } else {
-        throw new Error("引擎初始化失敗（見上方 worker 錯誤）");
-      }
-    }
-    navigator.storage?.estimate?.().then((e) => log(`儲存用量 ${((e.usage ?? 0) / 1048576).toFixed(0)}MB`));
-  })().catch((e) => { ready = null; log(`準備失敗 ${e.message}`); throw e; });
-}
-async function mainGpuInit(model, ortWasm) {
-  if (!globalThis.ort) {
-    await new Promise((res, rej) => {
-      const s = document.createElement("script");
-      s.src = "/vendor/wasmtts/ort-webgpu.min.js";
-      s.onload = res;
-      s.onerror = () => rej(new Error("ort-webgpu.min.js 載入失敗"));
-      document.head.append(s);
-    });
-  }
-  const rt = globalThis.ort;
-  rt.env.wasm.numThreads = 1;
-  rt.env.wasm.wasmPaths = {
-    mjs: location.origin + "/vendor/wasmtts/ort-wasm-simd-threaded.asyncify.mjs",
-    wasm: URL.createObjectURL(new Blob([ortWasm], { type: "application/wasm" })),
-  };
+let engine = null;
+async function prepare() {
+  if (engine) return engine;
+  await fetchPack();
   const t = performance.now();
-  const session = await rt.InferenceSession.create(new Uint8Array(model), { executionProviders: ["webgpu"] });
-  log(`模型載入（主執行緒 webgpu）${((performance.now() - t) / 1000).toFixed(1)}s`);
-  mainGpu = { rt, session };
-}
-
-// feed shapes mirror WORKER_SRC exactly — the worker owns the normal path,
-// this one only exists for page-GPU-but-no-worker-GPU platforms
-async function synthesize(k, unit) {
-  const { noise_scale, length_scale, noise_w } = config.inference;
-  const scales = [noise_scale, length_scale, noise_w];
-  const sid = Math.max(0, +document.getElementById("sidIn").value || 0);
-  if (mainGpu) {
-    const { rt, session } = mainGpu;
-    const t = performance.now();
-    const feeds = voice().frontend === "melo"
-      ? {
-          x: new rt.Tensor("int64", unit.ids, [1, unit.ids.length]),
-          x_lengths: new rt.Tensor("int64", [unit.ids.length]),
-          tones: new rt.Tensor("int64", unit.tones, [1, unit.tones.length]),
-          sid: new rt.Tensor("int64", [1]),
-          noise_scale: new rt.Tensor("float32", [scales[0]]),
-          length_scale: new rt.Tensor("float32", [scales[1]]),
-          noise_scale_w: new rt.Tensor("float32", [scales[2]]),
-        }
-      : voice().frontend === "vits"
-      ? {
-          x: new rt.Tensor("int64", unit.ids, [1, unit.ids.length]),
-          x_length: new rt.Tensor("int64", [unit.ids.length]),
-          noise_scale: new rt.Tensor("float32", [scales[0]]),
-          length_scale: new rt.Tensor("float32", [scales[1]]),
-          noise_scale_w: new rt.Tensor("float32", [scales[2]]),
-          sid: new rt.Tensor("int64", [sid]),
-        }
-      : {
-          input: new rt.Tensor("int64", unit.ids, [1, unit.ids.length]),
-          input_lengths: new rt.Tensor("int64", [unit.ids.length]),
-          scales: new rt.Tensor("float32", scales),
-        };
-    try {
-      const out = await session.run(feeds);
-      return { pcm: new Float32Array((out.output ?? out.y).data), ms: performance.now() - t };
-    } catch (e) {
-      log(`主執行緒合成錯誤 ${e.message}`);
-      return null;
-    }
-  }
-  return new Promise((r) => {
-    pending.set(k, r);
-    worker.postMessage({ type: "synth", k, ids: unit.ids, tones: unit.tones, scales, sid });
-  });
-}
-
-// ---- piper frontend: espeak phonemize + remap ---------------------------
-// texts → one unit per PRINT LINE (piper's own sentence granularity — the
-// mapping back to input entries is deliberately not assumed). stderr is
-// collected, not thrown: espeak warns on rare glyphs.
-//
-// The CLI's built-in id table is NEWER than the 2023-era x_low model's
-// 130-symbol phoneme_id_map (ids like 135 overflow the embedding — ort
-// refuses), so ids are rebuilt through the model's own map: walk ids and
-// phoneme strings in lockstep, keep the structural 0/1/2 (pad/BOS/EOS —
-// sentence breaks emit EOS,BOS mid-stream and only exist in the id stream),
-// re-map the rest. Symbols a model lacks are dropped and counted — x_low
-// loses espeak's tone digits (tone-blind by training); medium keeps them.
-let phMiss = 0;
-function remapIds(ids, phonemes) {
-  const map = config.phoneme_id_map;
-  const out = [];
-  let p = 0;
-  for (const id of ids) {
-    if (id <= 2) { out.push(id); continue; }
-    const hit = map[phonemes[p++]];
-    if (hit) out.push(hit[0]);
-    else phMiss++;
-  }
-  return out;
-}
-// Clause split for pause control: espeak erases commas (they reach the
-// model as plain spaces, and training saw the same pipeline, so the model
-// never learned a pause symbol — why 華言 ran through 標點 without
-// stopping). The page splits at clause punctuation, phonemizes each clause
-// as its own entry (one output line per entry — a bare clause has no
-// sentence enders, so lines map 1:1), and splices real silence downstream.
-const CLAUSE_RE = /([。！？；：，、!?;:,])/;
-function clauses(text) {
-  const parts = text.split(CLAUSE_RE);
-  const out = [];
-  for (let i = 0; i < parts.length; i += 2) {
-    const t = parts[i].trim();
-    const punct = parts[i + 1] ?? "";
-    if (t) out.push({ text: t, punct });
-    else if (out.length && punct) out[out.length - 1].punct = punct;
-  }
-  return out;
-}
-async function piperItems(texts) {
-  const cls = texts.flatMap((t) => {
-    const cs = clauses(t);
-    if (cs.length) cs[cs.length - 1].flush = true; // a chunk boundary emits
-    return cs;
-  });
-  const out = [], errs = [];
-  const mod = await createPiperPhonemize({
-    print: (l) => { try { const j = JSON.parse(l); out.push(remapIds(j.phoneme_ids, j.phonemes)); } catch { errs.push(l); } },
-    printErr: (l) => errs.push(l),
-    locateFile: (f) => "/vendor/wasmtts/" + f,
-    getPreloadedPackage: () => piperData,
-  });
-  try {
-    mod.callMain(["-l", "cmn", "--input", JSON.stringify(cls.map((c) => ({ text: c.text }))), "--espeak_data", "/espeak-ng-data"]);
-  } catch (e) {
-    if (!out.length) throw e;
-  }
-  if (errs.length) log(`音素器 stderr ${errs.length} 行：${String(errs[0]).slice(0, 80)}`);
-  if (out.length !== cls.length) {
-    log(`音素行 ${out.length} ≠ 子句 ${cls.length} — 停頓退化為固定值`);
-    return out.map((ids) => ({ ids, tones: null, punct: "。", flush: false }));
-  }
-  return out.map((ids, i) => ({ ids, tones: null, punct: cls[i].punct, flush: !!cls[i].flush }));
-}
-
-// ---- melo frontend: sherpa's melo-tts-lexicon.cc, reimplemented ---------
-// lexicon.txt line: word phone… tone… (equal counts); tokens.txt: symbol id.
-// Greedy longest match against lexicon words (sherpa's PhraseMatcher),
-// per-char fallback, bare punctuation via token aliases, OOV skipped and
-// counted. A punctuation unit flushes the sentence; each sentence gets
-// AddBlank ([0, x1, 0, …, xn, 0]) on both ids and tones.
-function parseMeloLexicon(tokTxt, lexTxt) {
-  const tok = new Map();
-  for (const line of tokTxt.split("\n")) {
-    const p = line.split(/\s+/).filter(Boolean);
-    if (p.length === 2) tok.set(p[0], +p[1]);
-  }
-  tok.set(" ", tok.get("_"));
-  for (const [a, b] of [[",", "，"], [".", "。"], ["!", "！"], ["?", "？"]])
-    if (tok.has(a)) tok.set(b, tok.get(a));
-  tok.set("、", tok.get("，"));
-  const lex = new Map();
-  for (const line of lexTxt.split("\n")) {
-    const p = line.split(/\s+/).filter(Boolean);
-    if (p.length < 3) continue;
-    const w = p[0].toLowerCase();
-    if (lex.has(w)) continue;
-    const n = (p.length - 1) >> 1;
-    const ids = new Array(n), tones = new Array(n);
-    let ok = true;
-    for (let i = 0; i < n; i++) {
-      const id = tok.get(p[1 + i]);
-      if (id === undefined) { ok = false; break; }
-      ids[i] = id;
-      tones[i] = +p[1 + n + i];
-    }
-    if (ok) lex.set(w, [ids, tones]);
-  }
-  lex.set("呣", lex.get("母"));
-  lex.set("嗯", lex.get("恩"));
-  return { tok, lex };
-}
-// fanchen (VITS-fast-fine-tuning) lexicon: word zhuyin-symbol… — the tone
-// marks ˉˊˇˋ˙ are tokens themselves, so a line is word + token list and
-// there is no tone column. Entries stored [ids, null] to share lexItems
-// with melo. tokens.txt knows only full-width ，。！？—…; ascii marks and
-// the missing 、：； alias to the nearest known mark — the model only
-// shapes prosody with it, the page's spliced silence owns pause length.
-function parseZhuyinLexicon(tokTxt, lexTxt) {
-  const tok = new Map();
-  for (const line of tokTxt.split("\n")) {
-    const p = line.split(/\s+/).filter(Boolean);
-    if (p.length === 2) tok.set(p[0], +p[1]);
-  }
-  tok.set(" ", tok.get("_"));
-  for (const [a, b] of [[",", "，"], [".", "。"], ["!", "！"], ["?", "？"], ["、", "，"], ["：", "，"], ["；", "，"], [":", "，"], [";", "，"]])
-    if (!tok.has(a) && tok.has(b)) tok.set(a, tok.get(b));
-  const lex = new Map();
-  for (const line of lexTxt.split("\n")) {
-    const p = line.split(/\s+/).filter(Boolean);
-    if (p.length < 2) continue;
-    const w = p[0].toLowerCase();
-    if (lex.has(w)) continue;
-    const ids = new Array(p.length - 1);
-    let ok = true;
-    for (let i = 1; i < p.length; i++) {
-      const id = tok.get(p[i]);
-      if (id === undefined) { ok = false; break; }
-      ids[i - 1] = id;
-    }
-    if (ok) lex.set(w, [ids, null]);
-  }
-  return { tok, lex };
-}
-const addBlank = (x) => {
-  const out = new Array(x.length * 2 + 1).fill(0);
-  for (let i = 0; i < x.length; i++) out[i * 2 + 1] = x[i];
-  return out;
-};
-// Clause-level items like piper's, but the flushing punctuation KEEPS its
-// token inside the clause: these models learned punctuation prosody (the
-// rising ？, the comma dip) and trimTail removes only the rendered silence
-// after it. Shared by melo (toned: parallel tones stream) and fanchen
-// (toned=false: tone marks already sit inside the id stream).
-const MELO_FLUSH = "。！？，、；：.!?,;:";
-function lexItems(text, ld, toned) {
-  const units = [...text.toLowerCase()];
-  const out = [];
-  let ids = [], tones = [];
-  const emit = (punct) => {
-    if (!ids.length) return;
-    out.push({ ids: addBlank(ids), tones: toned ? addBlank(tones) : null, punct, flush: false });
-    ids = []; tones = [];
-  };
-  for (let i = 0; i < units.length;) {
-    let step = 1;
-    for (let L = Math.min(8, units.length - i); L >= 1; L--) {
-      const w = units.slice(i, i + L).join("");
-      const hit = ld.lex.get(w);
-      if (hit) { ids.push(...hit[0]); if (toned) tones.push(...hit[1]); step = L; break; }
-      if (L === 1) {
-        const t = ld.tok.get(w);
-        if (t !== undefined) { ids.push(t); if (toned) tones.push(0); }
-        else if (w.trim() && !MELO_FLUSH.includes(w)) phMiss++;
-      }
-    }
-    i += step;
-    if (MELO_FLUSH.includes(units[i - 1])) emit(units[i - 1]);
-  }
-  emit("");
-  if (out.length) out[out.length - 1].flush = true;
-  return out;
-}
-
-// ---- pause ownership --------------------------------------------------
-// The phone run told both pause stories at once: 華言 has none (espeak ate
-// the commas) and melo's read as 停頓太久 — its rendered punct silence plus
-// one chain swap per 逗號 (89 one-second clauses in the log). Same cure for
-// both: every clause tail is trimmed to ≤80 ms of silence, the page splices
-// its own per-mark silence, and clauses accumulate into sentence-sized
-// units so the chain swaps at 句號 pace, not 逗號 pace.
-const PAUSE_MS = { "。": 450, "！": 450, "？": 450, "；": 320, "：": 260, "，": 200, "、": 160, ".": 450, "!": 450, "?": 450, ";": 320, ":": 260, ",": 200 };
-const UNIT_ENDERS = "。！？.!?";
-const UNIT_MAX_S = 12;
-function trimTail(f32, rate) {
-  let end = f32.length;
-  while (end > 0 && Math.abs(f32[end - 1]) < 0.004) end--;
-  return f32.subarray(0, Math.min(f32.length, end + Math.floor(rate * 0.08)));
-}
-
-// Float32 PCM → 16-bit mono WAV blob (what <audio> can play from a blob URL)
-function mkWav(f32, rate) {
-  const n = f32.length, v = new DataView(new ArrayBuffer(44 + n * 2));
-  v.setUint32(0, 0x46464952, true); v.setUint32(4, 36 + n * 2, true);
-  v.setUint32(8, 0x45564157, true); v.setUint32(12, 0x20746d66, true);
-  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
-  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  v.setUint32(36, 0x61746164, true); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, f32[i])) * 32767 | 0, true);
-  return new Blob([v.buffer], { type: "audio/wav" });
+  engine = await ensureEngine();
+  log(`引擎就緒 ${((performance.now() - t) / 1000).toFixed(1)}s（${engineInfo.threads} 緒）`);
+  return engine;
 }
 
 // ---- CHAIN-style playback: two <audio>, primed in the tap gesture -------
+// The reader appends mp3 to one MediaSource timeline instead. This page keeps
+// the older two-element swap on purpose: it needs no MSE, so the diagnostic
+// still works on a browser where the reader's transport does not.
 const players = [new Audio(), new Audio()];
 let token = 0;
 let queue = [];
@@ -691,7 +200,7 @@ players.forEach((a) => {
 // once before — the double-buffer's element B never gets its own tap, so
 // both elements swallow 50 ms of silence inside the tap that starts a test
 function prime() {
-  const s = URL.createObjectURL(mkWav(new Float32Array(800), 16000));
+  const s = URL.createObjectURL(mkWav(new Float32Array(800), RATE));
   players.forEach((a) => { a.dataset.k = ""; a.src = s; a.play().then(() => a.pause(), () => {}); });
 }
 function pump() {
@@ -718,7 +227,7 @@ function stopAll() {
 }
 // e2e/debug handle, like the player's globalThis.bwPlayer: the elements are
 // never in the DOM, so scripts have no other way to reach the audio
-globalThis.bwWasmtest = { players, queue: () => queue };
+globalThis.bwWasmtest = { players, queue: () => queue, packReady };
 if ("mediaSession" in navigator) {
   navigator.mediaSession.metadata = new MediaMetadata({ title: "WASM 朗讀測試", artist: "Bookworm" });
   for (const act of ["play", "pause"])
@@ -739,7 +248,10 @@ function startHb() {
 }
 
 // ---- the tests ----------------------------------------------------------
-const SHORT = "床前明月光，疑是地上霜。舉頭望明月，低頭思故鄉。";
+// The short one carries the readings 簡繁直輸 gets wrong (看著/銀行/會計/乾淨)
+// plus a date and a percentage, so one listen covers both the accepted defect
+// and the number rules.
+const SHORT = "他看著窗外，銀行的招牌顯得格外明亮。約好八月七日十四點三十分，完成度25.5%。";
 // heading first — chunk 0 is the heading alone, exactly like a real chapter
 const LONG = "桃花源記\n\n" + ("晉太元中，武陵人捕魚為業。緣溪行，忘路之遠近。忽逢桃花林，夾岸數百步，中無雜樹，"
   + "芳草鮮美，落英繽紛。漁人甚異之，復前行，欲窮其林。林盡水源，便得一山，山有小口，"
@@ -751,60 +263,38 @@ async function speak(text, tag) {
   synthDone = false;
   prime();
   startHb();
-  await ensureEngine();
+  const eng = await prepare();
   if (token !== run) return;
-  const v = voice();
   const chunks = ttsCore.chunkChapter(text);
-  const texts = chunks.map((c) => ttsCore.ttsPrompt(c.text));
-  phMiss = 0;
-  const tp = performance.now();
-  const items = v.frontend === "piper"
-    ? await piperItems(texts)
-    : texts.flatMap((s) => lexItems(t2cn(s), v.frontend === "melo" ? meloLex : vitsLex, v.frontend === "melo"));
-  if (!items.length) throw new Error("前端無輸出");
-  const rate = config.audio.sample_rate;
-  const presynth = $("presynth").checked;
-  const sidNote = v.frontend === "vits" ? `〔說話人 ${$("sidIn").value}〕` : "";
-  log(`${tag} ${v.label}${sidNote} 分段${chunks.length} → 子句${items.length}，前端 ${((performance.now() - tp) / 1000).toFixed(1)}s${phMiss ? `（丟符號 ${phMiss}）` : ""}${presynth ? "（先合成再播）" : ""}`);
-  let audioS = 0, synthS = 0, unitK = 0, synthSeq = 0;
-  let acc = [], accLen = 0, accMs = 0;
-  const emit = () => {
-    if (!acc.length) return;
-    const pcm = new Float32Array(accLen);
-    let o = 0;
-    for (const p of acc) { pcm.set(p, o); o += p.length; }
-    const secs = pcm.length / rate;
-    queue.push({ k: ++unitK, blob: mkWav(pcm, rate), secs });
-    log(`句${unitK} 合成${(accMs / 1000).toFixed(1)}s → 音${secs.toFixed(1)}s ×${(secs * 1000 / accMs).toFixed(1)} vis=${document.visibilityState}`);
-    acc = []; accLen = 0; accMs = 0;
-    if (!presynth) pump();
-  };
-  for (const item of items) {
+  log(`${tag} 分段${chunks.length}`);
+  let audioS = 0, synthS = 0, unitK = 0;
+  for (const c of chunks) {
     if (token !== run) return;
-    const r = await synthesize(`s${++synthSeq}`, item);
-    if (!r || token !== run) { if (!r) log("子句合成失敗"); continue; }
-    const pcm = trimTail(r.pcm, rate);
-    const gap = new Float32Array(Math.floor(rate * (PAUSE_MS[item.punct] ?? (item.punct ? 300 : 80)) / 1000));
-    acc.push(pcm, gap);
-    accLen += pcm.length + gap.length;
-    accMs += r.ms;
-    audioS += (pcm.length + gap.length) / rate;
-    synthS += r.ms / 1000;
-    if (UNIT_ENDERS.includes(item.punct) || item.flush || accLen / rate >= UNIT_MAX_S) emit();
+    // mp3=false: the chain players want WAV blobs, and this page has no MSE
+    const ok = await eng.speakChunk(ttsCore.ttsPrompt(c.text), (u) => {
+      if (token !== run) return false;
+      queue.push({ k: ++unitK, blob: u.blob, secs: u.secs });
+      audioS += u.secs;
+      synthS += u.ms / 1000;
+      log(`句${unitK} 合成${(u.ms / 1000).toFixed(1)}s → 音${u.secs.toFixed(1)}s ×${(u.secs * 1000 / (u.ms || 1)).toFixed(1)} vis=${document.visibilityState}`);
+      pump();
+      return true;
+    }, false);
+    if (!ok || token !== run) return;
   }
-  emit();
-  if (token !== run) return;
   synthDone = true;
-  if (presynth) pump();
-  if (synthS) log(`${tag} ${v.label} 合成完：音${audioS.toFixed(0)}s／算${synthS.toFixed(0)}s ×${(audioS / synthS).toFixed(1)} 實時`);
+  if (synthS) log(`${tag} 合成完：音${audioS.toFixed(0)}s／算${synthS.toFixed(0)}s ×${(audioS / synthS).toFixed(1)} 實時`);
 }
 
-const $ = (id) => document.getElementById(id);
-$("bPrep").onclick = () => { startHb(); ensureEngine().catch(() => {}); };
+$("bPrep").onclick = () => { startHb(); prepare().catch((e) => log(`準備失敗 ${e.message}`)); };
 $("bShort").onclick = () => speak(SHORT, "短句").catch((e) => log(`短句失敗 ${e.message}`));
 $("bLong").onclick = () => speak(LONG, "連續").catch((e) => log(`連續失敗 ${e.message}`));
 $("bStop").onclick = () => { stopAll(); log("停止"); };
-$("bClear").onclick = async () => { stopAll(); log(`快取清除 ${await caches.delete(CACHE).catch(() => false)}`); };
+$("bClear").onclick = async () => {
+  stopAll();
+  engine = null;
+  log(`快取清除 ${await caches.delete(CACHE).catch(() => false)}（重新整理後才會重新載入引擎）`);
+};
 </script>
 </body>
 </html>

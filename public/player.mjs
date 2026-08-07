@@ -19,10 +19,10 @@
 //   locked, and the system keeps the page alive to buffer ahead.
 // - CHAIN (everything else): the double-buffered element swap. Chrome and
 //   Firefox happily chain play() from the `ended` handler in background.
-// - WASM (offline, wasm-tts.mjs): in-browser piper 華言 — no network after the
-//   one-time voice pack download. Selected automatically when the pack is
+// - WASM (offline, wasm-tts.mjs): in-browser Matcha zh-en — no network after
+//   the one-time voice pack download. Selected automatically when the pack is
 //   in the cache (downloaded by /wasmtest, never by the reader — ▶ must
-//   not quietly pull 180 MB over cellular); localStorage bw_tts="stream"
+//   not quietly pull 137 MB over cellular); localStorage bw_tts="stream"
 //   forces the online engines back. Playback rides the SAME MediaSource
 //   discipline as STREAM: the synth worker encodes each unit to mp3 and
 //   the units are appended to one continuous timeline. The chain-swap
@@ -44,7 +44,7 @@ let wasmOn = false;
 const useWasm = () => wasmOn;
 wasmTts.packReady().then((r) => {
   wasmOn = r && localStorage.getItem("bw_tts") !== "stream";
-  console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline huayan)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
+  console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline matcha)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
 });
 
 // reader internals, injected once by app.js
@@ -577,7 +577,7 @@ function streamAdvanceChunk(d) {
   streamPlayFrom(ci, 0);
 }
 
-// ---------- WASM engine (offline huayan, wasm-tts.mjs) ----------
+// ---------- WASM engine (offline matcha, wasm-tts.mjs) ----------
 //
 // Synthesis streams sentence-sized WAV units into `queue`; playback chains
 // them through the same two chain elements with strict alternation (the
@@ -761,7 +761,7 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
   let eng;
   try {
     eng = await wasmTts.ensureEngine();
-    wlog(`引擎 ${wasmTts.engineInfo.threads}緒 isolated=${crossOriginIsolated}`);
+    wlog(`引擎 ${wasmTts.engineInfo.threads}緒`);
   } catch (e) {
     // pack half-evicted or init failure: this device cannot run the engine
     // now — fall back to the online engines for the rest of the session

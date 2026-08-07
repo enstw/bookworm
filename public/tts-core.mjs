@@ -17,8 +17,11 @@ export const CHARS_PER_SEC = 4.5;
 export const CHUNK_CHARS = 280;
 export const FIRST_CHUNK_CHARS = 100;
 
-const ENDERS = "。！？；\n";
-const CLOSERS = "」』”’）)】";
+// Exported because wasm-tts.mjs splits the same text again, one sentence per
+// synthesis unit: two definitions of "what ends a sentence" would drift, and
+// the drift would show up as audio boundaries that disagree with chunk offsets.
+export const ENDERS = "。！？；\n";
+export const CLOSERS = "」』”’）)】";
 
 // Chapter text → [{ start, chars, text }] where start is the char offset of
 // the chunk in `text` (same offsets as the reader's p[data-off] paragraphs)

@@ -169,7 +169,8 @@ the pre-publication history, which lives in the owner's private archive.
   blocks nothing, and a 1 s cap would just make the update notice never show
   on a slow link.
 - **TTS (2026-07-15 onward).** Three engines in `player.mjs`: WASM
-  (offline, preferred when available), STREAM (`ManagedMediaSource`, one
+  (offline Matcha, preferred when the voice pack is cached), STREAM
+  (`ManagedMediaSource`, one
   continuous mp3 timeline — no chunk boundary ever needs `play()` while
   the screen is locked) where supported, CHAIN (double-buffered element
   swap) elsewhere; `globalThis.bwPlayer` says which. The online backend
@@ -180,36 +181,62 @@ the pre-publication history, which lives in the owner's private archive.
   which is how the Workers-AI MeloTTS breakage was confirmed. Rejected
   alternatives: Web Speech API (iOS pauses it on lock), Azure/OpenAI TTS
   (~$200/novel).
-- **Offline TTS (2026-08-02, voice swapped 2026-08-03).** `wasm-tts.mjs`
-  runs piper 華言 (zh_CN-huayan-medium) under onnxruntime-web in a Worker,
-  ONE thread: espeak phonemize on the main thread (piper_phonemize wasm,
-  `-l cmn` reads traditional text — no opencc), ids remapped through the
-  model's own phoneme_id_map, page-spliced punctuation pauses (espeak ate
-  the commas, so the model never learned a pause). MeloTTS fp32 shipped
-  first — ×1.7 realtime needed 4 wasm threads, which cooked the phone
-  (user 08-03), so melo and the `bw_tts_threads` knob went; huayan medium
-  holds realtime single-threaded. The melo engine incl. the vetted
-  台灣讀音 overlay lives in git history (`git show
-  1bc494f:public/wasm-tts.mjs`) until a real zh_TW voice exists. The
-  worker lame-encodes each sentence unit to mp3 and playback appends them
-  to ONE ManagedMediaSource timeline (plain MediaSource on Chrome, so the
-  same path is testable headless): chain-swapping blob WAVs died after
-  ~5 min locked with a play() that never settled — no new-element play()
+- **Offline TTS (2026-08-02, voice swapped to Matcha 2026-08-08).**
+  `wasm-tts.mjs` runs Matcha zh-en (`matcha-icefall-zh-en`) under
+  onnxruntime-web in a Worker, ONE wasm thread, `executionProviders:
+  ["wasm"]` — **no WebGPU, ever**: it measured slower than CPU for VITS-shaped
+  graphs (small, numerous ops; the GPU round-trip eats the win) and the
+  option is deleted rather than kept as a tempting fallback. TWO sessions
+  are live at once: the acoustic model emits a mel spectrogram and Vocos
+  turns it into magnitude plus cos/sin phase — **not a waveform** — so the
+  inverse FFT and overlap-add in `matcha-synthesis.js` are what produce
+  audio at all, at ~1.4% of synthesis time. The raw ONNX buffers are
+  transferred into the worker and nulled the moment the sessions exist;
+  that is ~124 MiB and load-bearing on a phone, not an optimisation.
+  Matcha replaced piper 華言 on quality — 90 vs 60 in a blind listening
+  test (Kokoro 80), piper marked 外國腔 — at comparable cost: measured RTF
+  0.1317–0.1360 (×7.3–7.6 realtime) single-threaded on desktop, and
+  verified on the phone by the owner before the swap. piper, its espeak
+  phonemizer and the melo-era 台灣讀音 overlay live in git history.
+  **簡繁直輸: traditional and simplified text go straight into the lexicon,
+  with no OpenCC anywhere.** The cost is measured and accepted, not
+  unknown: 70.5% of the lexicon's 47,113 multi-char entries are
+  unreachable from traditional input, 19.3% of those get ≥1 syllable wrong
+  via per-char fallback, and real traditional prose comes out ~16% wrong —
+  銀行 as yín xíng, 看著 as kàn zhù, 會計 as huì jì. Corrections accrue in
+  `OVERRIDES` one line at a time from listening tests, each with a pinned
+  case in `scripts/test-wasm-frontend.mjs`; a flat table cannot disambiguate
+  著, and guessing entries up front just moves the error. Pauses are the
+  model's own punctuation tokens plus `scaleSilence` — the piper-era
+  `PAUSE_MS` splicing existed only because espeak ate the commas. One
+  sentence is one unit (`segments()`, reusing `ENDERS`/`CLOSERS` from
+  `tts-core.mjs` so the two splitters cannot drift); the worker
+  lame-encodes each to mp3 and playback appends them to ONE
+  ManagedMediaSource timeline (plain MediaSource on Chrome, so the same
+  path is testable headless): chain-swapping blob WAVs died after ~5 min
+  locked with a `play()` that never settled — no new-element `play()`
   survives the lock screen long-term, same lesson as the STREAM engine.
   The engine's flight recorder mirrors the timeline to
-  `/api/testlog?page=player`. `public/_headers` keeps COOP/COEP on every
-  page for the /wasmtest thread experiments, but the reader no longer
-  needs isolation. The ~60 MB voice pack (model + config +
-  piper_phonemize.data) is downloaded ONLY by the `/wasmtest` diagnostic
+  `/api/testlog?page=player`. COOP/COEP is gone (`public/_headers`
+  deleted): nothing needs `crossOriginIsolated` now that the threaded
+  experiments are, and the engine was verified running with it false. The
+  ~137 MB voice pack is downloaded ONLY by the `/wasmtest` diagnostic
   (never by ▶ — cellular) into the `bw-wasmtts` cache both pages share;
   `packReady()` flips the reader to this engine, eviction falls back to
-  STREAM, `localStorage bw_tts="stream"` forces the online engines. Model
-  binaries come from the `wasmtts-assets-v1` GitHub release via the
-  allowlisted `/api/wasmtts/` proxy. The fanchen-C voice (187 speakers,
-  zhuyin lexicon) stayed a diagnostic option — faster than melo, but ~7×
-  the CPU of huayan-medium per audio second (measured ×1.1 vs ×7.6
-  realtime, single wasm thread, desktop 08-03): on the phone it would
-  need the multi-thread path huayan exists to avoid.
+  STREAM, `localStorage bw_tts="stream"` forces the online engines. The
+  cache sweep is a keep-set, not a name list, so it reclaims the whole
+  piper/melo/fanchen era in one pass and never needs editing again.
+  Binaries come from the `wasmtts-assets-v2` GitHub release via the
+  allowlisted `/api/wasmtts/` proxy; `/wasmtest` imports the real engine
+  rather than carrying its own copy, because a bench that drifts from what
+  ships measures the wrong thing. **ort is pinned to
+  `1.26.0-dev.20260416-b7804b056c` on purpose** — a dev build, but the one
+  the phone verification was performed on, and its wasm differs from stable
+  1.27.0's by 537 KB. Moving it means re-verifying on device and re-cutting
+  the release asset (whose filename carries the version, so a forgotten
+  re-cut 404s loudly), not a routine bump. Note `env.versions.common`
+  reports *onnxruntime-common*, not the web package, so the drift guard
+  checks the wasm's byte length instead.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:

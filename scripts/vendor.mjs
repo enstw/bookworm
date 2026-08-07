@@ -4,8 +4,8 @@
 // and `pnpm run deploy`, so the served assets always match package.json —
 // Dependabot bumps a version, the next deploy ships it.
 
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,33 +14,30 @@ const outDir = join(root, "public", "vendor");
 const BUNDLES = [
   // simplified→traditional only (1.0MB); the full bi-directional bundle is not needed
   { pkg: "opencc-js", src: "dist/esm/cn2t.js", dst: "opencc-cn2t.js" },
-  // traditional→simplified, for /wasmtest's MeloTTS frontend: its lexicon
-  // has simplified multi-char words, and word-level matches carry the tone
-  // sandhi that per-char fallback loses
-  { pkg: "opencc-js", src: "dist/esm/t2cn.js", dst: "opencc-t2cn.js" },
   { pkg: "fflate", src: "esm/browser.js", dst: "fflate.js" },
-  // /wasmtest glue (small files only). The large binaries these load — the
-  // huayan VITS model, piper_phonemize.data, ort-wasm-simd.wasm — are NOT
+  // Offline TTS glue (small files only). The binaries these load — the two
+  // Matcha ONNX models, the lexicon, and ort's own 12.9MB wasm — are NOT
   // deployed as assets: the page fetches them from the wasmtts-assets GitHub
   // release, so the deploy stays small and files may exceed the 25 MiB
-  // per-asset limit. Versions here must match that release's contents.
-  { pkg: "@diffusionstudio/piper-wasm", src: "build/piper_phonemize.js", dst: "wasmtts/piper_phonemize.js" },
-  { pkg: "@diffusionstudio/piper-wasm", src: "build/piper_phonemize.wasm", dst: "wasmtts/piper_phonemize.wasm" },
-  // UMD build: the page's inference worker loads it via importScripts
-  { pkg: "onnxruntime-web", src: "dist/ort.min.js", dst: "wasmtts/ort-umd.min.js" },
+  // per-asset limit. Versions here must match that release's contents — and,
+  // for ort, must match the build that was verified on the phone: the pin is
+  // a dev version on purpose (see the Offline TTS standing decision), so
+  // moving it is a deliberate re-verification, not a routine bump.
+  //
+  // ort.wasm.min.js is the wasm-only UMD build — no webgpu code at all, which
+  // is what we want: the engine runs one wasm thread and nothing else. The
+  // synth worker loads it via importScripts.
+  { pkg: "onnxruntime-web", src: "dist/ort.wasm.min.js", dst: "wasmtts/ort-wasm.min.js" },
+  // ort import()s this glue by URL, so unlike every other binary it cannot
+  // arrive as a cached blob — it ships as a same-origin asset and rides the
+  // service worker's SHELL_ASSETS to stay available offline.
+  { pkg: "onnxruntime-web", src: "dist/ort-wasm-simd-threaded.mjs", dst: "wasmtts/ort-wasm-simd-threaded.mjs" },
   // mp3 encoder for the offline TTS engine: iOS only keeps lock-screen
   // audio alive on ONE continuous ManagedMediaSource timeline, and MSE
   // does not eat WAV — the synth worker encodes each unit to mp3 frames.
   // importScripts-style global (the npm main entry has the MPEGMode bug;
   // this bundle is self-contained). LGPL-2.1 — see node_modules/lamejs/LICENSE.
   { pkg: "lamejs", src: "lame.min.js", dst: "wasmtts/lame.min.js" },
-  // the 後端=webgpu experiment rides a NEWER ort (aliased package): its
-  // webgpu EP matured well past 1.18. UMD for importScripts, plus the
-  // ASYNCIFY loader mjs that wasmPaths points at — 1.27's webgpu lives in
-  // the asyncify build, not the legacy jsep one (webgpuInit only exists
-  // there). The 24MB asyncify wasm is a release asset like the rest.
-  { pkg: "onnxruntime-web-gpu", src: "dist/ort.webgpu.min.js", dst: "wasmtts/ort-webgpu.min.js" },
-  { pkg: "onnxruntime-web-gpu", src: "dist/ort-wasm-simd-threaded.asyncify.mjs", dst: "wasmtts/ort-wasm-simd-threaded.asyncify.mjs" },
 ];
 
 mkdirSync(outDir, { recursive: true });
@@ -52,4 +49,22 @@ for (const { pkg, src, dst } of BUNDLES) {
   versions[pkg] = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).version;
 }
 writeFileSync(join(outDir, "versions.json"), JSON.stringify(versions, null, 2) + "\n");
+
+// Drop anything this run did not produce. CI deploys from a fresh checkout, so
+// public/vendor/ there holds exactly the BUNDLES above; a long-lived working
+// copy otherwise keeps serving files from deps that were removed months ago,
+// and a stale bundle that only exists locally is how "works on my machine"
+// starts. Pruning makes the two match.
+const keep = new Set([...BUNDLES.map(({ dst }) => dst), "versions.json"]);
+const stale = [];
+const walk = (dir) => {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const abs = join(dir, e.name);
+    if (e.isDirectory()) walk(abs);
+    else if (!keep.has(relative(outDir, abs))) { rmSync(abs); stale.push(relative(outDir, abs)); }
+  }
+};
+walk(outDir);
+
 console.log(`✓ vendored to public/vendor/: ${Object.entries(versions).map(([p, v]) => `${p}@${v}`).join(", ")}`);
+if (stale.length) console.log(`  pruned ${stale.length} stale file(s): ${stale.join(", ")}`);

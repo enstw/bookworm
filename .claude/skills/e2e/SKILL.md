@@ -33,6 +33,17 @@ scripts in `scripts/` are the source of truth.
 | tts-stream | `pnpm run test:tts-stream` | Chromium + `ffmpeg` on PATH (own static server) |
 | **everything above** | `ADMIN_TOKEN=… pnpm test` | dev server + Chromium |
 | offline | see runbook below | dev server, then NO server |
+| tts-wasm | `MATCHA_MODEL_DIR=… pnpm run test:tts-wasm` | Chromium + ~130 MB of model weights (own static server) |
+
+`tts-wasm` stays out of the `pnpm test` chain because it needs the voice-pack
+weights on disk. It serves them itself from `MATCHA_MODEL_DIR` (the directory
+holding `matcha-icefall-zh-en/` and `vocos-16khz-univ.onnx`) instead of the
+GitHub release, so it runs before a release is cut and never touches the
+network. Its profile is deliberately persistent — the Cache API pack survives
+between runs, so only the first one pays to load 130 MB. Run it after any
+change to `wasm-tts.mjs`, the worker allowlist, or the ort pin: it is the only
+thing that exercises two ort sessions, the mp3 encode and the SourceBuffer
+append together.
 
 ## The reader gate (affects every server-backed suite)
 

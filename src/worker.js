@@ -1,9 +1,7 @@
 // Bookworm worker: serves chapter files from R2, reading positions from D1,
-// and on-demand TTS audio (Workers AI MeloTTS, cached in R2).
+// and on-demand TTS audio (Microsoft Edge read-aloud, cached in R2).
 // Static assets (the reader app) are served directly by the assets binding;
 // this worker only runs for /api/* and /books/* (see run_worker_first).
-// COOP/COEP for every page comes from public/_headers (the offline TTS
-// engine's wasm threads need crossOriginIsolated on the reader itself).
 
 import { chunkChapter, ttsPrompt } from "../public/tts-core.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
@@ -448,22 +446,25 @@ const randHex = (bytes) =>
   Array.from(crypto.getRandomValues(new Uint8Array(bytes)),
     (b) => b.toString(16).padStart(2, "0")).join("");
 
-// GET /api/wasmtts/<file> — same-origin proxy for the /wasmtest diagnostic's
-// large binaries (VITS model, espeak data, ort wasm). They live on the
-// wasmtts-assets GitHub release, not in the deploy: releases have no 25 MiB
-// per-file limit and keep the upload small — but their download host sends
-// no CORS headers, so the page cannot fetch them cross-origin and this route
-// is the thinnest same-origin door. Open like the shell (public OSS bytes
-// guard nothing), but strictly allowlisted on a pinned tag — an open proxy
-// would otherwise fetch arbitrary URLs on our egress. Delete with /wasmtest.
-const WASMTTS_RELEASE = "https://github.com/enstw/bookworm/releases/download/wasmtts-assets-v1/";
+// GET /api/wasmtts/<file> — same-origin proxy for the offline TTS voice pack
+// (the Matcha acoustic model, the Vocos vocoder, the lexicon and ort's own
+// wasm). They live on the wasmtts-assets GitHub release, not in the deploy:
+// releases have no 25 MiB per-file limit and keep the upload small — but their
+// download host sends no CORS headers, so the page cannot fetch them
+// cross-origin and this route is the thinnest same-origin door. Open like the
+// shell (public OSS bytes guard nothing), but strictly allowlisted on a pinned
+// tag — an open proxy would otherwise fetch arbitrary URLs on our egress.
+//
+// The v2 names deliberately share nothing with v1's: a phone that ran the
+// piper-era diagnostic holds those keys in its bw-wasmtts cache, and distinct
+// names mean the sweep in wasm-tts.mjs reclaims them instead of colliding.
+const WASMTTS_RELEASE = "https://github.com/enstw/bookworm/releases/download/wasmtts-assets-v2/";
 const WASMTTS_FILES = new Set([
-  "zh_CN-huayan-x_low.onnx", "zh_CN-huayan-x_low.onnx.json",
-  "zh_CN-huayan-medium.onnx", "zh_CN-huayan-medium.onnx.json",
-  "melo-zh_en.onnx", "melo-zh_en.int8.onnx", "melo-lexicon.txt", "melo-tokens.txt",
-  "fanchen-c.onnx", "fanchen-lexicon.txt", "fanchen-tokens.txt",
-  "piper_phonemize.data", "ort-wasm-simd.wasm", "ort-wasm-simd-threaded.wasm",
-  "ort-wasm-simd-threaded.asyncify.wasm",
+  "matcha-acoustic-steps3.onnx", "matcha-vocos-16khz-univ.onnx",
+  "matcha-lexicon.txt", "matcha-tokens.txt",
+  // the ort build the engine was verified against; the version rides the
+  // filename so a bump that forgets to re-cut the release 404s loudly
+  "ort-1.26.0-dev-wasm-simd-threaded.wasm",
 ]);
 
 async function serveWasmttsAsset(path) {

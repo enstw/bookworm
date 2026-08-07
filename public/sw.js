@@ -23,11 +23,16 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v12";
-// opencc-t2cn rides the shell so the offline TTS engine (wasm-tts.mjs)
-// works with no network — its big binaries live in their own bw-wasmtts
-// cache; the vendor URL is unversioned like fonts (bump SHELL on dep bumps)
-const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/vendor/opencc-t2cn.js", "/manifest.webmanifest"];
+const SHELL = "bw-shell-v13";
+// The offline TTS engine's big binaries live in their own bw-wasmtts cache,
+// but its three small same-origin files ride the shell, because /wasmtest
+// downloads only the voice pack: without these, the first ensureEngine() on a
+// device that has gone offline since would fetch them from a dead network and
+// fail into the online engine, holding a complete voice pack it could not use.
+// ort's loader glue additionally *has* to be a real URL — ort import()s it, and
+// a blob cannot satisfy that in a classic worker. All are unversioned like the
+// fonts: bump SHELL when the ort pin or either module moves.
+const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/matcha-frontend.js", "/matcha-synthesis.js", "/vendor/wasmtts/ort-wasm-simd-threaded.mjs", "/manifest.webmanifest"];
 const NET_MS = 1000; // mirrors NET_MS in app.js — the same line, drawn twice
 
 self.addEventListener("install", (e) => {
