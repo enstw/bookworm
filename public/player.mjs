@@ -49,12 +49,13 @@ wasmTts.packReady().then((r) => {
 
 // reader internals, injected once by app.js
 let $, el, state, fetchChapter, openChapter, savePos, flush, updateProgress,
-  followScroll, pageStartOffset, lastUserScroll;
+  followScroll, pageStartOffset, highlightSentence, lastUserScroll;
 
 export function init(deps) {
   if ($) return; // both load paths in app.js may race; first wins
   ({ $, el, state, fetchChapter, openChapter, savePos, flush,
-    updateProgress, followScroll, pageStartOffset, lastUserScroll } = deps);
+    updateProgress, followScroll, pageStartOffset, highlightSentence,
+    lastUserScroll } = deps);
 }
 
 export const player = {
@@ -333,6 +334,7 @@ export function closePlayer() {
     if (a) { a.pause(); a.removeAttribute("src"); }
   streamTeardown();
   wasmTeardown();
+  highlightSentence(null); // pause keeps the mark; ✕ clears it
   $("#playerbar")?.remove();
   $("#audioBtn")?.classList.remove("active");
   flush();
@@ -614,6 +616,7 @@ function onStreamTime() {
   state.off = off;
   updateProgress();
   savePos();
+  markSpoken(off);
   if (Date.now() - lastUserScroll() > 5000) followScroll(off);
 }
 
@@ -1080,6 +1083,19 @@ function updatePlayerBar() {
   $("#playerStatus").textContent = label;
 }
 
+// Paint the sentence containing the char the voice is on. Bounds come from
+// the chunk's own text via the shared ENDERS/CLOSERS walk, so the mark and
+// the audio can never disagree about where a sentence is. A force-split
+// run-on sentence has no ender inside its chunk, so its whole chunk-sized
+// piece marks — exactly the span being spoken.
+function markSpoken(off) {
+  const c = player.chunks[ttsCore.chunkIndexFor(player.chunks, off)];
+  if (!c) return;
+  const i = Math.max(0, Math.min(off - c.start, c.chars - 1));
+  highlightSentence(c.start + ttsCore.sentenceStartFor(c.text, i),
+    c.start + ttsCore.sentenceEndFor(c.text, i));
+}
+
 function onAudioTime() {
   if (!player.playing || player.chapIdx !== state.idx) return;
   // wasm units carry their own char span — finer than a chunk, same shape
@@ -1101,6 +1117,7 @@ function onAudioTime() {
   state.off = off;
   updateProgress();
   savePos();
+  markSpoken(off);
   // follow the narration unless the user scrolled away recently
   if (Date.now() - lastUserScroll() > 5000) followScroll(off);
 }

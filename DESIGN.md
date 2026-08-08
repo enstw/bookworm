@@ -336,6 +336,19 @@ the pre-publication history, which lives in the owner's private archive.
   one shape paragraph-grained following could never turn. The audio suites
   pass `--mute-audio`: every assertion reads the media clock, never the
   speaker.
+- **The spoken sentence is marked, the bar floats (2026-08-08).** While a
+  reading plays, the sentence holding the spoken char is painted via the CSS
+  Custom Highlight API (`CSS.highlights`, name `tts-sentence`, color token
+  `--hl`) — no DOM mutation, so the paged grid and per-char rect maths are
+  untouched; the API is iOS 17.2+ and the feature no-ops silently below
+  that. Bounds come from `sentenceStartFor`/`sentenceEndFor` on the chunk's
+  own text — the same ENDERS/CLOSERS walk as the splitters — so mark and
+  audio can never disagree; a force-split run-on marks its whole chunk-sized
+  piece, and the chapter-title announcement marks nothing (the heading
+  renders as `<h2>`, not `p[data-off]`). Pause keeps the mark (it shows
+  where you stopped); ✕ clears it. The player bar itself is
+  near-transparent (35% of `--bar-bg` over the blur, no shadow) with
+  1.4rem icon buttons, so it floats over the page instead of hiding it.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:

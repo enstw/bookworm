@@ -7,6 +7,7 @@
   --border: #e4dccd;
   --accent: #a05e2a;
   --bar-bg: rgba(247, 242, 233, 0.92);
+  --hl: rgba(160, 94, 42, 0.18);
 }
 
 /* paper colors (背景顏色) — light-reading only; these must stay ABOVE the
@@ -33,6 +34,7 @@
   --border: #2e3138;
   --accent: #d29a63;
   --bar-bg: rgba(23, 24, 28, 0.92);
+  --hl: rgba(210, 154, 99, 0.28);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -44,6 +46,7 @@
     --border: #2e3138;
     --accent: #d29a63;
     --bar-bg: rgba(23, 24, 28, 0.92);
+    --hl: rgba(210, 154, 99, 0.28);
   }
 }
 
@@ -350,6 +353,8 @@ button {
 
 /* ---------- audio player ---------- */
 
+/* near-transparent on purpose: the bar floats over the page while reading,
+   so the text behind stays visible — the blur alone keeps glyphs legible */
 .playerbar {
   position: fixed;
   bottom: calc(3.6rem + env(safe-area-inset-bottom));
@@ -360,12 +365,21 @@ button {
   align-items: center;
   gap: 0.25rem;
   padding: 0.3rem 0.55rem;
-  background: var(--bar-bg);
+  background: color-mix(in srgb, var(--bar-bg) 35%, transparent);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
   white-space: nowrap;
+}
+
+.playerbar .iconbtn {
+  font-size: 1.4rem;
+  padding: 0.4rem 0.65rem;
+}
+
+/* the sentence the voice is on (CSS Custom Highlight API, iOS 17.2+) */
+::highlight(tts-sentence) {
+  background-color: var(--hl);
 }
 
 /* with the botnav hidden the player can sit at the bottom edge */

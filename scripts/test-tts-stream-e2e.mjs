@@ -161,6 +161,18 @@ const k0 = await evalJs(`bwPlayer.player.chunkIdx`);
 const k1 = await waitFor(`bwPlayer.player.chunkIdx`, (k) => k > k0, 30);
 out.chunkAdvances = k1 > k0 ? `ok (chunk ${k0} → ${k1})` : `FAIL: stuck at ${k1}`;
 
+// the sentence being spoken is marked — one live Range, sentence-shaped:
+// it ends on an ender/closer and never exceeds a chunk
+const hl = await evalJs(`(() => {
+  const h = CSS.highlights.get("tts-sentence");
+  if (!h || h.size !== 1) return "no range";
+  const s = [...h][0].toString();
+  return { len: s.length, last: s[s.length - 1] };
+})()`);
+out.sentenceMarked = hl?.len > 0 && hl.len <= 300 && "。！？；」』”’）)】".includes(hl.last)
+  ? `ok (${hl.len} chars, ends ${JSON.stringify(hl.last)})`
+  : `FAIL: ${JSON.stringify(hl)}`;
+
 // the page turns WITHIN the one-paragraph chapter as narration advances —
 // paragraph-grained following could never turn it before the chapter ended
 out.midParagraphTurn = (await waitFor(
@@ -209,5 +221,8 @@ if (!CHAIN) {
 // book end: last chapter finishes → endOfStream → ended → player closes
 out.closesAtBookEnd = (await waitFor(`bwPlayer.player.on === false`, (v) => v, 60))
   ? "ok" : "FAIL: player still open";
+// ✕/close clears the mark (pause would keep it)
+out.markCleared = (await evalJs(`CSS.highlights.has("tts-sentence") === false`))
+  ? "ok" : "FAIL: highlight survived close";
 
 await finish(out);

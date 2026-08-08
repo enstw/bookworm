@@ -1519,7 +1519,7 @@ function loadPlayer() {
   return import("/player.mjs").then((m) => {
     m.init({
       $, el, state, fetchChapter, openChapter, savePos, flush,
-      updateProgress, followScroll, pageStartOffset,
+      updateProgress, followScroll, pageStartOffset, highlightSentence,
       lastUserScroll: () => lastUserScroll,
     });
     playerMod = m;
@@ -1579,6 +1579,34 @@ function followScroll(offset) {
   // while absolute APIs are idempotent.
   const want = pageAt(Math.max(0, rectDist(c, r)));
   if (want !== pageAt(scrollDist(c))) pageGlide(c, pagePos(c, want));
+}
+
+// Paint the sentence the voice is on — CSS Custom Highlight API (iOS 17.2+,
+// silently absent elsewhere; streaming already needs 17.1). A sentence never
+// crosses a paragraph (\n is an ender), so one Range in one text node,
+// clamped to the trimmed line: raw offsets count the untrimmed line, the
+// same 1–2 char drift the page maths accepts. null clears the mark. The
+// heading line renders as <h2>, not p[data-off], so the chapter title
+// announcement has nothing to paint — by design.
+function highlightSentence(start, end) {
+  if (!window.Highlight) return;
+  if (start == null) return void CSS.highlights.delete("tts-sentence");
+  const ps = $("#content")?.querySelectorAll("p[data-off]");
+  if (!ps?.length) return;
+  let p = null;
+  for (const q of ps) {
+    if (Number(q.dataset.off) <= start) p = q;
+    else break;
+  }
+  const node = p?.firstChild;
+  if (node?.nodeType !== 3 || !node.length) return;
+  const off = Number(p.dataset.off);
+  const a = Math.max(0, Math.min(start - off, node.length - 1));
+  const b = Math.max(a + 1, Math.min(end - off, node.length));
+  const range = document.createRange();
+  range.setStart(node, a);
+  range.setEnd(node, b);
+  CSS.highlights.set("tts-sentence", new Highlight(range));
 }
 
 // Char offset of the first character on the page now on screen — where a

@@ -124,6 +124,20 @@ export function sentenceStartFor(text, i) {
   return s;
 }
 
+// End of the sentence containing raw index `i` — the first boundary after
+// `i` in the same walk, so [sentenceStartFor, sentenceEndFor) is exactly one
+// sentence span. The player highlights this span as it is spoken.
+export function sentenceEndFor(text, i) {
+  for (let j = 0; j < text.length; j++) {
+    if (!ENDERS.includes(text[j])) continue;
+    let e = j + 1;
+    while (e < text.length && CLOSERS.includes(text[e])) e++;
+    if (e > i) return e;
+    j = e - 1;
+  }
+  return text.length;
+}
+
 // Index of the chunk containing char offset `off` (clamped to valid range).
 export function chunkIndexFor(chunks, off) {
   let idx = 0;

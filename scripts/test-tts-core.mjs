@@ -6,6 +6,7 @@ import {
   chunkChapter,
   chunkIndexFor,
   sentenceStartFor,
+  sentenceEndFor,
   ttsPrompt,
   CHARS_PER_SEC,
   CHUNK_CHARS,
@@ -28,6 +29,19 @@ for (const [i, want] of [[0, 0], [2, 0], [3, 3], [5, 3], [7, 3], [8, 8], [11, 8]
 }
 if (sentenceStartFor("", 0) !== 0) fail("sentenceStartFor on empty text");
 if (sentenceStartFor("無標點的一句話", 4) !== 0) fail("sentenceStartFor with no enders");
+
+// sentenceEndFor: same boundaries from the other side — [start, end) is one
+// sentence span, so end(i) is the first boundary strictly after i
+for (const [i, want] of [[0, 3], [2, 3], [3, 8], [7, 8], [8, 12], [11, 12], [12, 13], [13, 16], [15, 16], [99, 16]]) {
+  const got = sentenceEndFor(SENT, i);
+  if (got !== want) fail(`sentenceEndFor(SENT, ${i}) = ${got}, want ${want}`);
+}
+if (sentenceEndFor("", 0) !== 0) fail("sentenceEndFor on empty text");
+if (sentenceEndFor("無標點的一句話", 4) !== 7) fail("sentenceEndFor with no enders");
+for (const i of [0, 3, 5, 8, 12, 13, 15]) {
+  if (sentenceStartFor(SENT, i) >= sentenceEndFor(SENT, i))
+    fail(`sentence span empty at ${i}`);
+}
 
 const dir = process.argv[2] ?? "out/jianlai";
 const files = readdirSync(dir).filter((f) => f.endsWith(".txt"));
