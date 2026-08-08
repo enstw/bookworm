@@ -26,8 +26,8 @@
   "devDependencies": {
     "fflate": "^0.8.3",
     "lamejs": "^1.2.1",
-    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c",
+    "onnxruntime-web": "1.27.0",
     "opencc-js": "^1.4.1",
-    "wrangler": "^4.114.0"
+    "wrangler": "^4.118.0"
   }
 }
