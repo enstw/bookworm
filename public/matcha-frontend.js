@@ -1,7 +1,11 @@
 // Matcha zh-en text frontend: text → phone-token ids by greedy longest match
 // over the model's own lexicon.txt. Ported from the sibling research repo
-// ~/workspace/wasmtts (platform/matcha-frontend.js @ 05b5b35) and kept
-// byte-for-byte below this header, so upstream stays diffable.
+// ~/workspace/wasmtts (platform/matcha-frontend.js @ 05b5b35).
+//
+// Diverges from that port in three places, all in the number path: a
+// full-width-digit fix (charCodeAt without fromCharCode emitted code points),
+// normalizeLocalForms, and the ruleNormalizer hook prepareText runs it into.
+// Everything else is still byte-for-byte, so upstream stays diffable.
 //
 // 簡繁直輸 by decision: there is no OpenCC step and convertTraditional stays the
 // identity. The multi-char entries are overwhelmingly simplified, so traditional
@@ -126,10 +130,60 @@
 
   function normalizeFullWidth(value) {
     return value
-      .replace(/[０-９]/gu, (character) => String(character.charCodeAt(0) - 0xfee0))
+      .replace(/[０-９]/gu, (character) => String.fromCharCode(character.charCodeAt(0) - 0xfee0))
       .replace(/％/gu, '%')
       .replace(/＋/gu, '+')
       .replace(/－/gu, '-');
+  }
+
+  // The four shapes sherpa's zh rule tables (see matcha-fst.js) read wrong for a
+  // Taiwan reader. Each rewrite keeps the digits wherever it can, so the tables
+  // still do the actual reading and only the framing changes:
+  //
+  //   25.5%       → 百分之25.5      "%" is in neither the lexicon nor tokens.txt,
+  //                                 so the tables' 二十五点五% drops the percent
+  //                                 silently and the reader hears a bare number.
+  //   14:30       → 14点30分        ":" IS a token (id 3), so the tables' 十四:三十
+  //                                 comes out as a pause between two numbers.
+  //   2026-08-07  → 2026年8月7日     date.fst only knows the 年月日 spelling; the
+  //                                 dashed form falls through to number.fst and
+  //                                 becomes 二千零二十六-零八-零七.
+  //   0912345678  → 零九一二三四五六七八  phone.fst matches 11-digit mainland mobiles
+  //                                 and 3-digit short codes only, so a TW number
+  //                                 falls through to number.fst as one integer:
+  //                                 零九亿一千二百三十四万五千六百七十八.
+  //
+  // Only the last one has to spend its digits here — no spelling of a number
+  // makes number.fst read it one digit at a time — so it converts and then
+  // passes through the tables untouched. A leading zero is the signal, and the
+  // seven-digit floor is what keeps it off quantities: number.fst already reads
+  // short leading-zero runs digit by digit (02 → 零二, 007 → 零零七) and only
+  // switches to integer reading once there is a long tail left to group.
+  function normalizeLocalForms(value) {
+    return value
+      .replace(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号號]?/gu,
+        (_, year, month, day) => `${year}年${Number(month)}月${Number(day)}日`)
+      // The dashed and slashed spellings folded onto the one date.fst knows.
+      // Both separators have to be the same character: 4273-9/8 is not a date,
+      // and reading it as one would be a worse answer than upstream's.
+      .replace(/(^|\D)(\d{4})([-/])(\d{1,2})\3(\d{1,2})(?!\d)/gu,
+        (_, before, year, __, month, day) => `${before}${year}年${Number(month)}月${Number(day)}日`)
+      .replace(/(^|\D)(\d{1,2}):([0-5]\d)(?!\d)/gu,
+        (_, before, hour, minute) => `${before}${hour}点${minute === '00' ? '' : `${minute}分`}`)
+      // The "%" is consumed, not moved, so it must not be the only thing keeping
+      // two numbers apart: 5213%4 would otherwise fuse into 52134.
+      .replace(/(\d+(?:\.\d+)?)\s*%(?!\d)/gu, (_, number) => `百分之${number}`)
+      // (02)2345-6789 — the parenthesised area code is standard here, and the
+      // brackets would otherwise cut the run in two and leave the local part a
+      // quantity. Everything else falls to the bare-run rule below.
+      .replace(/\((0\d{1,3})\)\s*(\d[\d-]*\d)/gu, (whole, area, rest) => {
+        const digits = (area + rest).replace(/-/gu, '');
+        return digits.length >= 7 ? digitsToChinese(digits) : whole;
+      })
+      .replace(/(^|[^\d.\-])(0[\d-]*\d)/gu, (whole, before, run) => {
+        const digits = run.replace(/-/gu, '');
+        return digits.length >= 7 ? `${before}${digitsToChinese(digits)}` : whole;
+      });
   }
 
   function normalizeNumbers(value) {
@@ -162,6 +216,7 @@
     tokensText,
     convertTraditional = (text) => text,
     pronunciationOverrides = {},
+    ruleNormalizer = (text) => text,
   }) {
     const {lexicon, maxKeyLength: sourceMaxKeyLength} = parseLexicon(lexiconText);
     const tokens = parseTokens(tokensText);
@@ -173,8 +228,15 @@
       maxKeyLength = Math.max(maxKeyLength, word.length);
     }
 
+    // Digits leave in three passes, most specific first. normalizeLocalForms
+    // reframes what the rule tables misread; ruleNormalizer is the FST chain,
+    // which is where every ordinary number is actually read; normalizeNumbers is
+    // the JS fallback, a no-op once the tables have eaten the digits and the
+    // whole reading when they are missing — a device that has the voice pack
+    // but not the 212 KB of tables still speaks, just more plainly.
     function prepareText(text) {
-      return normalizePunctuation(normalizeNumbers(convertTraditional(String(text))));
+      const source = normalizeFullWidth(convertTraditional(String(text)));
+      return normalizePunctuation(normalizeNumbers(ruleNormalizer(normalizeLocalForms(source))));
     }
 
     function tokensFor(text, {allowUnknown = false} = {}) {
@@ -243,6 +305,8 @@
   const api = {
     createFrontend,
     integerToChinese,
+    normalizeFullWidth,
+    normalizeLocalForms,
     normalizeNumbers,
     normalizePunctuation,
     numberToChinese,

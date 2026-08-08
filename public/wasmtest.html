@@ -179,7 +179,7 @@ async function prepare() {
   await fetchPack();
   const t = performance.now();
   engine = await ensureEngine();
-  log(`引擎就緒 ${((performance.now() - t) / 1000).toFixed(1)}s（${engineInfo.threads} 緒）`);
+  log(`引擎就緒 ${((performance.now() - t) / 1000).toFixed(1)}s（${engineInfo.threads} 緒、${engineInfo.rules ? `${engineInfo.rules} 規則表` : "無規則表，數字走 JS 規則"}）`);
   return engine;
 }
 

@@ -208,7 +208,30 @@ the pre-publication history, which lives in the owner's private archive.
   銀行 as yín xíng, 看著 as kàn zhù, 會計 as huì jì. Corrections accrue in
   `OVERRIDES` one line at a time from listening tests, each with a pinned
   case in `scripts/test-wasm-frontend.mjs`; a flat table cannot disambiguate
-  著, and guessing entries up front just moves the error. **Pauses are the
+  著, and guessing entries up front just moves the error. **Numbers are read
+  by sherpa's own zh rule FSTs, applied in JS (2026-08-08).**
+  `matcha-fst.js` is a from-scratch OpenFST reader and shortest-path applier
+  reproducing kaldifst's `TextNormalizer::Normalize`, so the three 212 KB
+  tables (`phone`, `date`, `number`, in that order) run without the 512 MiB
+  sherpa-onnx bundle they normally ship inside. It is verified byte-identical
+  to kaldifst 1.8.0 on 13,625 cases — 2,547 generated plus 11,078 real book
+  sentences. The one subtle part is the tie-break: these tables leave several
+  readings at exactly equal cost, and OpenFST's `ShortestPath` uses an
+  `AutoQueue` — a `TopOrderQueue` on an acyclic FST — so states relax in DFS
+  reverse postorder with parents replaced only on a *strict* improvement. A
+  plain Dijkstra finds the same cost and a different string, disagreeing on 33
+  of 2,547 cases (`8.0` → 八.零, whose stray period becomes a sentence break).
+  `scripts/test-matcha-fst.mjs` pins that with a hand-built fixture whose
+  answer came from kaldifst itself. The tables are NOT adopted whole: measured
+  against them, they are worse than the JS rules on three things for a Taiwan
+  reader — `%` survives into text where it is in neither the lexicon nor
+  `tokens.txt` and is dropped silently, `:` survives as a token and reads as a
+  pause, and a 10-digit TW mobile falls past `phone.fst` (11-digit mainland
+  only) into `number.fst` as 零九亿一千二百三十四万五千六百七十八. So
+  `normalizeLocalForms` reframes those shapes first, keeping the digits so the
+  tables still do the reading, and the JS rules stay behind the chain as the
+  whole reading for a device whose pack predates the tables. Verified inert on
+  all 11,078 prose sentences. **Pauses are the
   model's own, unedited: `silenceScale: 1`** (2026-08-08), overriding the
   ported default of 0.2 — `scaleSilence` is not a pause generator but a pause
   *cutter*, a hand-written pass that finds every silence over 0.2 s and
@@ -233,7 +256,8 @@ the pre-publication history, which lives in the owner's private archive.
   `/api/testlog?page=player`. COOP/COEP is gone (`public/_headers`
   deleted): nothing needs `crossOriginIsolated` now that the threaded
   experiments are, and the engine was verified running with it false. The
-  ~137 MB voice pack is downloaded ONLY by the `/wasmtest` diagnostic
+  ~137 MB voice pack (five model files plus the three rule tables) is
+  downloaded ONLY by the `/wasmtest` diagnostic
   (never by ▶ — cellular) into the `bw-wasmtts` cache both pages share;
   `packReady()` flips the reader to this engine, eviction falls back to
   STREAM, `localStorage bw_tts="stream"` forces the online engines. The

@@ -18,7 +18,8 @@ import { join } from "node:path";
 import { segments, mkWav, RATE, OVERRIDES, PACK_FILES } from "../public/wasm-tts.mjs";
 import "../public/matcha-frontend.js";
 
-const { createFrontend, normalizeNumbers, normalizePunctuation, parseLexicon, parseTokens } = globalThis.MatchaFrontend;
+const { createFrontend, normalizeFullWidth, normalizeLocalForms, normalizeNumbers, normalizePunctuation,
+        parseLexicon, parseTokens } = globalThis.MatchaFrontend;
 
 const out = {};
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -68,8 +69,8 @@ out.rate = RATE === 16000 ? "ok (16 kHz, the model's own rate)" : `FAIL ${RATE}`
 
 // the pack list is what packReady() gates on and what /wasmtest downloads; a
 // typo here silently means "no offline engine, ever"
-out.pack = PACK_FILES.length === 5 && PACK_FILES.every((f) => f.name && f.bytes > 0 && f.label)
-  ? `ok (5 files, ${(PACK_FILES.reduce((s, f) => s + f.bytes, 0) / 1048576).toFixed(0)} MiB)`
+out.pack = PACK_FILES.length === 8 && PACK_FILES.every((f) => f.name && f.bytes > 0 && f.label)
+  ? `ok (8 files, ${(PACK_FILES.reduce((s, f) => s + f.bytes, 0) / 1048576).toFixed(0)} MiB)`
   : `FAIL ${JSON.stringify(PACK_FILES)}`;
 
 // ---- text normalisation (pure, no lexicon) --------------------------------
@@ -78,6 +79,34 @@ out.numbers = normalizeNumbers("第12章，日期2026年8月7日，14:30完成25
   === "第十二章，日期二零二六年八月七日，十四点三十分完成百分之二十五点五。"
   ? "ok (chapter, date, clock, percent, decimal)"
   : `FAIL ${normalizeNumbers("第12章，日期2026年8月7日，14:30完成25.5%。")}`;
+
+// The four shapes sherpa's rule tables read wrong here, rewritten so the tables
+// still do the reading. Digits stay digits in the first three — that is the
+// whole point — so the assertions are on the reframing, not on any Chinese.
+const LOCAL = [
+  ["25.5%的路", "百分之25.5的路"],          // % is in neither lexicon nor tokens
+  ["14:30", "14点30分"], ["14:00", "14点"],  // ":" is a token, and would be a pause
+  ["2026-08-07", "2026年8月7日"], ["2026/8/7", "2026年8月7日"],
+  ["2026年08月07日", "2026年8月7日"],        // date.fst wants the zeros gone
+  ["0912345678", "零九一二三四五六七八"],      // no spelling makes number.fst do this
+  ["02-2345-6789", "零二二三四五六七八九"], ["(02)2345-6789", "零二二三四五六七八九"],
+  // and what it must leave alone: quantities, short zero-padded runs the tables
+  // already read digit by digit, and the separators that are not dates
+  ["他有100元", "他有100元"], ["3.14", "3.14"], ["02", "02"], ["007", "007"],
+  ["1.05", "1.05"], ["2020-2025年", "2020-2025年"], ["4273-9/8", "4273-9/8"],
+  ["5213%4", "5213%4"],                     // % is consumed: it must not fuse 5213 and 4
+  ["0415:00", "0415:00"],                   // an hour cannot start mid-number
+];
+const localDrift = LOCAL.filter(([input, want]) => normalizeLocalForms(input) !== want)
+  .map(([input, want]) => `${input} → ${normalizeLocalForms(input)} ≠ ${want}`);
+out.localForms = localDrift.length === 0
+  ? `ok (${LOCAL.length} cases: percent, clock, date, phone — and what stays put)`
+  : `FAIL\n    ${localDrift.join("\n    ")}`;
+
+// Regression: full-width digits used to come out as their code points ("１" →
+// "65297") because charCodeAt was not paired with fromCharCode.
+out.fullWidth = normalizeFullWidth("１００％") === "100%"
+  ? "ok (１００％ → 100%)" : `FAIL ${normalizeFullWidth("１００％")}`;
 
 // Regression, upstream 05b5b35: quote marks used to reach the model as “ ”
 // tokens and were audibly pronounced. They must be deleted, not mapped.
@@ -104,6 +133,25 @@ const over = createFrontend({ lexiconText: FIX_LEXICON, tokensText: FIX_TOKENS, 
 out.override = eq(fix.tokensFor("垃圾").ids, [16, 17]) && eq(over.tokensFor("垃圾").ids, [14, 15])
   ? "ok (la1 ji1 → le4 se4)"
   : `FAIL plain=${JSON.stringify(fix.tokensFor("垃圾").ids)} over=${JSON.stringify(over.tokensFor("垃圾").ids)}`;
+
+// prepareText runs three passes over the digits, and the order is the contract:
+// normalizeLocalForms reframes, ruleNormalizer (the FST chain, in the engine)
+// reads, normalizeNumbers picks up whatever is left. Here the middle pass is a
+// spy, so this pins exactly what the real tables get handed.
+let handed = "";
+const spy = createFrontend({
+  lexiconText: FIX_LEXICON, tokensText: FIX_TOKENS,
+  ruleNormalizer: (text) => { handed = text; return text; },
+});
+spy.prepareText("我在14:30看到25.5%和0912-345-678。");
+out.ruleHook = handed === "我在14点30分看到百分之25.5和零九一二三四五六七八。"
+  ? "ok (pre-pass reframes, hook reads, JS rules mop up)" : `FAIL ${handed}`;
+
+// …and with no tables the JS rules are still the whole reading — which is what
+// a device holding a pack cut before the tables existed falls back to.
+out.ruleFallback = fix.prepareText("14:30") === "十四点三十分" && fix.prepareText("25.5%") === "百分之二十五点五"
+  ? "ok (no tables: the JS number rules read it)"
+  : `FAIL ${fix.prepareText("14:30")} / ${fix.prepareText("25.5%")}`;
 
 // One unknown glyph must never stop a book — the engine passes allowUnknown.
 let threw = false;

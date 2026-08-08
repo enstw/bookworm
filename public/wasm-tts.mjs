@@ -109,7 +109,7 @@ const CACHE = "bw-wasmtts"; // shared with /wasmtest — one download, two pages
 // The pack /wasmtest downloads. ort's wasm is 12.9 MB and belongs in the gate:
 // unlike the piper era's small glue files, losing it means a 13 MB cellular
 // re-download, not a rounding error. Sizes are what the progress bar counts.
-export const PACK_FILES = [
+const MODEL_FILES = [
   { name: "matcha-acoustic-steps3.onnx", bytes: 75717082, label: "聲學模型" },
   { name: "matcha-vocos-16khz-univ.onnx", bytes: 53882848, label: "聲碼器" },
   { name: "matcha-lexicon.txt", bytes: 1400278, label: "詞典" },
@@ -117,16 +117,33 @@ export const PACK_FILES = [
   { name: "ort-1.26.0-dev-wasm-simd-threaded.wasm", bytes: 12942611, label: "推論引擎" },
 ];
 
+// sherpa's zh text-normalization tables, in the order they are applied — the
+// order is load-bearing and matches sherpa's own config. matcha-fst.js runs
+// them; see its header for what they are and why we can without sherpa.
+const RULE_FILES = [
+  { name: "phone-zh.fst", bytes: 88630, label: "號碼規則" },
+  { name: "date-zh.fst", bytes: 59154, label: "日期規則" },
+  { name: "number-zh.fst", bytes: 64482, label: "數字規則" },
+];
+
+export const PACK_FILES = [...MODEL_FILES, ...RULE_FILES];
+
 // The ort build this engine was verified against, byte-for-byte. The release
 // filename carries the version, so a bump that forgets to re-cut the release
 // 404s instead of drifting; this catches the other direction — a re-cut release
 // under the same name — and says so, rather than failing inside instantiation.
 const ORT_WASM_BYTES = 12942611;
 
+// Gates on MODEL_FILES, not PACK_FILES: the rule tables are part of the pack
+// /wasmtest downloads, but they are not what makes the engine able to speak.
+// Gating on them would have taken a phone holding a complete pre-table pack off
+// the offline engine until it visited /wasmtest again — and it does not need to,
+// because ensureEngine fetches them softly and caches them, so a device that is
+// online picks them up on its next init by itself.
 export async function packReady() {
   try {
     const cache = await caches.open(CACHE);
-    for (const f of PACK_FILES)
+    for (const f of MODEL_FILES)
       if (!(await cache.match("/api/wasmtts/" + f.name))) return false;
     return true;
   } catch { return false; } // private mode: no cache, no pack
@@ -158,16 +175,30 @@ onmessage = async (e) => {
   try {
     if (m.type === "init") {
       const js = (buf) => URL.createObjectURL(new Blob([buf], { type: "text/javascript" }));
-      importScripts(js(m.ortJs), js(m.lameJs), js(m.frontendJs), js(m.synthesisJs));
+      importScripts(js(m.ortJs), js(m.lameJs), js(m.fstJs), js(m.frontendJs), js(m.synthesisJs));
       rt = self.ort;
       rt.env.wasm.numThreads = 1;
       rt.env.wasm.proxy = false;
       rt.env.wasm.wasmBinary = m.ortWasm;
       rt.env.wasm.wasmPaths = { mjs: m.glueUrl };
+      // The rule tables read every ordinary number, date and phone number in the
+      // book; the JS rules in matcha-frontend.js stay behind them as the reading
+      // for a device that has the voice pack but not the tables. A table that
+      // fails to parse is the same case as a missing one — say so and speak.
+      let ruleNormalizer, rules = 0, rulesErr = "";
+      if (m.ruleFsts) {
+        try {
+          ruleNormalizer = self.MatchaFst.createNormalizer(m.ruleFsts.map((b) => new Uint8Array(b)));
+          rules = m.ruleFsts.length;
+        } catch (err) {
+          rulesErr = String(err.message ?? err); // reported with ready, not as an init failure
+        }
+      }
       frontend = self.MatchaFrontend.createFrontend({
         lexiconText: new TextDecoder().decode(m.lexicon),
         tokensText: new TextDecoder().decode(m.tokens),
         pronunciationOverrides: m.overrides,
+        ruleNormalizer,
       });
       // noise 1 and length 1 are the defaults the phone was verified with, and
       // deliberately not sherpa's 0.667 noise. The silence is NOT left at its
@@ -183,7 +214,7 @@ onmessage = async (e) => {
         acousticModel: new Uint8Array(m.acoustic),
         vocoderModel: new Uint8Array(m.vocoder),
       });
-      postMessage({ type: "ready", initMs: info.wallMs, lexiconSize: frontend.lexiconSize });
+      postMessage({ type: "ready", initMs: info.wallMs, lexiconSize: frontend.lexiconSize, rules, rulesErr });
     } else if (m.type === "speak") {
       const t = performance.now();
       // one unknown glyph must never stop a book: drop it and count it
@@ -221,7 +252,7 @@ onmessage = async (e) => {
 };`;
 
 // what init actually decided — the player's flight recorder reads this
-export const engineInfo = { threads: 0 };
+export const engineInfo = { threads: 0, rules: 0 };
 
 let engine = null; // singleton promise — models stay loaded across sessions
 
@@ -229,13 +260,19 @@ let engine = null; // singleton promise — models stay loaded across sessions
 export function ensureEngine() {
   return engine ??= (async () => {
     navigator.storage?.persist?.().catch(() => {});
-    const [acoustic, vocoder, lexicon, tokens, ortWasm, ortJs, lameJs, frontendJs, synthesisJs] =
+    const [acoustic, vocoder, lexicon, tokens, ortWasm, ortJs, lameJs, fstJs, frontendJs, synthesisJs, ...ruleFsts] =
       await Promise.all([
-        ...PACK_FILES.map((f) => cachedBuf("/api/wasmtts/" + f.name)),
+        ...MODEL_FILES.map((f) => cachedBuf("/api/wasmtts/" + f.name)),
         cachedBuf("/vendor/wasmtts/ort-wasm.min.js"),
         cachedBuf("/vendor/wasmtts/lame.min.js"),
+        cachedBuf("/matcha-fst.js"),
         cachedBuf("/matcha-frontend.js"),
         cachedBuf("/matcha-synthesis.js"),
+        // Soft, unlike everything above it: a device holding a pack cut before
+        // the tables existed has all 137 MB of what it needs to speak, and must
+        // not lose offline audio over 212 KB it has never heard of. Absent
+        // tables leave prepareText on the JS number rules — what shipped before.
+        ...RULE_FILES.map((f) => cachedBuf("/api/wasmtts/" + f.name).catch(() => null)),
       ]);
     if (ortWasm.byteLength !== ORT_WASM_BYTES)
       throw new Error(`ort wasm is ${ortWasm.byteLength} B, expected ${ORT_WASM_BYTES} — the release and package.json disagree; re-cut the release or re-verify on device`);
@@ -254,24 +291,35 @@ export function ensureEngine() {
       pending.set(++seq, r);
       worker.postMessage({ ...msg, k: seq }, transfer);
     });
+    // all three or none: a half-applied chain is a reading nobody has verified
+    const rules = ruleFsts.every(Boolean) ? ruleFsts : null;
     const up = await new Promise((r) => {
       pending.set(undefined, r);
       worker.postMessage(
-        { type: "init", ortJs, lameJs, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens,
-          overrides: OVERRIDES, glueUrl: new URL("/vendor/wasmtts/ort-wasm-simd-threaded.mjs", location.origin).href },
-        [ortJs, lameJs, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens],
+        { type: "init", ortJs, lameJs, fstJs, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens,
+          ruleFsts: rules, overrides: OVERRIDES,
+          glueUrl: new URL("/vendor/wasmtts/ort-wasm-simd-threaded.mjs", location.origin).href },
+        [ortJs, lameJs, fstJs, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens, ...(rules ?? [])],
       );
     });
     if (up === null) { worker.terminate(); throw new Error("wasm-tts init failed"); }
     engineInfo.threads = 1;
-    console.log(`wasm-tts ready: matcha zh-en ${RATE}Hz, 1 thread, ${up.lexiconSize} lexicon entries, init ${Math.round(up.initMs)}ms`);
+    engineInfo.rules = up.rules ?? 0;
+    if (up.rulesErr) console.warn("wasm-tts: rule tables unusable, JS number rules only —", up.rulesErr);
+    console.log(`wasm-tts ready: matcha zh-en ${RATE}Hz, 1 thread, ${up.lexiconSize} lexicon entries, ${up.rules ? `${up.rules} rule tables` : "JS number rules"}, init ${Math.round(up.initMs)}ms`);
 
     // Everything this engine does not use is dead weight in a cache iOS evicts
     // under pressure — and the piper/melo/fanchen era left several hundred MB
     // of it. Sweep by keep-set rather than by name so this never needs editing
     // again; /wasmtest re-downloads on demand if a diagnostic wants something.
     caches.open(CACHE).then(async (c) => {
-      const keep = new Set(PACK_FILES.map((f) => "/api/wasmtts/" + f.name));
+      const keep = new Set([
+        ...PACK_FILES.map((f) => "/api/wasmtts/" + f.name),
+        // the small same-origin files cachedBuf also parks here — they were
+        // being swept and re-fetched on every single init
+        "/vendor/wasmtts/ort-wasm.min.js", "/vendor/wasmtts/lame.min.js",
+        "/matcha-fst.js", "/matcha-frontend.js", "/matcha-synthesis.js",
+      ]);
       for (const req of await c.keys()) {
         const p = new URL(req.url).pathname;
         if (!keep.has(p) && await c.delete(req)) console.log("wasm-tts: evicted stale " + p);

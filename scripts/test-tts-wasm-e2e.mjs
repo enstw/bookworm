@@ -49,6 +49,17 @@ const RELEASE = {
 for (const [name, file] of Object.entries(RELEASE))
   if (!existsSync(file)) { console.error(`missing ${name}: ${file}`); process.exit(2); }
 
+// sherpa's zh rule tables, under the names the release gives them. Optional on
+// purpose: without MATCHA_FST_DIR they 404 and the run asserts the other half
+// of the contract — that a pack cut before the tables existed still speaks, on
+// the JS number rules. With it set, the run asserts the chain loaded.
+const FSTS = process.env.MATCHA_FST_DIR;
+if (FSTS) Object.assign(RELEASE, {
+  "phone-zh.fst": join(FSTS, "phone.fst"),
+  "date-zh.fst": join(FSTS, "date.fst"),
+  "number-zh.fst": join(FSTS, "number.fst"),
+});
+
 const TYPES = { ".js": "text/javascript", ".mjs": "text/javascript", ".html": "text/html; charset=utf-8", ".css": "text/css", ".wasm": "application/wasm", ".txt": "text/plain", ".onnx": "application/octet-stream", ".json": "application/json" };
 
 const PAGE = `<!doctype html><meta charset="utf-8"><title>wasm tts e2e</title><script type="module">
@@ -84,6 +95,7 @@ window.go = async (chapter) => {
   o.initMs = performance.now() - t;
   o.packAfter = await tts.packReady();
   o.threads = tts.engineInfo.threads;
+  o.rules = tts.engineInfo.rules;
 
   const tl = await timeline();
   o.sourceopen = !!tl.sb;
@@ -180,6 +192,12 @@ try {
   console.log(`\nwasm tts e2e — ${o.units.length} units, ${audio.toFixed(1)}s audio in ${(wall / 1000).toFixed(1)}s (×${(audio * 1000 / wall).toFixed(2)} realtime)\n`);
 
   check("pack fills the cache", o.packAfter === true, `packReady ${o.packBefore} → ${o.packAfter}`);
+  // Only asserted when the tables were served this run: the profile is
+  // persistent, so a warm cache answers even when MATCHA_FST_DIR is unset and
+  // "engine falls back to the JS rules" is not reproducible from here. That
+  // half is pinned in scripts/test-wasm-frontend.mjs instead.
+  if (FSTS) check("rule tables loaded", o.rules === 3, `${o.rules}/3 tables`);
+  else console.log(`  · rule tables: ${o.rules}/3 from cache (set MATCHA_FST_DIR to assert)`);
   check("engine reports one thread", o.threads === 1, `init ${(o.initMs / 1000).toFixed(1)}s`);
   check("sourceopen fires", o.sourceopen === true);
   check("every chunk synthesized", o.aborted === undefined);

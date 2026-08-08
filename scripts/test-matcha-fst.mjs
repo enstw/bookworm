@@ -158,9 +158,12 @@ out.arcSort = applyFst(unsorted, "abc") === "ABC"
 // (sherpa-onnx-tts.js: './phone-zh.fst,./date-zh.fst,./number-zh.fst').
 //
 // Some of these are upstream's answer, not the answer bookworm wants to speak:
-// a Taiwan 10-digit mobile becomes one huge integer, "%" survives, and "14:30"
-// keeps its colon. They are pinned as upstream behaviour so that the applier is
-// tested against what sherpa does; the frontend is where those three get fixed.
+// a Taiwan 10-digit mobile becomes one huge integer, "%" survives to be dropped
+// as an unknown glyph, and "14:30" keeps a colon that reads as a pause. They are
+// pinned as upstream behaviour so this file tests the applier against what
+// sherpa does, and normalizeLocalForms in matcha-frontend.js reframes the input
+// so those three never reach the tables in that shape. If a line here changes,
+// the applier drifted; if the reading changes, look there instead.
 const GOLDEN = [
   ["第12章开始于2026年8月7日14:30。请拨打110或者18920260807。她说：“我们还有25.5%的路没走完。”巷口堆着一袋垃圾。",
    "第十二章开始于二零二六年八月七日十四:三十。请拨打幺幺零或者幺八九二零二六零八零七。她说：“我们还有二十五点五%的路没走完。”巷口堆着一袋垃圾。"],
