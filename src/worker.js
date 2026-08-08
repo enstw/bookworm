@@ -32,17 +32,25 @@ export default {
       // or start a synthesis requires a reader key (see authenticate); the
       // admin Bearer passes too, because the /admin shelf reads /api/books.
       // Still open: the app shell (it is the public repo's contents),
-      // /api/feedback (the AI's inbox reads it keyless by design),
-      // /api/testlog (the phones' drop box — the service worker logs push
-      // deliveries there with no page alive to hold a key), /api/wasmtts/*
-      // (public OSS binaries proxied for the /wasmtest diagnostic), and the
-      // push vapid/unsubscribe pair (a public key, and a revoked device must
-      // always be able to unregister).
+      // /api/feedback (the AI's inbox reads it keyless by design), WRITES to
+      // /api/testlog (see below), /api/wasmtts/* (public OSS binaries proxied
+      // for the /wasmtest diagnostic), and the push vapid/unsubscribe pair (a
+      // public key, and a revoked device must always be able to unregister).
+      //
+      // /api/testlog is the one route split by verb. Reading it is gated
+      // because the table carries fragments of the book; writing it is not,
+      // because the writer that matters most CANNOT authenticate — the
+      // service worker logging a push delivery with no page alive holds only
+      // the bw_key cookie, and once Safari's 7-day cap evicts that, nothing
+      // in a worker can re-earn it (reauth() lives in the page, and
+      // localStorage is not reachable from here). A gate on POST would go
+      // blind in exactly the case the log exists to diagnose.
       const gated =
         path === "/api/books" || path.startsWith("/api/books/") ||
         path === "/api/position" || path === "/api/settings" ||
         path.startsWith("/api/tts/") || path.startsWith("/books/") ||
-        path === "/api/push/subscribe" || path === "/api/push/test";
+        path === "/api/push/subscribe" || path === "/api/push/test" ||
+        (path === "/api/testlog" && request.method === "GET");
       const who = gated || path === "/api/auth"
         ? await authenticate(request, env, url) : null;
       if (gated && !who) return json({ error: "unauthorized" }, 401);
@@ -490,9 +498,13 @@ async function serveWasmttsAsset(path) {
 // linked from /admin): the phone uploads each readout, the laptop curls it
 // back instead of trading screenshots. Born as temporary scaffolding, kept
 // on purpose — it is also where the service worker reports push delivery
-// (see swlog), which only a phone can observe. Unauthenticated like
-// positions, so inputs are firmly capped and the table self-prunes to the
-// newest 500 rows; the timestamp is server-side.
+// (see swlog), which only a phone can observe.
+//
+// Split by verb at the gate above: GET needs a reader key (the rows quote
+// the book), POST does not (the service worker has no way to hold one). An
+// open write is a nuisance — junk rows pushing real ones out of the
+// newest-500 window — not a leak, so inputs are firmly capped, the table
+// self-prunes, and the timestamp is server-side.
 async function handleTestlog(request, env, ctx, url) {
   if (request.method === "GET") {
     const page = url.searchParams.get("page");

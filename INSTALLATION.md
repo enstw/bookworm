@@ -214,7 +214,9 @@ gh workflow run "push test" --repo "$FORK"
 iPhone 只有已加入主畫面的 PWA 才有 `PushManager`，一般 Safari 分頁不會顯示訂閱
 選項。更換 VAPID 金鑰會使既有訂閱失效，需要重新訂閱。圖示紅點是 service worker
 收到推播時呼叫 `setAppBadge()` 畫上去的，下次打開 App 就清掉；有沒有成功會寫進
-推播紀錄，`curl "$URL/api/testlog?page=push&limit=5"` 讀得回來。
+推播紀錄，
+`curl -H "authorization: Bearer $ADMIN_TOKEN" "$URL/api/testlog?page=push&limit=5"`
+讀得回來（寫紀錄不需要憑證，讀取則需要）。
 
 ### 語音朗讀
 
@@ -278,7 +280,8 @@ R2 的檔案才是事實，書架索引只是被檢查的對象之一。**修復
 書的內容、閱讀進度、語音朗讀都在讀者鑰匙後面：沒有有效鑰匙一律 401。鑰匙由伺服器
 以 cookie 記在裝置上（一年效期，會自動修復），撤銷即失效；已存在裝置上的離線章節
 不受撤銷影響 — 撤銷擋的是伺服器，不是手機裡已有的東西。維持開放的只有 App 外殼
-（程式碼本來就公開）、`/api/feedback` 與 `/api/testlog`。管理與上傳端點一律由
+（程式碼本來就公開）、`/api/feedback`，以及寫入 `/api/testlog`：紀錄是由拿不到
+憑證的 service worker 寫的，但讀回來需要憑證，因為那些列會引用書的內容。管理與上傳端點一律由
 `ADMIN_TOKEN` 保護，與讀者鑰匙互相獨立。讀者代號不是強式驗證，適用於小型可信任
 群體。
 

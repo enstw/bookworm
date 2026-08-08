@@ -63,7 +63,7 @@ cleared.
   belongs to the KEY's user — client-asserted ids are ignored. Keys are
   minted/revoked on `/admin` (`POST /api/admin/readers`); the admin Bearer
   passes the gate but has no reading identity. Open by design: the shell,
-  `/api/feedback`, `/api/testlog`, push vapid/unsubscribe. e2e suites mint
+  `/api/feedback`, `/api/testlog` WRITES only, push vapid/unsubscribe. e2e suites mint
   their own key — the e2e runbook has the rules.
 
 ## The phone is the product
@@ -308,12 +308,21 @@ the pre-publication history, which lives in the owner's private archive.
   it already recorded and reported success — so the build that had just
   shipped never rang and never would. A mismatch now answers `stale worker`
   and `deploy.sh` retries for 30 s.
-- **testlog is the phone's console.** An iPhone has no console and a push
-  lands with no page alive, so `/api/testlog` is unauthenticated by design,
-  size-capped, self-pruned to the newest 500 rows — a permanent tenant. The
-  on-device diagnostic pages (`/vhtest`, `/pgtest`, `/scrolltest`,
-  `/pagedtest`, linked from /admin) write their readouts there; read them
-  with `curl '<origin>/api/testlog?page=…&limit=5'`.
+- **testlog is the phone's console, and it is split by verb (2026-08-08).**
+  An iPhone has no console and a push lands with no page alive, so writes to
+  `/api/testlog` are unauthenticated by design, size-capped, self-pruned to
+  the newest 500 rows — a permanent tenant. **Reads are gated**: the rows
+  quote the book (dropped glyphs, synthesis prompts), and that is content.
+  The gate stops at POST because the writer that matters most cannot pass
+  one — a service worker logging a push delivery holds only the `bw_key`
+  cookie, and once Safari's 7-day cap evicts it nothing in a worker can
+  re-earn it (`reauth()` lives in the page; `localStorage` is unreachable
+  from a worker). Gating the write would blind the log in exactly the case
+  it exists to diagnose. An open write is a nuisance — junk rows pushing
+  real ones out of the window — not a leak. The on-device diagnostic pages
+  (`/vhtest`, `/pgtest`, `/scrolltest`, `/pagedtest`, linked from /admin)
+  write their readouts there; read them with
+  `curl -H "authorization: Bearer $ADMIN_TOKEN" '<origin>/api/testlog?page=…&limit=5'`.
 - **Check and fix are different buttons (2026-07-30).** On /admin, 健康檢查
   is read-only and 修復 is the only thing that writes — a check that
   mutates what it is checking is not a check, and the check treats the D1

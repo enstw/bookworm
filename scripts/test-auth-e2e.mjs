@@ -42,11 +42,25 @@ const gated = await Promise.all([
 ]);
 const open = await Promise.all([
   fetch(`${BASE}/api/feedback`),
-  fetch(`${BASE}/api/testlog?limit=1`),
 ]);
 out.gate = gated.every((r) => r.status === 401) && open.every((r) => r.ok)
-  ? "ok (content 401s; feedback and testlog stay open)"
+  ? "ok (content 401s; feedback stays open)"
   : `FAIL gated=${gated.map((r) => r.status).join("/")} open=${open.map((r) => r.status).join("/")}`;
+
+// 1b. testlog is the one route split by verb: reads are gated because the
+// rows quote the book, writes are not because the service worker logging a
+// push delivery has no page to re-earn a cookie from. Both halves are load-
+// bearing — a gate that creeps onto POST blinds the phone's only console.
+const logBare = await fetch(`${BASE}/api/testlog?limit=1`);
+const logAuth = await fetch(`${BASE}/api/testlog?limit=1`, { headers: auth });
+const logWrite = await fetch(`${BASE}/api/testlog`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ page: "authe2e", device: "auth-e2e", data: "gate check" }),
+});
+out.testlogGate = logBare.status === 401 && logAuth.ok && logWrite.ok
+  ? "ok (read 401s bare, reads with a credential, writes keyless)"
+  : `FAIL bare=${logBare.status} auth=${logAuth.status} write=${logWrite.status}`;
 
 // 2. /api/auth refuses what it should
 const [badStatus] = await j(await fetch(`${BASE}/api/auth`, {

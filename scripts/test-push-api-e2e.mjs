@@ -329,7 +329,10 @@ try {
   // 9. push outcomes are readable afterwards — the whole point, since
   // pushNewBook answers to nobody (it runs inside waitUntil)
   await sleep(500);
-  const logs = (await (await fetch(`${BASE}/api/testlog?page=push&limit=20`)).json()).logs ?? [];
+  // the Bearer, not a bare fetch: reading the log is gated now (writing it
+  // is not — the service worker could never hold a credential)
+  const logs = (await (await fetch(`${BASE}/api/testlog?page=push&limit=20`,
+    { headers: { authorization: `Bearer ${TOKEN}` } })).json()).logs ?? [];
   const joined = logs.map((l) => l.data).join("\n");
   out.pushLog = /測試 .+ → 201/.test(joined) && /新書 推播測試書: 1 訂閱/.test(joined) &&
     /已存在，不算新書/.test(joined)
@@ -405,7 +408,8 @@ try {
       ? "ok (silent on re-deploy)" : `FAIL ${JSON.stringify(a2)} pushes=${captured.length}`;
 
     await sleep(500);
-    const alogs = (await (await fetch(`${BASE}/api/testlog?page=push&limit=20`)).json()).logs ?? [];
+    const alogs = (await (await fetch(`${BASE}/api/testlog?page=push&limit=20`,
+      { headers: { authorization: `Bearer ${TOKEN}` } })).json()).logs ?? [];
     out.announceLog = alogs.some((l) => l.data.includes(`新版本 ${TEST_BUILD}: 1 訂閱`))
       ? "ok (logged)" : "FAIL not in the push log";
   }
