@@ -54,7 +54,11 @@ const MIME = {
   ".txt": "text/plain; charset=utf-8", ".woff2": "font/woff2",
 };
 const PARA = "話說天下大勢，分久必合，合久必分。周末七國分爭，併入於秦。及秦滅之後，楚漢分爭，又併入於漢，一統天下。";
-const chapterText = (i) => `第${i}章 串流測試\n\n` + Array(4).fill(PARA).join("\n");
+// chapter 1's body is ONE paragraph spanning several pages: the shape that
+// pins both start-at-page-start and the mid-paragraph page turn (with no
+// next paragraph to lean on, only char-precise page maths can turn a page)
+const chapterText = (i) => `第${i}章 串流測試\n\n`
+  + (i === 1 ? PARA.repeat(12) : Array(4).fill(PARA).join("\n"));
 const chapters = [1, 2, 3].map((i) => ({
   file: `ch${i}.txt`, title: `第${i}章 串流測試`, chars: chapterText(i).length,
 }));
@@ -88,7 +92,9 @@ rmSync(PROFILE, { recursive: true, force: true });
 // --- CDP client (shared: cdp-client.mjs) ---
 const { evalJs, send, close, sessionId } = await launch({
   port: PORT, profile: PROFILE,
-  args: ["--window-size=900,700", "--autoplay-policy=no-user-gesture-required"],
+  // muted: the assertions read the media clock, never the speaker — the
+  // sine fixture beeping through the desktop was just noise
+  args: ["--window-size=900,700", "--autoplay-policy=no-user-gesture-required", "--mute-audio"],
   onFail: () => server.close(),
 });
 if (!CHAIN)
@@ -123,15 +129,45 @@ out.engine = (await evalJs(`bwPlayer.useStream`)) === !CHAIN
   ? `ok (${CHAIN ? "chain" : "stream"})`
   : `FAIL: bwPlayer.useStream=${await evalJs(`bwPlayer.useStream`)}`;
 
+// --- a NEW reading opens at the page on screen, not at the tracked offset ---
+// page forward first: the tracked state.off sticks to the straddling
+// paragraph's start (a page back), and the old player then rewound further,
+// to that offset's chunk start
+await evalJs(`document.querySelector("#content").scrollLeft = -GRID.span`);
+await sleep(900); // snap + trackScroll settle
+const pageStart = await evalJs(`pageStartOffset()`);
+const staleOff = await evalJs(`state.off`);
+out.pageStartDiscriminates = pageStart > staleOff + 20
+  ? `ok (page start ${pageStart}, tracked ${staleOff})`
+  : `FAIL: page start ${pageStart} vs tracked ${staleOff} — fixture no longer discriminates`;
+
 // start listening; everything after this first tap must run play()-free
 await evalJs(`document.getElementById("audioBtn").click()`);
 out.playing = (await waitFor(`bwPlayer.player.playing === true`, (v) => v)) ? "ok" : "FAIL: never played";
 
+// the first spoken offset lands at the page start (the floor holds back the
+// snapped-sentence pre-roll), never at the stale tracked offset or chunk 0
+// — poll for a MOVE off the stale value: state.off is nonzero before the
+// tap, and chain-mode `playing` flips true on the unlock silence already
+const firstOff = await waitFor(`state.off`, (o) => o > 0 && o !== staleOff, 30);
+out.startsAtPageStart = firstOff >= pageStart && firstOff < pageStart + 300
+  ? `ok (first spoken off ${firstOff} ≥ page start ${pageStart})`
+  : `FAIL: first spoken off ${firstOff}, page start ${pageStart}`;
+out.noBackTurn = (await evalJs(`-document.querySelector("#content").scrollLeft >= GRID.span - 1`))
+  ? "ok" : `FAIL: page flipped back to ${await evalJs(`-document.querySelector("#content").scrollLeft`)}px`;
+
 // chunk boundary: chunkIdx advances with no interaction (continuous timeline)
-const k1 = await waitFor(`bwPlayer.player.chunkIdx`, (k) => k >= 1, 30);
-out.chunkAdvances = k1 >= 1 ? `ok (chunk ${k1})` : `FAIL: stuck at ${k1}`;
-const offMoved = await waitFor(`state.off`, (o) => o > 0, 20);
-out.offsetTracks = offMoved > 0 ? `ok (off ${offMoved})` : `FAIL: ${offMoved}`;
+const k0 = await evalJs(`bwPlayer.player.chunkIdx`);
+const k1 = await waitFor(`bwPlayer.player.chunkIdx`, (k) => k > k0, 30);
+out.chunkAdvances = k1 > k0 ? `ok (chunk ${k0} → ${k1})` : `FAIL: stuck at ${k1}`;
+
+// the page turns WITHIN the one-paragraph chapter as narration advances —
+// paragraph-grained following could never turn it before the chapter ended
+out.midParagraphTurn = (await waitFor(
+  `state.idx === 0 && -document.querySelector("#content").scrollLeft >= 2 * GRID.span - 1`,
+  (v) => v, 20))
+  ? "ok"
+  : `FAIL: idx=${await evalJs(`state.idx`)} scroll=${await evalJs(`-document.querySelector("#content").scrollLeft`)} span=${await evalJs(`GRID.span`)}`;
 
 // chapter boundary (visible): narration rolls into 第2章, player still going,
 // and the DOM followed

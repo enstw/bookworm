@@ -1519,7 +1519,7 @@ function loadPlayer() {
   return import("/player.mjs").then((m) => {
     m.init({
       $, el, state, fetchChapter, openChapter, savePos, flush,
-      updateProgress, followScroll,
+      updateProgress, followScroll, pageStartOffset,
       lastUserScroll: () => lastUserScroll,
     });
     playerMod = m;
@@ -1532,28 +1532,95 @@ function toggleAudio() {
   loadPlayer().then((m) => m.togglePlayer()).catch(() => {});
 }
 
-function followScroll(offset) {
+// Reading distance of an on-screen rect's START edge (its first line):
+// 直排 lines advance leftward so the start is the RIGHT edge, 橫排 the top.
+const rectDist = (c, r) => (settings.vertical
+  ? -c.scrollLeft + (c.getBoundingClientRect().right - r.right)
+  : r.top + scrollY - GRID.band);
+
+// The on-screen rect of the CHARACTER at char offset `offset` — page maths
+// must work on the character, not the paragraph: a novel paragraph spans
+// pages, and the paragraph's start edge would pin every offset inside it to
+// the paragraph's first page. Falls back to the paragraph rect at its start
+// (or when the Range yields nothing). data-off counts the raw line while
+// the DOM holds the trimmed line, so the index can sit a char or two early
+// — invisible at page granularity.
+function offsetRect(offset) {
   const ps = $("#content")?.querySelectorAll("p[data-off]");
-  if (!ps?.length) return;
+  if (!ps?.length) return null;
   let target = null;
   for (const p of ps) {
     if (Number(p.dataset.off) <= offset) target = p;
     else break;
   }
-  if (!target) return;
+  if (!target) return null;
+  const node = target.firstChild;
+  const i = offset - Number(target.dataset.off);
+  if (node?.nodeType === 3 && i > 0 && node.length) {
+    const range = document.createRange();
+    const j = Math.min(i, node.length - 1);
+    range.setStart(node, j);
+    range.setEnd(node, j + 1);
+    const r = range.getBoundingClientRect();
+    if (r.width || r.height) return r;
+  }
+  return target.getBoundingClientRect();
+}
+
+function followScroll(offset) {
+  const c = $("#content");
+  if (!c) return;
+  const r = offsetRect(offset);
+  if (!r) return;
   // paged reading, both modes: turn to the PAGE holding the spoken
-  // paragraph (and only when that is not the page already on screen), never
+  // character (and only when that is not the page already on screen), never
   // a partial scroll. Absolute target, never scrollBy: on-device scrolltest
   // 2026-07-28 proved iOS applies relative scrolls TWICE (8/8 layouts)
   // while absolute APIs are idempotent.
-  const c = $("#content");
-  if (!c) return;
-  const r = target.getBoundingClientRect();
-  const dist = settings.vertical
-    ? -c.scrollLeft + (c.getBoundingClientRect().right - r.right)
-    : r.top + scrollY - GRID.band;
-  const want = pageAt(Math.max(0, dist));
+  const want = pageAt(Math.max(0, rectDist(c, r)));
   if (want !== pageAt(scrollDist(c))) pageGlide(c, pagePos(c, want));
+}
+
+// Char offset of the first character on the page now on screen — where a
+// NEW listening session starts. The tracked state.off is deliberately
+// paragraph-grained and sticky (see trackScroll), so after paging it
+// routinely points a page or more behind what the eye is on; the reading
+// must open with the visible page instead. Page 0 answers 0 so the heading
+// chunk still announces the chapter. Binary search inside the straddling
+// paragraph: reading order is monotone in rect distance.
+function pageStartOffset() {
+  const c = $("#content");
+  const ps = c?.querySelectorAll("p[data-off]");
+  if (!c || !ps?.length || !GRID.span) return null;
+  if (pageAt(scrollDist(c)) === 0) return 0;
+  // the visible window's start edge, minus 1 px of grid-rounding grace;
+  // scrollDist (not page×span) so the chapter-end clamped page keeps its
+  // true edge
+  const lead = Math.max(0, scrollDist(c)) - 1;
+  let prev = null, next = null;
+  for (const p of ps) {
+    if (rectDist(c, p.getBoundingClientRect()) <= lead) prev = p;
+    else { next = p; break; }
+  }
+  const nextOff = () => (next ? Number(next.dataset.off) : null);
+  const node = prev?.firstChild;
+  if (node?.nodeType !== 3 || !node.length) return nextOff();
+  // first char of `prev` sitting past the window's start edge, if any —
+  // otherwise the page opens on the next paragraph
+  const range = document.createRange();
+  const at = (i) => {
+    range.setStart(node, i);
+    range.setEnd(node, i + 1);
+    return rectDist(c, range.getBoundingClientRect());
+  };
+  let lo = 0, hi = node.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (at(mid) > lead) { ans = mid; hi = mid - 1; }
+    else lo = mid + 1;
+  }
+  if (ans < 0) return nextOff();
+  return Number(prev.dataset.off) + ans;
 }
 
 function topbarHeight() {
@@ -1628,21 +1695,14 @@ function restoreScroll(offset) {
       else scrollTo(0, 0);
       return;
     }
-    const ps = $("#content").querySelectorAll("p[data-off]");
-    let target = null;
-    for (const p of ps) {
-      if (Number(p.dataset.off) <= offset) target = p;
-      else break;
-    }
-    if (target) {
-      const r = target.getBoundingClientRect();
-      // the reading distance of the paragraph, then the PAGE that contains
-      // it: a bookmark must reopen on a whole page, never mid-page, or
-      // restore→save→restore stops being a fixed point
-      const dist = settings.vertical
-        ? -c.scrollLeft + (c.getBoundingClientRect().right - r.right)
-        : r.top + scrollY - GRID.band;
-      const pos = pageAlign(c, Math.max(0, dist));
+    const r = offsetRect(offset);
+    if (r) {
+      // the reading distance of the bookmarked character, then the PAGE
+      // that contains it: a bookmark must reopen on a whole page, never
+      // mid-page, or restore→save→restore stops being a fixed point — and
+      // it must be the character's page, not the paragraph's first page,
+      // or a long paragraph reopens a page early
+      const pos = pageAlign(c, Math.max(0, rectDist(c, r)));
       if (settings.vertical) vSnap(c, pos);
       else scrollTo(0, pos);
     }

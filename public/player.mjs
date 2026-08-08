@@ -49,12 +49,12 @@ wasmTts.packReady().then((r) => {
 
 // reader internals, injected once by app.js
 let $, el, state, fetchChapter, openChapter, savePos, flush, updateProgress,
-  followScroll, lastUserScroll;
+  followScroll, pageStartOffset, lastUserScroll;
 
 export function init(deps) {
   if ($) return; // both load paths in app.js may race; first wins
   ({ $, el, state, fetchChapter, openChapter, savePos, flush,
-    updateProgress, followScroll, lastUserScroll } = deps);
+    updateProgress, followScroll, pageStartOffset, lastUserScroll } = deps);
 }
 
 export const player = {
@@ -67,7 +67,15 @@ export const player = {
   standby: null,   // element preloading the next chunk (double buffer)
   nextUrl: null,   // what standby holds; null = nothing usable preloaded
   status: "",      // "" | "loading" | "error"
+  seekOff: null,   // chain engine: land the first chunk at this char offset
 };
+
+// A reading that starts mid-chunk opens on the sentence HOLDING the
+// requested char, so narration begins a few seconds before it. Until the
+// spoken offset crosses the request, that pre-roll must not turn the page
+// back or drag the bookmark backward; one-shot, cleared on arrival and on
+// any explicit ⏮/⏭.
+let startFloor = -1;
 
 function ttsUrl(file, idx) {
   const v = state.manifest?.generatedAt ?? "0";
@@ -90,7 +98,10 @@ export function togglePlayer() {
     unlockAudio(player.standby);
   }
   buildPlayerBar();
-  playFrom(state.idx, state.off);
+  // a NEW reading opens at the top of the page on screen — the tracked
+  // state.off is paragraph-grained and sticky (a straddling paragraph keeps
+  // its start), so it routinely points a page or more behind the eye
+  playFrom(state.idx, pageStartOffset() ?? state.off);
 }
 
 // called by openChapter: navigating while listening moves the narration too
@@ -153,6 +164,19 @@ function makeAudio() {
     updatePlayerBar();
   }));
   a.addEventListener("waiting", active(() => { player.status = "loading"; updatePlayerBar(); }));
+  // chain engine: a reading started mid-chunk seeks into the first chunk
+  // once its duration is known — the same proportional chars↔time map
+  // onAudioTime reads positions with
+  a.addEventListener("loadedmetadata", active(() => {
+    // the unlock silence also loads — it must not consume the seek
+    if (a.currentSrc.startsWith("data:")) return;
+    if (player.seekOff == null || useWasm()) return;
+    const c = player.chunks[player.chunkIdx];
+    const off = player.seekOff;
+    player.seekOff = null;
+    if (c && off > c.start && Number.isFinite(a.duration) && a.duration > 0)
+      a.currentTime = Math.min(1, (off - c.start) / c.chars) * a.duration;
+  }));
   a.addEventListener("timeupdate", active(onAudioTime));
   // the unlock silence also ends — it must not advance the narration
   a.addEventListener("ended", active(() => {
@@ -186,6 +210,8 @@ function playFrom(ci, off) {
   if (text !== undefined) {
     player.chapIdx = ci;
     player.chunks = ttsCore.chunkChapter(text);
+    startFloor = off;
+    player.seekOff = off; // land inside the chunk, not at its start
     playChunk(ttsCore.chunkIndexFor(player.chunks, off));
     return;
   }
@@ -249,6 +275,8 @@ function retryOnVisible() {
 }
 
 function advanceChunk(d) {
+  startFloor = -1;      // an explicit skip owns the page from here
+  player.seekOff = null;
   if (useWasm()) return wasmSkip(d);
   if (useStream) return streamAdvanceChunk(d);
   const k = player.chunkIdx + d;
@@ -288,7 +316,7 @@ function playerPlayPause() {
   }
   if (useWasm() || useStream || (player.chapIdx === state.idx && player.chunkIdx >= 0))
     a?.play().catch(() => { player.status = "error"; updatePlayerBar(); });
-  else playFrom(state.idx, state.off);
+  else playFrom(state.idx, pageStartOffset() ?? state.off); // navigated while paused: read the page on screen
 }
 
 export function closePlayer() {
@@ -299,6 +327,8 @@ export function closePlayer() {
   player.chunkIdx = -1;
   player.chunks = [];
   player.nextUrl = null;
+  player.seekOff = null;
+  startFloor = -1; // ✕ ends the session; the next 🔊 is a fresh reading
   for (const a of [player.audio, player.standby])
     if (a) { a.pause(); a.removeAttribute("src"); }
   streamTeardown();
@@ -327,6 +357,8 @@ export const stream = {
   pendingOpen: false, // chapter crossed while hidden; DOM catches up on show
   gen: 0,            // rebuild generation — stale async work checks this
   local: false,      // fed by the wasm engine's mp3 units, not /api/tts
+  seekOff: -1,       // one-shot: land the playhead at this char offset once
+                     // the first chunk's timeline span is known
 };
 
 const bufferedEnd = (sb) => (sb.buffered.length ? sb.buffered.end(sb.buffered.length - 1) : 0);
@@ -376,6 +408,7 @@ function streamTeardown() {
   stream.fetching = false;
   stream.pendingOpen = false;
   stream.local = false;
+  stream.seekOff = -1;
 }
 
 function streamPlayFrom(ci, off) {
@@ -395,13 +428,15 @@ function streamPlayFrom(ci, off) {
   player.chapIdx = ci;
   player.chunks = chunks;
   const k = ttsCore.chunkIndexFor(chunks, off);
+  startFloor = off;
   wlog(`start ci${ci} k${k} off${off} 線上串流`);
   hbStart();
-  streamStart(ci, k);
+  streamStart(ci, k, off);
 }
 
-// (re)build the MediaSource and start playing at chunk k of chapter ci
-function streamStart(ci, k) {
+// (re)build the MediaSource and start playing at chunk k of chapter ci;
+// off > the chunk's start seeks into it once its timeline span is known
+function streamStart(ci, k, off = -1) {
   const gen = ++stream.gen;
   stream.local = false;
   ensureStreamEl();
@@ -409,6 +444,7 @@ function streamStart(ci, k) {
   stream.segs = [];
   stream.pendingSeg = null;
   stream.fetching = false;
+  stream.seekOff = off;
   stream.feedCi = ci;
   stream.feedK = k;
   player.chunkIdx = k;
@@ -511,6 +547,14 @@ function onStreamUpdateEnd(gen) {
     const t1 = bufferedEnd(stream.sb);
     const t0 = stream.segs.length ? stream.segs[stream.segs.length - 1].t1 : 0;
     stream.segs.push({ ...seg, t0, t1 });
+    // a reading started mid-chunk: land the playhead inside the first
+    // appended chunk with the same proportional map onStreamTime reads by
+    if (stream.seekOff >= 0) {
+      const off = stream.seekOff;
+      stream.seekOff = -1;
+      if (off > seg.start && seg.chars > 0)
+        stream.el.currentTime = t0 + Math.min(1, (off - seg.start) / seg.chars) * (t1 - t0);
+    }
   }
   feedStream(gen);
 }
@@ -535,6 +579,13 @@ function onStreamTime() {
   const seg = stream.segs.find((s) => now >= s.t0 && now < s.t1) ?? stream.segs[stream.segs.length - 1];
   const frac = Math.min(1, Math.max(0, (now - seg.t0) / (seg.t1 - seg.t0 || 1)));
   const off = Math.min(seg.start + Math.floor(frac * seg.chars), seg.start + seg.chars - 1);
+
+  // pre-roll: the snapped-back sentence before the requested start — hold
+  // the page and the bookmark until narration reaches the request
+  if (startFloor >= 0) {
+    if (off < startFloor) return;
+    startFloor = -1;
+  }
 
   const chapterCrossed = seg.ci !== player.chapIdx;
   if (chapterCrossed) {
@@ -742,13 +793,14 @@ function wasmPlayFrom(ci, off) {
   player.chapIdx = ci;
   player.chunks = chunks;
   player.chunkIdx = ttsCore.chunkIndexFor(chunks, off);
+  startFloor = off;
   player.status = "loading"; // first audio lands when unit 1 is synthesized
   updatePlayerBar();
   setMediaSession();
   wlog(`start ci${ci} k${player.chunkIdx} off${off} ${wasmStreamOk ? "mms" : "chain"}`);
   hbStart();
   if (wasmStreamOk) wasmStreamStart();
-  wasmSynthLoop(gen, ci, chunks, player.chunkIdx);
+  wasmSynthLoop(gen, ci, chunks, player.chunkIdx, off);
 }
 
 // one continuous mp3 timeline for the wasm units — the STREAM engine's
@@ -761,6 +813,7 @@ function wasmStreamStart() {
   stream.segs = [];
   stream.pendingSeg = null;
   stream.fetching = false;
+  stream.seekOff = -1; // the wasm timeline already opens on the snapped sentence
   const ms = new LocalMS();
   stream.ms = ms;
   const url = URL.createObjectURL(ms);
@@ -827,7 +880,7 @@ function wasmQueuedSecs() {
   return s;
 }
 
-async function wasmSynthLoop(gen, ci, chunks, k) {
+async function wasmSynthLoop(gen, ci, chunks, k, startOff = -1) {
   let eng;
   try {
     eng = await wasmTts.ensureEngine();
@@ -853,7 +906,17 @@ async function wasmSynthLoop(gen, ci, chunks, k) {
         k = 0;
         continue;
       }
-      const c = chunks[k];
+      let c = chunks[k];
+      // a reading rarely starts on a chunk boundary: synthesize the FIRST
+      // chunk from the sentence holding the requested offset instead of its
+      // start — the whole-chunk restart replayed up to a minute of audio.
+      // A sliced pseudo-chunk keeps the units' offset maths honest for free;
+      // player.chunks stays the real list, so ⏮/⏭ still move on real chunks.
+      if (startOff > c.start) {
+        const d = ttsCore.sentenceStartFor(c.text, startOff - c.start);
+        if (d > 0) c = { start: c.start + d, chars: c.chars - d, text: c.text.slice(d) };
+      }
+      startOff = -1;
       const ok = await eng.speakChunk(ttsCore.ttsPrompt(c.text), async (u) => {
         if (gen !== wasm.gen) return false;
         wasm.queue.push({
@@ -1029,6 +1092,11 @@ function onAudioTime() {
     ? (player.audio.currentTime / dur) * c.chars
     : player.audio.currentTime * ttsCore.CHARS_PER_SEC;
   const off = Math.min(c.start + Math.floor(spoken), c.start + c.chars - 1);
+  // pre-roll before the requested start: hold the page and the bookmark
+  if (startFloor >= 0) {
+    if (off < startFloor) return;
+    startFloor = -1;
+  }
   if (off === state.off) return;
   state.off = off;
   updateProgress();

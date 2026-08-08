@@ -105,6 +105,25 @@ function subSplit(text, a, b) {
   return out;
 }
 
+// Start of the sentence containing raw index `i` in `text` — the same
+// ENDERS+CLOSERS walk chunkChapter (above) and wasm-tts's segments() run,
+// so "snap a reading to a sentence" can never disagree with where the
+// splitters cut. The player starts a new reading here: the requested char
+// is usually mid-sentence (a page opens wherever the previous one ended),
+// and audio must open on a sentence, not a fragment.
+export function sentenceStartFor(text, i) {
+  let s = 0;
+  for (let j = 0; j < text.length; j++) {
+    if (!ENDERS.includes(text[j])) continue;
+    let e = j + 1;
+    while (e < text.length && CLOSERS.includes(text[e])) e++;
+    if (e > i) break;
+    s = e;
+    j = e - 1;
+  }
+  return s;
+}
+
 // Index of the chunk containing char offset `off` (clamped to valid range).
 export function chunkIndexFor(chunks, off) {
   let idx = 0;

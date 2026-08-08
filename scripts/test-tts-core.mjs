@@ -5,11 +5,29 @@ import { join } from "node:path";
 import {
   chunkChapter,
   chunkIndexFor,
+  sentenceStartFor,
   ttsPrompt,
   CHARS_PER_SEC,
   CHUNK_CHARS,
   FIRST_CHUNK_CHARS,
+  ENDERS,
+  CLOSERS,
 } from "../public/tts-core.mjs";
+
+let fails = 0;
+const fail = (msg) => { fails++; console.error("✗ " + msg); };
+
+// ---- sentenceStartFor: pinned cases (no book needed) ----------------------
+// Boundaries fall after an ENDER plus any CLOSERS — identical to the spans
+// chunkChapter builds, so each pin states where a mid-sentence index snaps.
+const SENT = "甲說。「乙曰！」丙是誰？\n丁來了";
+//            0123   4567   8 9……  boundaries after 。(3)、！」(8)、？(12)、\n(13)
+for (const [i, want] of [[0, 0], [2, 0], [3, 3], [5, 3], [7, 3], [8, 8], [11, 8], [12, 12], [13, 13], [15, 13], [99, 13]]) {
+  const got = sentenceStartFor(SENT, i);
+  if (got !== want) fail(`sentenceStartFor(SENT, ${i}) = ${got}, want ${want}`);
+}
+if (sentenceStartFor("", 0) !== 0) fail("sentenceStartFor on empty text");
+if (sentenceStartFor("無標點的一句話", 4) !== 0) fail("sentenceStartFor with no enders");
 
 const dir = process.argv[2] ?? "out/jianlai";
 const files = readdirSync(dir).filter((f) => f.endsWith(".txt"));
@@ -17,9 +35,6 @@ if (!files.length) {
   console.error(`no .txt chapters in ${dir} — split a book first`);
   process.exit(1);
 }
-
-let fails = 0;
-const fail = (msg) => { fails++; console.error("✗ " + msg); };
 
 let totalChunks = 0;
 let totalChars = 0;
@@ -54,6 +69,22 @@ for (const f of files) {
   const last = chunks[chunks.length - 1];
   if (last.start + last.chars !== text.length && text.slice(last.start + last.chars).trim())
     fail(`${f}: tail content not covered`);
+
+  // sentenceStartFor: on sampled offsets, the snap lands at 0 or right
+  // after an ender(+closers), at or before the offset, with no ender
+  // boundary strictly between the snap and the offset
+  for (const off of [0, 7, Math.floor(text.length / 2), text.length - 1]) {
+    const s = sentenceStartFor(text, off);
+    if (s > off) { fail(`${f}: sentence start ${s} past offset ${off}`); continue; }
+    if (s > 0 && !ENDERS.includes(text[s - 1]) && !CLOSERS.includes(text[s - 1]))
+      fail(`${f}: sentence start ${s} not after an ender/closer`);
+    for (let j = s; j < off; j++) {
+      if (!ENDERS.includes(text[j])) continue;
+      let e = j + 1;
+      while (e < text.length && CLOSERS.includes(text[e])) e++;
+      if (e <= off) { fail(`${f}: boundary ${e} between snap ${s} and offset ${off}`); break; }
+    }
+  }
 
   // offset → chunk round-trip on a few sampled offsets
   for (const off of [0, Math.floor(text.length / 3), text.length - 1]) {

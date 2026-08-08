@@ -171,7 +171,9 @@ const { evalJs, close } = await launch({
   // persistent on purpose: the Cache API pack survives, so only the first run
   // pays for reading 130 MB off disk into the browser
   profile: "/tmp/bookworm-wasm-e2e-profile",
-  args: ["--autoplay-policy=no-user-gesture-required"],
+  // muted: the checks read currentTime, not the speaker — matcha reading
+  // the fixture chapter aloud on the desktop was just noise
+  args: ["--autoplay-policy=no-user-gesture-required", "--mute-audio"],
   onFail: () => server.close(),
 });
 
