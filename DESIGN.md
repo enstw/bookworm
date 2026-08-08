@@ -262,7 +262,13 @@ the pre-publication history, which lives in the owner's private archive.
   `packReady()` flips the reader to this engine, eviction falls back to
   STREAM, `localStorage bw_tts="stream"` forces the online engines. The
   cache sweep is a keep-set, not a name list, so it reclaims the whole
-  piper/melo/fanchen era in one pass and never needs editing again.
+  piper/melo/fanchen era in one pass and never needs editing again. The
+  same-origin JS modules and vendor bundles are fetched network-first at
+  init (`cachedBuf` fresh mode; the service worker bounds it at 1 s and
+  answers offline) because the copy parked in `bw-wasmtts` outlives every
+  SHELL bump — the phone once inited the 1.26-dev ort UMD against the
+  1.27.0 wasm exactly that way. Cache-first stays correct only for the
+  release binaries, whose filenames carry their version.
   Binaries come from the `wasmtts-assets-v2` GitHub release via the
   allowlisted `/api/wasmtts/` proxy; `/wasmtest` imports the real engine
   rather than carrying its own copy, because a bench that drifts from what
@@ -286,6 +292,29 @@ the pre-publication history, which lives in the owner's private archive.
   across versions is identical, known 簡繁 defects included. Verify a
   runtime bump on the reader, not `/wasmtest`: the diagnostic plays a
   two-`<audio>` chain and cannot exercise backgrounded playback at all.
+- **iOS lock-screen ground truth (2026-08-08, measured on iOS 18.7 with a
+  LAN probe replaying real per-sentence mp3 units through the reader's exact
+  MediaSource + Media Session discipline).** Four facts, three of them
+  platform ceilings no code change moves: (1) Media Session handlers are
+  load-bearing — with none registered, iOS discards the Now Playing session
+  ~3 s after a lock-screen pause and hands the card to another app, so the
+  play/pause handlers stay registered even though a frozen page cannot
+  always run them. (2) iOS freezes the page ~9–16 s after
+  paused-while-locked (heartbeat gaps prove it); within that window
+  lock-screen resume works — eight for eight in the logs — and after it the
+  tap is queued and fires the handler the instant the phone unlocks, so
+  "resume on unlock" is the designed outcome, not a bug. (3) The ~0.7 s
+  fade after a lock-screen pause is the OS session ramp: the pause event
+  lands instantly, then the clock records the ramp (`pause @X`, next
+  `play @X+0.7`); visible-page pauses have no tail. Muting before pausing
+  kills the ramp AND the Now Playing card instantly — rejected, the card is
+  worth more than the tail. (4) The one genuine failure mode is OURS to
+  catch: a resume can leave the element claiming "playing" with currentTime
+  frozen and a full buffer, for minutes, across visibility changes — the ♥
+  heartbeat in `player.mjs` watchdogs it (two stuck beats → micro-seek
+  nudge, then a rebuild at the narration position). The toggle binding of
+  both lock-screen buttons to `playerPlayPause` was suspected and cleared:
+  the `playing` flag matched element truth at every logged invocation.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:

@@ -149,9 +149,32 @@ export async function packReady() {
   } catch { return false; } // private mode: no cache, no pack
 }
 
-async function cachedBuf(url) {
+// Cache-first is correct ONLY for the release binaries: their filename
+// carries the version, so their bytes can never change under a URL. The
+// same-origin JS modules and vendor bundles are the opposite — they change
+// bytes at fixed URLs with every edit or pin bump, and the copy parked here
+// outlives every SHELL bump (this is bw-wasmtts, not the shell cache), so a
+// cache-first read runs LAST YEAR'S engine forever. fresh=true serves the
+// network's copy — the service worker already bounds that at 1 s and answers
+// from its shell cache offline — and keeps the parked copy only as the
+// no-service-worker last resort. Found the hard way: the phone inited the
+// 1.26-dev ort UMD against the 1.27.0 wasm because its parked copy shadowed
+// the deploy.
+async function cachedBuf(url, fresh = false) {
   let cache = null;
   try { cache = await caches.open(CACHE); } catch { /* private mode */ }
+  if (fresh) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${url} HTTP ${res.status}`);
+      if (cache) await cache.put(url, res.clone());
+      return res.arrayBuffer();
+    } catch (err) {
+      const parked = await cache?.match(url);
+      if (parked) return parked.arrayBuffer();
+      throw err;
+    }
+  }
   let res = await cache?.match(url);
   if (!res) {
     res = await fetch(url);
@@ -263,11 +286,11 @@ export function ensureEngine() {
     const [acoustic, vocoder, lexicon, tokens, ortWasm, ortJs, lameJs, fstJs, frontendJs, synthesisJs, ...ruleFsts] =
       await Promise.all([
         ...MODEL_FILES.map((f) => cachedBuf("/api/wasmtts/" + f.name)),
-        cachedBuf("/vendor/wasmtts/ort-wasm.min.js"),
-        cachedBuf("/vendor/wasmtts/lame.min.js"),
-        cachedBuf("/matcha-fst.js"),
-        cachedBuf("/matcha-frontend.js"),
-        cachedBuf("/matcha-synthesis.js"),
+        cachedBuf("/vendor/wasmtts/ort-wasm.min.js", true),
+        cachedBuf("/vendor/wasmtts/lame.min.js", true),
+        cachedBuf("/matcha-fst.js", true),
+        cachedBuf("/matcha-frontend.js", true),
+        cachedBuf("/matcha-synthesis.js", true),
         // Soft, unlike everything above it: a device holding a pack cut before
         // the tables existed has all 138 MB of what it needs to speak, and must
         // not lose offline audio over 212 KB it has never heard of. Absent

@@ -85,7 +85,7 @@ out.numbers = normalizeNumbers("第12章，日期2026年8月7日，14:30完成25
 // whole point — so the assertions are on the reframing, not on any Chinese.
 const LOCAL = [
   ["25.5%的路", "百分之25.5的路"],          // % is in neither lexicon nor tokens
-  ["14:30", "14点30分"], ["14:00", "14点"],  // ":" is a token, and would be a pause
+  ["14:30", "14点30分"], ["14:00", "14点"],  // ":" is a token the model speaks
   ["2026-08-07", "2026年8月7日"], ["2026/8/7", "2026年8月7日"],
   ["2026年08月07日", "2026年8月7日"],        // date.fst wants the zeros gone
   ["0912345678", "零九一二三四五六七八"],      // no spelling makes number.fst do this
@@ -152,6 +152,16 @@ out.ruleHook = handed === "我在14点30分看到百分之25.5和零九一二三
 out.ruleFallback = fix.prepareText("14:30") === "十四点三十分" && fix.prepareText("25.5%") === "百分之二十五点五"
   ? "ok (no tables: the JS number rules read it)"
   : `FAIL ${fix.prepareText("14:30")} / ${fix.prepareText("25.5%")}`;
+
+// Regression, phone A/B 2026-08-08: the colon token (id 3) is VOCALIZED by the
+// acoustic model — ~0.25 s of voiced sound per colon, stacking linearly, never
+// a pause. A prose colon must therefore leave normalizePunctuation as a comma,
+// and full-width 14：30 must reach the time rules exactly like its half-width
+// twin instead of falling through to that artifact plus two loose numbers.
+out.colon = fix.prepareText("他說：你好。") === "他說,你好."
+  && fix.prepareText("14：30") === "十四点三十分"
+  ? "ok (prose : reads as the comma pause; 14：30 folds to the time rule)"
+  : `FAIL ${fix.prepareText("他說：你好。")} / ${fix.prepareText("14：30")}`;
 
 // One unknown glyph must never stop a book — the engine passes allowUnknown.
 let threw = false;

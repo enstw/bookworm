@@ -2,9 +2,12 @@
 // over the model's own lexicon.txt. Ported from the sibling research repo
 // ~/workspace/wasmtts (platform/matcha-frontend.js @ 05b5b35).
 //
-// Diverges from that port in three places, all in the number path: a
+// Diverges from that port in four places — three in the number path: a
 // full-width-digit fix (charCodeAt without fromCharCode emitted code points),
-// normalizeLocalForms, and the ruleNormalizer hook prepareText runs it into.
+// normalizeLocalForms, and the ruleNormalizer hook prepareText runs it into;
+// and one in punctuation: ":" maps to "," because the acoustic model
+// VOCALIZES the colon token (id 3) — ~0.25 s of voiced sound per colon,
+// stacking linearly, measured — where a comma renders real silence.
 // Everything else is still byte-for-byte, so upstream stays diffable.
 //
 // 簡繁直輸 by decision: there is no OpenCC step and convertTraditional stays the
@@ -30,7 +33,9 @@
     ['。', '.'], ['．', '.'], ['｡', '.'],
     ['，', ','], ['、', ','],
     ['！', '!'], ['？', '?'],
-    ['；', ';'], ['：', ':'],
+    // ":" would be spoken (see header); "，" from a colon reads as the pause a
+    // prose colon means. NFKC has already folded ： to : when this map runs.
+    ['；', ';'], [':', ','],
     ['（', '('], ['）', ')'],
     ['「', ''], ['『', ''], ['《', ''],
     ['」', ''], ['』', ''], ['》', ''],
@@ -133,7 +138,10 @@
       .replace(/[０-９]/gu, (character) => String.fromCharCode(character.charCodeAt(0) - 0xfee0))
       .replace(/％/gu, '%')
       .replace(/＋/gu, '+')
-      .replace(/－/gu, '-');
+      .replace(/－/gu, '-')
+      // so 14：30 reaches the time rules exactly like 14:30 — prose colons
+      // that survive to normalizePunctuation become commas either way
+      .replace(/：/gu, ':');
   }
 
   // The four shapes sherpa's zh rule tables (see matcha-fst.js) read wrong for a
@@ -143,8 +151,9 @@
   //   25.5%       → 百分之25.5      "%" is in neither the lexicon nor tokens.txt,
   //                                 so the tables' 二十五点五% drops the percent
   //                                 silently and the reader hears a bare number.
-  //   14:30       → 14点30分        ":" IS a token (id 3), so the tables' 十四:三十
-  //                                 comes out as a pause between two numbers.
+  //   14:30       → 14点30分        ":" IS a token (id 3) the model SPEAKS —
+  //                                 a ~0.25 s vocal artifact, not a pause — so
+  //                                 the tables' 十四:三十 comes out garbled.
   //   2026-08-07  → 2026年8月7日     date.fst only knows the 年月日 spelling; the
   //                                 dashed form falls through to number.fst and
   //                                 becomes 二千零二十六-零八-零七.

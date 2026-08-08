@@ -666,9 +666,11 @@ function slog(what) {
     + (stream.ms && "streaming" in stream.ms ? ` 串${stream.ms.streaming}` : ""));
 }
 
-let hb = 0;
+let hb = 0, hbCt = -1, hbStuck = 0;
 function hbStart() {
   if (hb) return;
+  hbCt = -1;
+  hbStuck = 0;
   hb = setInterval(() => {
     if (!player.on) { clearInterval(hb); hb = 0; return; }
     const onStream = !!stream.ms; // either stream engine owns the timeline
@@ -682,6 +684,29 @@ function hbStart() {
     const synth = useWasm()
       ? `佇${wasm.queue.length - wasm.nextPlay}(${Math.round(wasmQueuedSecs())}s) ${wasm.synthDone ? "合成畢" : "合成中"}` : "";
     wlog(`♥ vis=${document.visibilityState} 播=${played} ${buffered}${synth}`);
+
+    // Stall watchdog. Measured on device (2026-08-08, iOS 18.7): a lock-screen
+    // pause/resume cycle can leave the element claiming "playing" with
+    // currentTime frozen and 90 s buffered — for minutes, surviving further
+    // pause/play cycles and visibility changes. Ran-dry is not this (it has no
+    // buffer ahead, and 待料 already names it); pause is not this. Two beats
+    // stuck = ~20 s: nudge the pipeline with a micro-seek first, rebuild the
+    // stream at the narration position if the nudge moved nothing.
+    const ct = onStream && stream.el ? stream.el.currentTime : -1;
+    const ahead = onStream && stream.sb ? bufferedEnd(stream.sb) - ct : 0;
+    if (player.playing && ct >= 0 && !stream.el.paused && Math.abs(ct - hbCt) < 0.05 && ahead > 2) {
+      if (++hbStuck === 1) {
+        wlog(`卡死 @${ct.toFixed(1)}s 緩${ahead.toFixed(0)}s — 推一下`);
+        stream.el.currentTime = ct + 0.01;
+        stream.el.play().catch(() => { /* bar shows state */ });
+      } else {
+        wlog(`卡死未解 — 重建 ci${state.idx} off${state.off}`);
+        hbStuck = 0;
+        if (stream.local) wasmPlayFrom(state.idx, state.off);
+        else streamPlayFrom(state.idx, state.off);
+      }
+    } else hbStuck = 0;
+    hbCt = ct;
   }, 10000);
 }
 
