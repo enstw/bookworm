@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Diagnostic page (linked from /admin diagnostics), and the ONLY thing that
-     downloads the offline voice pack: the reader must never pull 137 MB from a
+     downloads the offline voice pack: the reader must never pull 138 MB from a
      tap on ▶, so /wasmtest fills the bw-wasmtts cache and packReady() in
      wasm-tts.mjs is what then flips the reader to the offline engine.
      The binaries come from the wasmtts-assets GitHub release through the
@@ -54,7 +54,7 @@
   <table><tbody id="ctx"></tbody></table>
 
   <ol>
-    <li>「準備引擎」下載語音包（137MB，見下方逐檔進度），之後走快取，離線也可。</li>
+    <li>「準備引擎」下載語音包（138MB，見下方逐檔進度），之後走快取，離線也可。</li>
     <li>「短句」聽音質並給單句 RTF；「連續朗讀」跑長文並給整體 ×N。</li>
     <li>鎖屏測試：按「連續朗讀」，開始出聲後鎖屏 60 秒再解鎖 —
       時間軸看鎖屏中「合成」有沒有繼續、「play()」有沒有被拒。</li>
@@ -150,7 +150,7 @@ packReady().then((r) => log(`語音包 ${r ? "已就緒" : "未下載"}（${PACK
 
 // ---- the pack -----------------------------------------------------------
 // The engine fetches these too, but silently and only when it starts; this
-// page is where a 137 MB download is a visible, per-file, interruptible act.
+// page is where a 138 MB download is a visible, per-file, interruptible act.
 // Same cache, same /api/wasmtts/ keys, so either path primes the other.
 const CACHE = "bw-wasmtts";
 async function fetchPack() {

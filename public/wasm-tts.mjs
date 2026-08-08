@@ -21,7 +21,7 @@
 // (same /api/wasmtts/ keys), so a phone that ran the diagnostic already holds
 // the pack — packReady() is what flips the reader to this engine. The pack is
 // only ever downloaded by /wasmtest, never here: a tap on ▶ must not quietly
-// pull 137 MB over cellular.
+// pull 138 MB over cellular.
 //
 // Pure text helpers live up top with no browser APIs so node tests can
 // import them (see scripts/test-wasm-frontend.mjs).
@@ -114,7 +114,7 @@ const MODEL_FILES = [
   { name: "matcha-vocos-16khz-univ.onnx", bytes: 53882848, label: "聲碼器" },
   { name: "matcha-lexicon.txt", bytes: 1400278, label: "詞典" },
   { name: "matcha-tokens.txt", bytes: 21146, label: "音素表" },
-  { name: "ort-1.26.0-dev-wasm-simd-threaded.wasm", bytes: 12942611, label: "推論引擎" },
+  { name: "ort-1.27.0-wasm-simd-threaded.wasm", bytes: 13479978, label: "推論引擎" },
 ];
 
 // sherpa's zh text-normalization tables, in the order they are applied — the
@@ -132,7 +132,7 @@ export const PACK_FILES = [...MODEL_FILES, ...RULE_FILES];
 // filename carries the version, so a bump that forgets to re-cut the release
 // 404s instead of drifting; this catches the other direction — a re-cut release
 // under the same name — and says so, rather than failing inside instantiation.
-const ORT_WASM_BYTES = 12942611;
+const ORT_WASM_BYTES = 13479978;
 
 // Gates on MODEL_FILES, not PACK_FILES: the rule tables are part of the pack
 // /wasmtest downloads, but they are not what makes the engine able to speak.
@@ -269,7 +269,7 @@ export function ensureEngine() {
         cachedBuf("/matcha-frontend.js"),
         cachedBuf("/matcha-synthesis.js"),
         // Soft, unlike everything above it: a device holding a pack cut before
-        // the tables existed has all 137 MB of what it needs to speak, and must
+        // the tables existed has all 138 MB of what it needs to speak, and must
         // not lose offline audio over 212 KB it has never heard of. Absent
         // tables leave prepareText on the JS number rules — what shipped before.
         ...RULE_FILES.map((f) => cachedBuf("/api/wasmtts/" + f.name).catch(() => null)),

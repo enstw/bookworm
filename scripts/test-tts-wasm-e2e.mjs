@@ -44,7 +44,7 @@ const RELEASE = {
   "matcha-vocos-16khz-univ.onnx": join(MODELS, "vocos-16khz-univ.onnx"),
   "matcha-lexicon.txt": join(MODELS, "matcha-icefall-zh-en/lexicon.txt"),
   "matcha-tokens.txt": join(MODELS, "matcha-icefall-zh-en/tokens.txt"),
-  "ort-1.26.0-dev-wasm-simd-threaded.wasm": join(root, "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm"),
+  "ort-1.27.0-wasm-simd-threaded.wasm": join(root, "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm"),
 };
 for (const [name, file] of Object.entries(RELEASE))
   if (!existsSync(file)) { console.error(`missing ${name}: ${file}`); process.exit(2); }

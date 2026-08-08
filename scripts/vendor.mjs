@@ -16,13 +16,14 @@ const BUNDLES = [
   { pkg: "opencc-js", src: "dist/esm/cn2t.js", dst: "opencc-cn2t.js" },
   { pkg: "fflate", src: "esm/browser.js", dst: "fflate.js" },
   // Offline TTS glue (small files only). The binaries these load — the two
-  // Matcha ONNX models, the lexicon, and ort's own 12.9MB wasm — are NOT
+  // Matcha ONNX models, the lexicon, and ort's own 13.5MB wasm — are NOT
   // deployed as assets: the page fetches them from the wasmtts-assets GitHub
   // release, so the deploy stays small and files may exceed the 25 MiB
-  // per-asset limit. Versions here must match that release's contents — and,
-  // for ort, must match the build that was verified on the phone: the pin is
-  // a dev version on purpose (see the Offline TTS standing decision), so
-  // moving it is a deliberate re-verification, not a routine bump.
+  // per-asset limit. Versions here must match that release's contents: ort's
+  // release filename carries its version, so a bump that forgets to re-cut the
+  // release 404s loudly. The pin is exact (no ^) because the wasm's byte length
+  // is asserted in wasm-tts.mjs — a floating range would break the engine on a
+  // routine lockfile refresh.
   //
   // ort.wasm.min.js is the wasm-only UMD build — no webgpu code at all, which
   // is what we want: the engine runs one wasm thread and nothing else. The

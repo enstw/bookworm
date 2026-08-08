@@ -22,7 +22,7 @@
 // - WASM (offline, wasm-tts.mjs): in-browser Matcha zh-en — no network after
 //   the one-time voice pack download. Selected automatically when the pack is
 //   in the cache (downloaded by /wasmtest, never by the reader — ▶ must
-//   not quietly pull 137 MB over cellular); localStorage bw_tts="stream"
+//   not quietly pull 138 MB over cellular); localStorage bw_tts="stream"
 //   forces the online engines back. Playback rides the SAME MediaSource
 //   discipline as STREAM: the synth worker encodes each unit to mp3 and
 //   the units are appended to one continuous timeline. The chain-swap

@@ -256,7 +256,7 @@ the pre-publication history, which lives in the owner's private archive.
   `/api/testlog?page=player`. COOP/COEP is gone (`public/_headers`
   deleted): nothing needs `crossOriginIsolated` now that the threaded
   experiments are, and the engine was verified running with it false. The
-  ~137 MB voice pack (five model files plus the three rule tables) is
+  ~138 MB voice pack (five model files plus the three rule tables) is
   downloaded ONLY by the `/wasmtest` diagnostic
   (never by ▶ — cellular) into the `bw-wasmtts` cache both pages share;
   `packReady()` flips the reader to this engine, eviction falls back to
@@ -266,14 +266,26 @@ the pre-publication history, which lives in the owner's private archive.
   Binaries come from the `wasmtts-assets-v2` GitHub release via the
   allowlisted `/api/wasmtts/` proxy; `/wasmtest` imports the real engine
   rather than carrying its own copy, because a bench that drifts from what
-  ships measures the wrong thing. **ort is pinned to
-  `1.26.0-dev.20260416-b7804b056c` on purpose** — a dev build, but the one
-  the phone verification was performed on, and its wasm differs from stable
-  1.27.0's by 537 KB. Moving it means re-verifying on device and re-cutting
-  the release asset (whose filename carries the version, so a forgotten
-  re-cut 404s loudly), not a routine bump. Note `env.versions.common`
-  reports *onnxruntime-common*, not the web package, so the drift guard
-  checks the wasm's byte length instead.
+  ships measures the wrong thing. **ort is pinned exactly to `1.27.0`**
+  (2026-08-08) — the pin was the dev build `1.26.0-dev.20260416-b7804b056c`
+  because that is what the first phone verification ran on; stable was
+  adopted once it had been re-verified, because a dev version gets no
+  security fixes and cannot be meaningfully bumped. Desktop e2e put
+  1.26.0-dev at ×7.33, 1.26.0 at ×7.42 and 1.27.0 at ×7.28–7.37 — all
+  run-to-run noise, so speed decided nothing and `latest` won on runway.
+  The pin has no `^`: the wasm's byte length is asserted at init, so a
+  floating range would break the engine on a lockfile refresh. Moving it
+  means re-verifying on device and re-cutting the release asset (whose
+  filename carries the version, so a forgotten re-cut 404s loudly). Note
+  `env.versions.common` reports *onnxruntime-common*, not the web package,
+  so the drift guard checks the wasm's byte length instead. **A transcript
+  diff cannot verify an ort bump**: Matcha samples fresh noise every call at
+  noiseScale 1, so the same text through the same build renders different
+  takes — two consecutive 1.27.0 renders of one sentence transcribed
+  他觉得等钱得接到 and 他觉得的前进街道. What is stable across runs and
+  across versions is identical, known 簡繁 defects included. Verify a
+  runtime bump on the reader, not `/wasmtest`: the diagnostic plays a
+  two-`<audio>` chain and cannot exercise backgrounded playback at all.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:
