@@ -315,6 +315,27 @@ the pre-publication history, which lives in the owner's private archive.
   nudge, then a rebuild at the narration position). The toggle binding of
   both lock-screen buttons to `playerPlayPause` was suspected and cleared:
   the `playing` flag matched element truth at every logged invocation.
+- **A reading opens at the visible page (2026-08-08).** 🔊 — and ▶ after
+  navigating away while paused — starts at the first character of the page
+  on screen (`pageStartOffset()`, per-char Range rects inside the straddling
+  paragraph), never at the tracked `state.off`: that offset is
+  paragraph-grained and sticky, so it routinely points a page or more behind
+  the eye. The wasm engine synthesizes the first chunk from the sentence
+  holding that char (`sentenceStartFor` in `tts-core.mjs` — the one
+  ENDERS/CLOSERS walk shared with both splitters); the stream and chain
+  engines seek proportionally into the first chunk instead. The ≤1-sentence
+  pre-roll before the requested start is held by a one-shot floor — no page
+  turn, no bookmark write — cleared on arrival and on ⏮/⏭. ✕ ends the
+  session; the next 🔊 is a fresh reading from whatever page is then open.
+  Following and restoring page on the SPOKEN character's rect
+  (`offsetRect`), not the paragraph's start edge, so a paragraph spanning
+  pages turns mid-paragraph and a mid-paragraph bookmark reopens on its own
+  page. Accepted: the pre-roll re-reads up to one sentence that began on
+  the previous page — a complete sentence beats starting mid-clause. The
+  e2e page-start scenario runs on a one-paragraph multi-page chapter, the
+  one shape paragraph-grained following could never turn. The audio suites
+  pass `--mute-audio`: every assertion reads the media clock, never the
+  speaker.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:
