@@ -180,6 +180,26 @@ button {
   padding: calc(1.2rem + env(safe-area-inset-top)) 1.2rem max(0.8rem, env(safe-area-inset-bottom));
   font-size: var(--font-size);
   line-height: calc(4 / 3); /* 行距（行間空白）= 字號的 1/3 */
+  /* anchor + stacking context for #ttsHl, whose z-index -1 must sit behind
+     the glyphs but still above the page background */
+  position: relative;
+  isolation: isolate;
+}
+
+/* the spoken-sentence wash — self-painted rects, NOT ::highlight():
+   WebKit never repaints replaced/removed custom highlights (bugs 266250,
+   259897), leaving the page covered in stale washes on device */
+#ttsHl {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+#ttsHl div {
+  position: absolute;
+  background: var(--hl);
+  border-radius: 4px;
 }
 
 /* 橫排 lines START at the left edge, which is exactly where the island sits
@@ -375,11 +395,6 @@ button {
 .playerbar .iconbtn {
   font-size: 1.4rem;
   padding: 0.4rem 0.65rem;
-}
-
-/* the sentence the voice is on (CSS Custom Highlight API, iOS 17.2+) */
-::highlight(tts-sentence) {
-  background-color: var(--hl);
 }
 
 /* with the botnav hidden the player can sit at the bottom edge */

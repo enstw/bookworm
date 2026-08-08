@@ -337,18 +337,31 @@ the pre-publication history, which lives in the owner's private archive.
   pass `--mute-audio`: every assertion reads the media clock, never the
   speaker.
 - **The spoken sentence is marked, the bar floats (2026-08-08).** While a
-  reading plays, the sentence holding the spoken char is painted via the CSS
-  Custom Highlight API (`CSS.highlights`, name `tts-sentence`, color token
-  `--hl`) — no DOM mutation, so the paged grid and per-char rect maths are
-  untouched; the API is iOS 17.2+ and the feature no-ops silently below
-  that. Bounds come from `sentenceStartFor`/`sentenceEndFor` on the chunk's
-  own text — the same ENDERS/CLOSERS walk as the splitters — so mark and
-  audio can never disagree; a force-split run-on marks its whole chunk-sized
-  piece, and the chapter-title announcement marks nothing (the heading
-  renders as `<h2>`, not `p[data-off]`). Pause keeps the mark (it shows
-  where you stopped); ✕ clears it. The player bar itself is
-  near-transparent (35% of `--bar-bg` over the blur, no shadow) with
-  1.4rem icon buttons, so it floats over the page instead of hiding it.
+  reading plays, the sentence holding the spoken char carries a wash
+  (color token `--hl`). NOT via the CSS Custom Highlight API: WebKit never
+  repaints replaced or removed custom highlights — open bugs 266250
+  ("painting does not invalidate properly when removing highlights",
+  confirmed by a WebKit engineer as a paint-invalidation bug) and 259897
+  ("sometimes does not repaint when live ranges are changed") — so on
+  device every sentence ever spoken stayed washed (screenshot report
+  2026-08-08). Instead the wash is self-painted: `#ttsHl` inside
+  `#content` holds one absolutely-positioned rect per line fragment of the
+  sentence's Range (content-space coords, so the rects ride page glides
+  natively), replaced wholesale on every mark — ordinary DOM painting,
+  which WebKit always invalidates — and removed on ✕. `#content` carries
+  `position: relative; isolation: isolate` so the rects sit at `z-index:
+  -1`, behind the glyphs but above the page background. Out-of-flow, so
+  the paged grid and per-char rect maths are untouched; works below iOS
+  17.2 too. Bounds come from `sentenceStartFor`/`sentenceEndFor` on the
+  chunk's own text — the same ENDERS/CLOSERS walk as the splitters — so
+  mark and audio can never disagree; a force-split run-on marks its whole
+  chunk-sized piece, and the chapter-title announcement marks nothing (the
+  heading renders as `<h2>`, not `p[data-off]`). Pause keeps the mark (it
+  shows where you stopped); ✕ clears it. After rotation or a grid change
+  the rects are stale for ≤1 timeupdate tick until the next mark repaints
+  — the page-follow tolerance. The player bar itself is near-transparent
+  (35% of `--bar-bg` over the blur, no shadow) with 1.4rem icon buttons,
+  so it floats over the page instead of hiding it.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:

@@ -1581,17 +1581,22 @@ function followScroll(offset) {
   if (want !== pageAt(scrollDist(c))) pageGlide(c, pagePos(c, want));
 }
 
-// Paint the sentence the voice is on — CSS Custom Highlight API (iOS 17.2+,
-// silently absent elsewhere; streaming already needs 17.1). A sentence never
-// crosses a paragraph (\n is an ender), so one Range in one text node,
-// clamped to the trimmed line: raw offsets count the untrimmed line, the
-// same 1–2 char drift the page maths accepts. null clears the mark. The
-// heading line renders as <h2>, not p[data-off], so the chapter title
-// announcement has nothing to paint — by design.
+// Paint the sentence the voice is on. NOT the CSS Custom Highlight API: on
+// the phone its paint never invalidates — replaced and deleted highlights
+// stay washed until something else repaints (WebKit bugs 266250, 259897;
+// on-device screenshot 2026-08-08 showed a whole page of stale washes). So
+// the wash is self-painted: one absolutely-positioned rect per line
+// fragment of the sentence's Range, inside #content so the rects ride page
+// glides natively, replaced wholesale each call — ordinary DOM painting,
+// which WebKit always invalidates. A sentence never crosses a paragraph
+// (\n is an ender), so one Range in one text node, clamped to the trimmed
+// line: raw offsets count the untrimmed line, the same 1–2 char drift the
+// page maths accepts. null removes the wash. The heading renders as <h2>,
+// not p[data-off], so the title announcement has nothing to paint.
 function highlightSentence(start, end) {
-  if (!window.Highlight) return;
-  if (start == null) return void CSS.highlights.delete("tts-sentence");
-  const ps = $("#content")?.querySelectorAll("p[data-off]");
+  if (start == null) return void $("#ttsHl")?.remove();
+  const c = $("#content");
+  const ps = c?.querySelectorAll("p[data-off]");
   if (!ps?.length) return;
   let p = null;
   for (const q of ps) {
@@ -1606,7 +1611,17 @@ function highlightSentence(start, end) {
   const range = document.createRange();
   range.setStart(node, a);
   range.setEnd(node, b);
-  CSS.highlights.set("tts-sentence", new Highlight(range));
+  const w = $("#ttsHl") ?? c.appendChild(el("div", { id: "ttsHl", "aria-hidden": "true" }));
+  w.dataset.start = start;
+  w.dataset.end = end;
+  const cr = c.getBoundingClientRect();
+  w.replaceChildren(...[...range.getClientRects()].map((r) => {
+    const d = el("div");
+    d.style.cssText = `left:${r.left - cr.left - c.clientLeft + c.scrollLeft}px;` +
+      `top:${r.top - cr.top - c.clientTop + c.scrollTop}px;` +
+      `width:${r.width}px;height:${r.height}px`;
+    return d;
+  }));
 }
 
 // Char offset of the first character on the page now on screen — where a

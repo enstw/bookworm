@@ -161,16 +161,26 @@ const k0 = await evalJs(`bwPlayer.player.chunkIdx`);
 const k1 = await waitFor(`bwPlayer.player.chunkIdx`, (k) => k > k0, 30);
 out.chunkAdvances = k1 > k0 ? `ok (chunk ${k0} → ${k1})` : `FAIL: stuck at ${k1}`;
 
-// the sentence being spoken is marked — one live Range, sentence-shaped:
-// it ends on an ender/closer and never exceeds a chunk
+// the sentence being spoken is marked — the self-painted #ttsHl overlay
+// (not ::highlight(): WebKit bugs 266250/259897 leave stale paint) holds
+// ≥1 rect and its data-span is sentence-shaped: ends on an ender/closer,
+// never exceeds a chunk
 const hl = await evalJs(`(() => {
-  const h = CSS.highlights.get("tts-sentence");
-  if (!h || h.size !== 1) return "no range";
-  const s = [...h][0].toString();
-  return { len: s.length, last: s[s.length - 1] };
+  const w = document.getElementById("ttsHl");
+  if (!w || !w.children.length) return "no overlay";
+  const start = +w.dataset.start, end = +w.dataset.end;
+  const ps = [...document.querySelectorAll("#content p[data-off]")];
+  let p = null;
+  for (const q of ps) { if (+q.dataset.off <= start) p = q; else break; }
+  if (!p?.firstChild?.data) return "no paragraph";
+  const s = p.firstChild.data.slice(Math.max(0, start - p.dataset.off), end - p.dataset.off);
+  const r = w.children[0].getBoundingClientRect();
+  return { rects: w.children.length, len: s.length, last: s[s.length - 1] ?? "",
+    painted: r.width > 0 && r.height > 0 };
 })()`);
-out.sentenceMarked = hl?.len > 0 && hl.len <= 300 && "。！？；」』”’）)】".includes(hl.last)
-  ? `ok (${hl.len} chars, ends ${JSON.stringify(hl.last)})`
+out.sentenceMarked = hl?.len > 0 && hl.len <= 300 && hl.painted
+    && "。！？；」』”’）)】".includes(hl.last)
+  ? `ok (${hl.rects} rect(s), ${hl.len} chars, ends ${JSON.stringify(hl.last)})`
   : `FAIL: ${JSON.stringify(hl)}`;
 
 // the page turns WITHIN the one-paragraph chapter as narration advances —
@@ -221,8 +231,8 @@ if (!CHAIN) {
 // book end: last chapter finishes → endOfStream → ended → player closes
 out.closesAtBookEnd = (await waitFor(`bwPlayer.player.on === false`, (v) => v, 60))
   ? "ok" : "FAIL: player still open";
-// ✕/close clears the mark (pause would keep it)
-out.markCleared = (await evalJs(`CSS.highlights.has("tts-sentence") === false`))
-  ? "ok" : "FAIL: highlight survived close";
+// ✕/close removes the wash entirely (pause would keep it)
+out.markCleared = (await evalJs(`document.getElementById("ttsHl") === null`))
+  ? "ok" : "FAIL: overlay survived close";
 
 await finish(out);
