@@ -31,7 +31,13 @@ decision in that subsystem.
   failing suite and embed its log tail, and the deploy is skipped. The same
   gate runs locally with `ADMIN_TOKEN=<value from .dev.vars> node
   scripts/run-ci-tests.mjs` — it reuses a dev server already on 8787 or
-  boots its own.
+  boots its own. Dependencies release once a week (2026-08-10): the
+  `renovate` workflow runs every Monday morning, Renovate folds every
+  update — the wasmtts tag, the ENSFont pin, npm, Actions — into one
+  `renovate/weekly-roll-up` PR (`.github/renovate.json5`), and the
+  workflow merges it and dispatches this gated deploy. Major updates get
+  their own PR and wait for review; there is no Renovate App — the CLI
+  runs in Actions, or by hand via the command in the config header.
 
 ## The owner's suggestion queue
 

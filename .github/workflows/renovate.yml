@@ -1,0 +1,44 @@
+# The weekly upstream roll-up (Monday 06:03 Asia/Taipei): renovate opens or
+# refreshes the single grouped PR (.github/renovate.json5 groups every update
+# into it), then this job merges it and dispatches the gated deploy — one
+# release a week from upstream churn. The push-to-main gate stays the only
+# gate: a red suite publishes the test-failure pre-release and never deploys.
+#
+# The explicit `gh workflow run deploy` is load-bearing: a merge performed
+# with GITHUB_TOKEN does not trigger `on: push` workflows (GitHub's
+# recursion guard), but workflow_dispatch is exempt.
+name: renovate
+
+on:
+  schedule:
+    - cron: "3 22 * * 0" # Sunday 22:03 UTC = Monday 06:03 Asia/Taipei
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  roll-up:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npx --yes renovate --platform=github enstw/bookworm
+        env:
+          RENOVATE_TOKEN: ${{ github.token }}
+          LOG_LEVEL: info
+      - name: Merge the roll-up and dispatch the gated deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR=$(gh pr list -R enstw/bookworm --head renovate/weekly-roll-up --json number --jq '.[0].number // empty')
+          if [ -n "$PR" ]; then
+            gh pr merge "$PR" --rebase --delete-branch -R enstw/bookworm
+            gh workflow run deploy --ref main -R enstw/bookworm
+          else
+            echo "no roll-up this week"
+          fi
