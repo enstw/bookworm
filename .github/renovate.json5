@@ -2,8 +2,9 @@
 // Dependabot it can bump the wasmtts git-dependency tag in package.json
 // (github:enstw/wasmtts#vX.Y.Z — semver tags, github-tags datasource picks
 // them up natively) and, through the regex manager below, the ENSFont release
-// pin in scripts/fetch-font.mjs. Inert until the Renovate GitHub App is
-// installed on this repo — that installation is the one manual step.
+// pin in scripts/fetch-font.mjs. No GitHub App: like wasmtts, an agent
+// launches the CLI on demand —
+//   RENOVATE_TOKEN=$(gh auth token) pnpm dlx renovate --platform=github enstw/bookworm
 // Every bump PR runs the full test gate; merging deploys.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
