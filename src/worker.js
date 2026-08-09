@@ -471,17 +471,19 @@ const WASMTTS_RELEASE = "https://github.com/enstw/bookworm/releases/download/was
 const WASMTTS_FILES = new Set([
   "matcha-acoustic-steps3.onnx", "matcha-vocos-16khz-univ.onnx",
   "matcha-lexicon.txt", "matcha-tokens.txt",
-  // the ort build the engine was verified against; the version rides the
-  // filename so a bump that forgets to re-cut the release 404s loudly
-  "ort-1.27.0-wasm-simd-threaded.wasm",
   // sherpa's zh text-normalization tables, applied by the kaldifst wasm
   // vendored from wasmtts
   "phone-zh.fst", "date-zh.fst", "number-zh.fst",
 ]);
+// ort's version rides its filename (the page asks for the name vendor.mjs
+// derived from the wasmtts pin), so the allowlist admits the shape rather
+// than one version — CI's sync step keeps exactly one such file on the
+// release, and egress is still bounded to the pinned tag's URL either way.
+const ORT_WASM_RE = /^ort-\d+\.\d+\.\d+(?:[-.][\w.]+)?-wasm-simd-threaded\.wasm$/;
 
 async function serveWasmttsAsset(path) {
   const name = path.slice("/api/wasmtts/".length);
-  if (!WASMTTS_FILES.has(name)) return json({ error: "not found" }, 404);
+  if (!WASMTTS_FILES.has(name) && !ORT_WASM_RE.test(name)) return json({ error: "not found" }, 404);
   const res = await fetch(WASMTTS_RELEASE + name, { redirect: "follow" });
   if (!res.ok) return json({ error: `upstream ${res.status}` }, 502);
   const headers = {

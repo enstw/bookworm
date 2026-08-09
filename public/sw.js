@@ -23,16 +23,16 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v17";
+const SHELL = "bw-shell-v18";
 // The offline TTS engine's big binaries live in their own bw-wasmtts cache,
-// but its six small same-origin files ride the shell, because /wasmtest
+// but its small same-origin files ride the shell, because /wasmtest
 // downloads only the voice pack: without these, the first ensureEngine() on a
 // device that has gone offline since would fetch them from a dead network and
 // fail into the online engine, holding a complete voice pack it could not use.
 // ort's loader glue additionally *has* to be a real URL — ort import()s it, and
 // a blob cannot satisfy that in a classic worker. All are unversioned like the
 // fonts: bump SHELL when the ort pin or any of the modules moves.
-const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-synthesis.js", "/vendor/wasmtts/kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.wasm", "/vendor/wasmtts/ort-wasm-simd-threaded.mjs", "/manifest.webmanifest"];
+const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-synthesis.js", "/vendor/wasmtts/kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.wasm", "/vendor/wasmtts/ort-wasm-simd-threaded.mjs", "/vendor/wasmtts/ort-manifest.mjs", "/manifest.webmanifest"];
 const NET_MS = 1000; // mirrors NET_MS in app.js — the same line, drawn twice
 
 self.addEventListener("install", (e) => {

@@ -19,7 +19,7 @@
 // the phone's exact append path, minus the entitlement rules only iOS enforces.
 
 import { createServer } from "node:http";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -36,15 +36,20 @@ if (!MODELS) {
 }
 
 // The release names the worker allowlists, mapped to where the weights sit
-// locally. Keep in step with WASMTTS_FILES in src/worker.js and PACK_FILES in
-// public/wasm-tts.mjs — a rename that misses one of the three is exactly the
-// failure this suite should catch.
+// locally. Keep the model names in step with WASMTTS_FILES in src/worker.js
+// and PACK_FILES in public/wasm-tts.mjs — a rename that misses one is exactly
+// the failure this suite should catch. ort's name and location are derived,
+// not stated: the version comes through the wasmtts tree (the page will ask
+// for whatever vendor.mjs put in ort-manifest.mjs, which derives it the same
+// way), so an ort repin needs no edit here.
+const ortDir = join(realpathSync(join(root, "node_modules", "wasmtts")), "..", "onnxruntime-web");
+const ortVersion = JSON.parse(readFileSync(join(ortDir, "package.json"), "utf8")).version;
 const RELEASE = {
   "matcha-acoustic-steps3.onnx": join(MODELS, "matcha-icefall-zh-en/model-steps-3.onnx"),
   "matcha-vocos-16khz-univ.onnx": join(MODELS, "vocos-16khz-univ.onnx"),
   "matcha-lexicon.txt": join(MODELS, "matcha-icefall-zh-en/lexicon.txt"),
   "matcha-tokens.txt": join(MODELS, "matcha-icefall-zh-en/tokens.txt"),
-  "ort-1.27.0-wasm-simd-threaded.wasm": join(root, "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm"),
+  [`ort-${ortVersion}-wasm-simd-threaded.wasm`]: join(ortDir, "dist/ort-wasm-simd-threaded.wasm"),
 };
 for (const [name, file] of Object.entries(RELEASE))
   if (!existsSync(file)) { console.error(`missing ${name}: ${file}`); process.exit(2); }

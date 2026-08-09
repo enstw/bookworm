@@ -306,9 +306,18 @@ the pre-publication history, which lives in the owner's private archive.
   1.26.0-dev at ×7.33, 1.26.0 at ×7.42 and 1.27.0 at ×7.28–7.37 — all
   run-to-run noise, so speed decided nothing and `latest` won on runway.
   The pin has no `^`: the wasm's byte length is asserted at init, so a
-  floating range would break the engine on a lockfile refresh. Moving it
-  means re-verifying on device and re-cutting the release asset (whose
-  filename carries the version, so a forgotten re-cut 404s loudly). Note
+  floating range would break the engine on a lockfile refresh. **The
+  release asset re-cuts itself (2026-08-10)**: `vendor.mjs` derives the
+  versioned filename + byte length from the wasmtts tree into
+  `public/vendor/wasmtts/ort-manifest.mjs` (the only place the app learns
+  them; `wasm-tts.mjs` imports it, the worker allowlist admits the name by
+  shape), and the deploy job runs `scripts/sync-wasmtts-assets.mjs` before
+  `deploy.sh` — it uploads the pinned package's wasm under that name to
+  `wasmtts-assets-v2` if absent, refuses a same-name-different-bytes
+  replace, and then deletes stale ort versions (sole install, no
+  backward-compat window). So an ort bump is: upstream repins → gated tag →
+  bookworm repins one line → CI re-cuts and deploys. A same-name asset can
+  still never change bytes, and a sync failure 404s loudly on device. Note
   `env.versions.common` reports *onnxruntime-common*, not the web package,
   so the drift guard checks the wasm's byte length instead. **A transcript
   diff cannot verify an ort bump**: Matcha samples fresh noise every call at
