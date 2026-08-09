@@ -23,7 +23,7 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v16";
+const SHELL = "bw-shell-v17";
 // The offline TTS engine's big binaries live in their own bw-wasmtts cache,
 // but its six small same-origin files ride the shell, because /wasmtest
 // downloads only the voice pack: without these, the first ensureEngine() on a
