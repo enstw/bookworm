@@ -2,7 +2,7 @@
 // Copy the browser bundles the /admin page uses from the pinned npm packages
 // into public/vendor/ (gitignored). Runs automatically before `pnpm run dev`
 // and `pnpm run deploy`, so the served assets always match package.json —
-// Dependabot bumps a version, the next deploy ships it.
+// Renovate bumps a version, the next deploy ships it.
 
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
