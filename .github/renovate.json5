@@ -10,6 +10,10 @@
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["config:recommended"],
   timezone: "Asia/Taipei",
+  // like wasmtts: pin exact versions, so in-range releases still get a PR —
+  // with caret ranges Renovate would stay silent until the next major (it
+  // does not do Dependabot-style in-range lockfile bumps)
+  rangeStrategy: "pin",
   // one PR for the routine noise, like the Dependabot grouping it replaces;
   // majors and the two tracked upstreams still arrive individually
   packageRules: [
