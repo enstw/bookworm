@@ -25,10 +25,8 @@
   },
   "devDependencies": {
     "fflate": "^0.8.3",
-    "lamejs": "^1.2.1",
-    "onnxruntime-web": "1.27.0",
     "opencc-js": "^1.4.1",
-    "wasmtts": "github:enstw/wasmtts#v0.1.4",
+    "wasmtts": "github:enstw/wasmtts#v0.1.7",
     "wrangler": "^4.114.0"
   }
 }

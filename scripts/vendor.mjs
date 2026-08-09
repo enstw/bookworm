@@ -4,7 +4,7 @@
 // and `pnpm run deploy`, so the served assets always match package.json —
 // Dependabot bumps a version, the next deploy ships it.
 
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,24 +21,25 @@ const BUNDLES = [
   // release, so the deploy stays small and files may exceed the 25 MiB
   // per-asset limit. Versions here must match that release's contents: ort's
   // release filename carries its version, so a bump that forgets to re-cut the
-  // release 404s loudly. The pin is exact (no ^) because the wasm's byte length
-  // is asserted in wasm-tts.mjs — a floating range would break the engine on a
-  // routine lockfile refresh.
+  // release 404s loudly. This repo does NOT pin ort (or lamejs) itself: both
+  // resolve through the wasmtts git dependency (`via`), whose exact pins are
+  // what upstream's release gates actually tested — the version can only move
+  // together with the engine, never on its own.
   //
   // ort.wasm.min.js is the wasm-only UMD build — no webgpu code at all, which
   // is what we want: the engine runs one wasm thread and nothing else. The
   // synth worker loads it via importScripts.
-  { pkg: "onnxruntime-web", src: "dist/ort.wasm.min.js", dst: "wasmtts/ort-wasm.min.js" },
+  { pkg: "onnxruntime-web", via: "wasmtts", src: "dist/ort.wasm.min.js", dst: "wasmtts/ort-wasm.min.js" },
   // ort import()s this glue by URL, so unlike every other binary it cannot
   // arrive as a cached blob — it ships as a same-origin asset and rides the
   // service worker's SHELL_ASSETS to stay available offline.
-  { pkg: "onnxruntime-web", src: "dist/ort-wasm-simd-threaded.mjs", dst: "wasmtts/ort-wasm-simd-threaded.mjs" },
+  { pkg: "onnxruntime-web", via: "wasmtts", src: "dist/ort-wasm-simd-threaded.mjs", dst: "wasmtts/ort-wasm-simd-threaded.mjs" },
   // mp3 encoder for the offline TTS engine: iOS only keeps lock-screen
   // audio alive on ONE continuous ManagedMediaSource timeline, and MSE
   // does not eat WAV — the synth worker encodes each unit to mp3 frames.
   // importScripts-style global (the npm main entry has the MPEGMode bug;
-  // this bundle is self-contained). LGPL-2.1 — see node_modules/lamejs/LICENSE.
-  { pkg: "lamejs", src: "lame.min.js", dst: "wasmtts/lame.min.js" },
+  // this bundle is self-contained). LGPL-2.1 — see lamejs's LICENSE.
+  { pkg: "lamejs", via: "wasmtts", src: "lame.min.js", dst: "wasmtts/lame.min.js" },
   // The Matcha engine itself, vendored whole from the wasmtts git dependency
   // (pinned in package.json, bumped by Renovate) instead of hand-copied into
   // public/ — upstream runs the release gates (FST golden, RTF, memory, ASR
@@ -58,8 +59,13 @@ mkdirSync(outDir, { recursive: true });
 mkdirSync(join(outDir, "wasmtts"), { recursive: true });
 const versions = {};
 const declared = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).devDependencies;
-for (const { pkg, src, dst } of BUNDLES) {
-  const pkgDir = join(root, "node_modules", pkg);
+for (const { pkg, via, src, dst } of BUNDLES) {
+  // `via` resolves through that dependency's own tree (pnpm keeps a package's
+  // deps as siblings of its real location in the virtual store), so the copy
+  // is the version the UPSTREAM declares, not one pinned here
+  const pkgDir = via
+    ? join(realpathSync(join(root, "node_modules", via)), "..", pkg)
+    : join(root, "node_modules", pkg);
   copyFileSync(join(pkgDir, src), join(outDir, dst));
   // the wasmtts git dependency carries no version field — record the pinned
   // spec (its release tag) so versions.json still says what shipped

@@ -293,8 +293,13 @@ the pre-publication history, which lives in the owner's private archive.
   held the ruleNormalizer interface), and upstream's release gates (FST
   golden, RTF, 512 MiB, Whisper CER) test what this repo cannot. The pin is
   a release tag Renovate bumps; bookworm's fixes were upstreamed first
-  (wasmtts PRs #1 #2) so the vendored file needs no local patches. **ort is pinned exactly to `1.27.0`**
-  (2026-08-08) — the pin was the dev build `1.26.0-dev.20260416-b7804b056c`
+  (wasmtts PRs #1 #2) so the vendored file needs no local patches. **ort is
+  pinned exactly, and since 2026-08-10 the pin lives upstream**: wasmtts
+  declares `onnxruntime-web` (and `lamejs`) in its `dependencies`, and
+  `vendor.mjs` resolves both through the wasmtts tree — this repo holds no
+  ort version of its own, so ort can only move together with a gated engine
+  release, never alone. History of the pin (2026-08-08, currently
+  `1.27.0`) — it was the dev build `1.26.0-dev.20260416-b7804b056c`
   because that is what the first phone verification ran on; stable was
   adopted once it had been re-verified, because a dev version gets no
   security fixes and cannot be meaningfully bumped. Desktop e2e put
