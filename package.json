@@ -28,7 +28,7 @@
     "lamejs": "^1.2.1",
     "onnxruntime-web": "1.27.0",
     "opencc-js": "^1.4.1",
-    "wasmtts": "github:enstw/wasmtts#e9b410f1aaad58ce0e0535037db094dd060a58a0",
+    "wasmtts": "github:enstw/wasmtts#v0.1.4",
     "wrangler": "^4.114.0"
   }
 }

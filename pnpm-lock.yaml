@@ -21,7 +21,7 @@ importers:
         specifier: ^1.4.1
         version: 1.4.1
       wasmtts:
-        specifier: github:enstw/wasmtts#e9b410f1aaad58ce0e0535037db094dd060a58a0
+        specifier: github:enstw/wasmtts#v0.1.4
         version: wasmtts-benchmark@https://codeload.github.com/enstw/wasmtts/tar.gz/e9b410f1aaad58ce0e0535037db094dd060a58a0
       wrangler:
         specifier: ^4.114.0
