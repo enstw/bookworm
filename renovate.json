@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Renovate covers ONLY the two GitHub upstreams Dependabot cannot see: the wasmtts git dependency (npm manager, so pnpm-lock.yaml is regenerated) and the enstw/font release pin in scripts/fetch-font.mjs. Registry npm packages stay with Dependabot — the npm manager is disabled except for wasmtts so the two never open duplicate PRs.",
+  "enabledManagers": ["npm", "custom.regex"],
+  "packageRules": [
+    { "matchManagers": ["npm"], "enabled": false },
+    { "matchManagers": ["npm"], "matchPackageNames": ["wasmtts"], "enabled": true }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "enstw/font release pin; the bump PR needs `node scripts/fetch-font.mjs` run on its branch to regenerate the woff2 and bump SHELL — the script header has the runbook.",
+      "managerFilePatterns": ["/^scripts/fetch-font\\.mjs$/"],
+      "matchStrings": ["FONT_RELEASE = \"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "enstw/font",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "loose"
+    }
+  ]
+}
