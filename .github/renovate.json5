@@ -1,32 +1,36 @@
-// Renovate replaces the npm-only Dependabot config it superseded: unlike
-// Dependabot it can bump the wasmtts git-dependency tag in package.json
-// (github:enstw/wasmtts#vX.Y.Z — semver tags, github-tags datasource picks
-// them up natively) and, through the regex manager below, the ENSFont release
-// pin in scripts/fetch-font.mjs. No GitHub App: like wasmtts, an agent
-// launches the CLI on demand —
+// The single Renovate config (the Dependabot-era split where registry npm
+// stayed with Dependabot is gone — Renovate covers everything). No GitHub
+// App: like wasmtts, an agent launches the CLI — weekly by cron, or on demand:
 //   RENOVATE_TOKEN=$(gh auth token) pnpm dlx renovate --platform=github enstw/bookworm
-// Every bump PR runs the full test gate; merging deploys.
+// (renovate's engine range wants node 24 — the cron runbook keeps a
+// standalone copy in ~/.cache.)
+//
+// Cadence: every update — the wasmtts git tag, the ENSFont release pin, npm —
+// lands in ONE grouped roll-up PR. Merging it is the week's single release:
+// the push-to-main gate runs the full desktop suite and only deploys green,
+// so the roll-up needs no pre-merge checks of its own.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["config:recommended"],
   timezone: "Asia/Taipei",
-  // like wasmtts: pin exact versions, so in-range releases still get a PR —
-  // with caret ranges Renovate would stay silent until the next major (it
-  // does not do Dependabot-style in-range lockfile bumps)
+  // pin exact versions, so in-range releases still get a PR — with caret
+  // ranges Renovate stays silent until the next major (it does not do
+  // Dependabot-style in-range lockfile bumps)
   rangeStrategy: "pin",
-  // one PR for the routine noise, like the Dependabot grouping it replaces;
-  // majors and the two tracked upstreams still arrive individually
   packageRules: [
     {
-      matchUpdateTypes: ["minor", "patch"],
-      matchDatasources: ["npm"],
-      groupName: "npm minor & patch",
+      matchPackageNames: ["*"],
+      groupName: "weekly upstream roll-up",
+      groupSlug: "weekly-roll-up",
     },
   ],
   customManagers: [
     // the ENSFont release pin: a plain const in the fetch script, not a
     // package.json entry, so no built-in manager sees it. The tag scheme
     // (v4.4.0_lxgw1.522_nerd3.5.0) is not semver — loose versioning sorts it.
+    // A font bump needs `node scripts/fetch-font.mjs` run on the branch to
+    // regenerate the committed woff2, plus a SHELL bump — the script header
+    // has the runbook; the pin alone changes nothing served.
     {
       customType: "regex",
       managerFilePatterns: ["/^scripts/fetch-font\\.mjs$/"],
