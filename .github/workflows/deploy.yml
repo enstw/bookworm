@@ -1,6 +1,13 @@
-# Push-to-deploy: every push to main runs scripts/deploy.sh with credentials
-# from repo secrets (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
-# ADMIN_TOKEN) — no machine needs a local .deploy.env.
+# Push-to-deploy, gated on the desktop test suite: every push to main first
+# runs the pnpm-test chain (scripts/run-ci-tests.mjs — per-suite logs and a
+# report); only a green run reaches scripts/deploy.sh with credentials from
+# repo secrets (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, ADMIN_TOKEN) —
+# no machine needs a local .deploy.env.
+#
+# A red run publishes a test-failure-* pre-release whose notes name the
+# failing suite and embed its log tail, then skips the deploy. The e2e
+# ADMIN_TOKEN/VAPID pair are generated per run — the dev server under test is
+# local to the runner, so nothing secret is involved in testing.
 name: deploy
 
 on:
@@ -9,12 +16,65 @@ on:
     paths-ignore: ["**.md"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: deploy
   cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}
+      BROWSER_BIN: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: ffmpeg for the tts-stream fixture
+        run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Scaffold .dev.vars and the local D1 schema
+        run: |
+          {
+            printf 'ADMIN_TOKEN=%s\n' "$ADMIN_TOKEN"
+            printf "VAPID_PRIVATE_JWK='%s'\n" "$(node scripts/gen-vapid.mjs | head -1 | cut -d= -f2-)"
+            printf 'VAPID_SUBJECT=mailto:ci@bookworm.invalid\n'
+          } > .dev.vars
+          pnpm run db:init:local
+      - name: Run the test gate
+        id: gates
+        continue-on-error: true
+        run: node scripts/run-ci-tests.mjs
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-gate-report
+          path: test-artifacts/
+      - name: Publish failed-tests record
+        if: steps.gates.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "test-failure-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            test-artifacts/report.json \
+            test-artifacts/logs/*.log \
+            --target "$GITHUB_SHA" \
+            --title "Failed tests — ${GITHUB_SHA::12}" \
+            --notes-file test-artifacts/report.md \
+            --prerelease
+          exit 1
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

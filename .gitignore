@@ -8,4 +8,5 @@ books/
 _book/
 .DS_Store
 public/vendor/
+test-artifacts/
 .gstack/

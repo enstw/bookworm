@@ -32,6 +32,7 @@ scripts in `scripts/` are the source of truth.
 | auth, admin, shelf-admin, push-api | `pnpm run test:auth` etc. | dev server + ADMIN_TOKEN |
 | tts-stream | `pnpm run test:tts-stream` | Chromium + `ffmpeg` on PATH (own static server) |
 | **everything above** | `ADMIN_TOKEN=… pnpm test` | dev server + Chromium |
+| **everything above, one command** | `ADMIN_TOKEN=… node scripts/run-ci-tests.mjs` | Chromium (spawns its own server if 8787 is silent; per-suite logs in `test-artifacts/`) |
 | offline | see runbook below | dev server, then NO server |
 | tts-wasm | `MATCHA_MODEL_DIR=… pnpm run test:tts-wasm` | Chromium + ~130 MB of model weights (own static server) |
 

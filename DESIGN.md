@@ -24,7 +24,14 @@ decision in that subsystem.
   emulation does not reach service workers).
 - Never run `wrangler deploy` or `scripts/deploy.sh` by hand (a Claude Code
   hook in `.claude/settings.json` enforces this). Every push to main deploys
-  through GitHub Actions; md-only pushes are skipped.
+  through GitHub Actions; md-only pushes are skipped. The deploy is gated
+  (2026-08-10): the workflow first runs the desktop suite via
+  `scripts/run-ci-tests.mjs` (the `pnpm test` chain, one log per suite); a
+  red run publishes a `test-failure-*` pre-release whose notes name the
+  failing suite and embed its log tail, and the deploy is skipped. The same
+  gate runs locally with `ADMIN_TOKEN=<value from .dev.vars> node
+  scripts/run-ci-tests.mjs` — it reuses a dev server already on 8787 or
+  boots its own.
 
 ## The owner's suggestion queue
 
