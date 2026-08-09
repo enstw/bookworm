@@ -209,13 +209,17 @@ the pre-publication history, which lives in the owner's private archive.
   `OVERRIDES` one line at a time from listening tests, each with a pinned
   case in `scripts/test-wasm-frontend.mjs`; a flat table cannot disambiguate
   著, and guessing entries up front just moves the error. **Numbers are read
-  by sherpa's own zh rule FSTs, applied in JS (2026-08-08).**
-  `matcha-fst.js` is a from-scratch OpenFST reader and shortest-path applier
-  reproducing kaldifst's `TextNormalizer::Normalize`, so the three 212 KB
+  by sherpa's own zh rule FSTs, applied by the real kaldifst (2026-08-10,
+  previously in JS from 2026-08-08).** The applier is wasmtts's standalone
+  kaldifst 1.8.0 + OpenFST wasm (338 KB, its own 16 MiB linear memory,
+  instantiated in the synth worker from a blob URL), so the three 212 KB
   tables (`phone`, `date`, `number`, in that order) run without the 512 MiB
-  sherpa-onnx bundle they normally ship inside. It is verified byte-identical
-  to kaldifst 1.8.0 on 13,625 cases — 2,547 generated plus 11,078 real book
-  sentences. The one subtle part is the tie-break: these tables leave several
+  sherpa-onnx bundle they normally ship inside. Its predecessor
+  `matcha-fst.js` — a from-scratch JS OpenFST reader reproducing kaldifst's
+  `TextNormalizer::Normalize`, verified byte-identical to kaldifst 1.8.0 on
+  13,625 cases (2,547 generated plus 11,078 real book sentences) — survives
+  as the node tests' oracle, and that verified equivalence is why the swap
+  changed no reading. The one subtle part is the tie-break: these tables leave several
   readings at exactly equal cost, and OpenFST's `ShortestPath` uses an
   `AutoQueue` — a `TopOrderQueue` on an acyclic FST — so states relax in DFS
   reverse postorder with parents replaced only on a *strict* improvement. A
@@ -225,8 +229,9 @@ the pre-publication history, which lives in the owner's private archive.
   answer came from kaldifst itself. The tables are NOT adopted whole: measured
   against them, they are worse than the JS rules on three things for a Taiwan
   reader — `%` survives into text where it is in neither the lexicon nor
-  `tokens.txt` and is dropped silently, `:` survives as a token and reads as a
-  pause, and a 10-digit TW mobile falls past `phone.fst` (11-digit mainland
+  `tokens.txt` and is dropped silently, `:` survives as a token the model
+  vocalizes (~0.25 s of voiced artifact, not a pause — phone A/B 2026-08-08),
+  and a 10-digit TW mobile falls past `phone.fst` (11-digit mainland
   only) into `number.fst` as 零九亿一千二百三十四万五千六百七十八. So
   `normalizeLocalForms` reframes those shapes first, keeping the digits so the
   tables still do the reading, and the JS rules stay behind the chain as the
@@ -272,7 +277,16 @@ the pre-publication history, which lives in the owner's private archive.
   Binaries come from the `wasmtts-assets-v2` GitHub release via the
   allowlisted `/api/wasmtts/` proxy; `/wasmtest` imports the real engine
   rather than carrying its own copy, because a bench that drifts from what
-  ships measures the wrong thing. **ort is pinned exactly to `1.27.0`**
+  ships measures the wrong thing. **The engine code itself is vendored from
+  the wasmtts git dependency (2026-08-10)** — `matcha-frontend.js`,
+  `matcha-synthesis.js`, the kaldifst wasm and its wrapper, plus the
+  `matcha-fst.js` test oracle land in `public/vendor/wasmtts/` via
+  `vendor.mjs`, never hand-copied into `public/` again: the hand copies had
+  drifted both ways (bookworm held the fromCharCode and colon fixes, upstream
+  held the ruleNormalizer interface), and upstream's release gates (FST
+  golden, RTF, 512 MiB, Whisper CER) test what this repo cannot. The pin is
+  a release tag Renovate bumps; bookworm's fixes were upstreamed first
+  (wasmtts PRs #1 #2) so the vendored file needs no local patches. **ort is pinned exactly to `1.27.0`**
   (2026-08-08) — the pin was the dev build `1.26.0-dev.20260416-b7804b056c`
   because that is what the first phone verification ran on; stable was
   adopted once it had been re-verified, because a dev version gets no

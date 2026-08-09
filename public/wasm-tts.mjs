@@ -118,8 +118,9 @@ const MODEL_FILES = [
 ];
 
 // sherpa's zh text-normalization tables, in the order they are applied — the
-// order is load-bearing and matches sherpa's own config. matcha-fst.js runs
-// them; see its header for what they are and why we can without sherpa.
+// order is load-bearing and matches sherpa's own config. The real kaldifst
+// (1.8.0 + OpenFST, built to a 338 KB wasm upstream in wasmtts) applies them;
+// the JS applier that used to is now the node tests' oracle only.
 const RULE_FILES = [
   { name: "phone-zh.fst", bytes: 88630, label: "號碼規則" },
   { name: "date-zh.fst", bytes: 59154, label: "日期規則" },
@@ -198,7 +199,7 @@ onmessage = async (e) => {
   try {
     if (m.type === "init") {
       const js = (buf) => URL.createObjectURL(new Blob([buf], { type: "text/javascript" }));
-      importScripts(js(m.ortJs), js(m.lameJs), js(m.fstJs), js(m.frontendJs), js(m.synthesisJs));
+      importScripts(js(m.ortJs), js(m.lameJs), js(m.kaldifstGlueJs), js(m.kaldifstJs), js(m.frontendJs), js(m.synthesisJs));
       rt = self.ort;
       rt.env.wasm.numThreads = 1;
       rt.env.wasm.proxy = false;
@@ -206,12 +207,20 @@ onmessage = async (e) => {
       rt.env.wasm.wasmPaths = { mjs: m.glueUrl };
       // The rule tables read every ordinary number, date and phone number in the
       // book; the JS rules in matcha-frontend.js stay behind them as the reading
-      // for a device that has the voice pack but not the tables. A table that
-      // fails to parse is the same case as a missing one — say so and speak.
+      // for a device that has the voice pack but not the tables. The applier is
+      // the real kaldifst wasm (its own linear memory, 16 MiB — nothing shared
+      // with ort); its bytes arrive as a buffer and become a blob URL because a
+      // blob worker has no same-origin base to resolve a path against. A
+      // normalizer that fails to instantiate is the same case as missing
+      // tables — say so and speak.
       let ruleNormalizer, rules = 0, rulesErr = "";
       if (m.ruleFsts) {
         try {
-          ruleNormalizer = self.MatchaFst.createNormalizer(m.ruleFsts.map((b) => new Uint8Array(b)));
+          ruleNormalizer = await self.MatchaKaldifst.createNormalizer({
+            moduleFactory: self.KaldifstNormalizerModule,
+            wasmUrl: URL.createObjectURL(new Blob([m.kaldifstWasm], { type: "application/wasm" })),
+            fstBuffers: m.ruleFsts,
+          });
           rules = m.ruleFsts.length;
         } catch (err) {
           rulesErr = String(err.message ?? err); // reported with ready, not as an init failure
@@ -283,14 +292,16 @@ let engine = null; // singleton promise — models stay loaded across sessions
 export function ensureEngine() {
   return engine ??= (async () => {
     navigator.storage?.persist?.().catch(() => {});
-    const [acoustic, vocoder, lexicon, tokens, ortWasm, ortJs, lameJs, fstJs, frontendJs, synthesisJs, ...ruleFsts] =
+    const [acoustic, vocoder, lexicon, tokens, ortWasm, ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, synthesisJs, ...ruleFsts] =
       await Promise.all([
         ...MODEL_FILES.map((f) => cachedBuf("/api/wasmtts/" + f.name)),
         cachedBuf("/vendor/wasmtts/ort-wasm.min.js", true),
         cachedBuf("/vendor/wasmtts/lame.min.js", true),
-        cachedBuf("/matcha-fst.js", true),
-        cachedBuf("/matcha-frontend.js", true),
-        cachedBuf("/matcha-synthesis.js", true),
+        cachedBuf("/vendor/wasmtts/matcha-kaldifst-normalizer.js", true),
+        cachedBuf("/vendor/wasmtts/kaldifst-normalizer.js", true),
+        cachedBuf("/vendor/wasmtts/matcha-kaldifst-normalizer.wasm", true),
+        cachedBuf("/vendor/wasmtts/matcha-frontend.js", true),
+        cachedBuf("/vendor/wasmtts/matcha-synthesis.js", true),
         // Soft, unlike everything above it: a device holding a pack cut before
         // the tables existed has all 138 MB of what it needs to speak, and must
         // not lose offline audio over 212 KB it has never heard of. Absent
@@ -319,17 +330,17 @@ export function ensureEngine() {
     const up = await new Promise((r) => {
       pending.set(undefined, r);
       worker.postMessage(
-        { type: "init", ortJs, lameJs, fstJs, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens,
+        { type: "init", ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens,
           ruleFsts: rules, overrides: OVERRIDES,
           glueUrl: new URL("/vendor/wasmtts/ort-wasm-simd-threaded.mjs", location.origin).href },
-        [ortJs, lameJs, fstJs, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens, ...(rules ?? [])],
+        [ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens, ...(rules ?? [])],
       );
     });
     if (up === null) { worker.terminate(); throw new Error("wasm-tts init failed"); }
     engineInfo.threads = 1;
     engineInfo.rules = up.rules ?? 0;
-    if (up.rulesErr) console.warn("wasm-tts: rule tables unusable, JS number rules only —", up.rulesErr);
-    console.log(`wasm-tts ready: matcha zh-en ${RATE}Hz, 1 thread, ${up.lexiconSize} lexicon entries, ${up.rules ? `${up.rules} rule tables` : "JS number rules"}, init ${Math.round(up.initMs)}ms`);
+    if (up.rulesErr) console.warn("wasm-tts: kaldifst normalizer unusable, JS number rules only —", up.rulesErr);
+    console.log(`wasm-tts ready: matcha zh-en ${RATE}Hz, 1 thread, ${up.lexiconSize} lexicon entries, ${up.rules ? `${up.rules} rule tables (kaldifst wasm)` : "JS number rules"}, init ${Math.round(up.initMs)}ms`);
 
     // Everything this engine does not use is dead weight in a cache iOS evicts
     // under pressure — and the piper/melo/fanchen era left several hundred MB
@@ -341,7 +352,9 @@ export function ensureEngine() {
         // the small same-origin files cachedBuf also parks here — they were
         // being swept and re-fetched on every single init
         "/vendor/wasmtts/ort-wasm.min.js", "/vendor/wasmtts/lame.min.js",
-        "/matcha-fst.js", "/matcha-frontend.js", "/matcha-synthesis.js",
+        "/vendor/wasmtts/matcha-kaldifst-normalizer.js", "/vendor/wasmtts/kaldifst-normalizer.js",
+        "/vendor/wasmtts/matcha-kaldifst-normalizer.wasm",
+        "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-synthesis.js",
       ]);
       for (const req of await c.keys()) {
         const p = new URL(req.url).pathname;

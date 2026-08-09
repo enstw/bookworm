@@ -10,7 +10,7 @@
     "db:init:local": "wrangler d1 execute bookworm --local --file=schema.sql",
     "split": "node scripts/split-book.mjs",
     "publish-book": "node scripts/publish-book.mjs",
-    "test": "node scripts/test-slug.mjs && node scripts/test-split-core.mjs && node scripts/test-wasm-frontend.mjs && node scripts/test-matcha-fst.mjs && node scripts/test-worker-pool.mjs && node scripts/test-push-crypto.mjs && node scripts/test-auth-e2e.mjs && node scripts/test-push-api-e2e.mjs && node scripts/test-shelf-admin-e2e.mjs && node scripts/test-vertical-e2e.mjs && node scripts/test-bg-e2e.mjs && node scripts/test-tts-stream-e2e.mjs && node scripts/test-tts-stream-e2e.mjs chain",
+    "test": "node scripts/vendor.mjs && node scripts/test-slug.mjs && node scripts/test-split-core.mjs && node scripts/test-wasm-frontend.mjs && node scripts/test-matcha-fst.mjs && node scripts/test-worker-pool.mjs && node scripts/test-push-crypto.mjs && node scripts/test-auth-e2e.mjs && node scripts/test-push-api-e2e.mjs && node scripts/test-shelf-admin-e2e.mjs && node scripts/test-vertical-e2e.mjs && node scripts/test-bg-e2e.mjs && node scripts/test-tts-stream-e2e.mjs && node scripts/test-tts-stream-e2e.mjs chain",
     "test:push": "node scripts/test-push-crypto.mjs && node scripts/test-push-api-e2e.mjs",
     "test:tts": "node scripts/test-tts-core.mjs",
     "test:tts-stream": "node scripts/test-tts-stream-e2e.mjs",
@@ -28,6 +28,7 @@
     "lamejs": "^1.2.1",
     "onnxruntime-web": "1.27.0",
     "opencc-js": "^1.4.1",
+    "wasmtts": "github:enstw/wasmtts#e9b410f1aaad58ce0e0535037db094dd060a58a0",
     "wrangler": "^4.114.0"
   }
 }

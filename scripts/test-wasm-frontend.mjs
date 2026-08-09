@@ -1,6 +1,6 @@
 // Unit test for the offline TTS frontend: the pure parts of
 // public/wasm-tts.mjs (sentence segmentation, the WAV header, the override
-// table) and of public/matcha-frontend.js (number and punctuation
+// table) and of the vendored wasmtts matcha-frontend.js (number and punctuation
 // normalisation, lexicon parsing, greedy longest match). No browser APIs and
 // no model files — plain node, so it stays in the `pnpm test` chain.
 //
@@ -16,7 +16,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { segments, mkWav, RATE, OVERRIDES, PACK_FILES } from "../public/wasm-tts.mjs";
-import "../public/matcha-frontend.js";
+import "../public/vendor/wasmtts/matcha-frontend.js";
 
 const { createFrontend, normalizeFullWidth, normalizeLocalForms, normalizeNumbers, normalizePunctuation,
         parseLexicon, parseTokens } = globalThis.MatchaFrontend;

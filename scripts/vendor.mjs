@@ -39,15 +39,31 @@ const BUNDLES = [
   // importScripts-style global (the npm main entry has the MPEGMode bug;
   // this bundle is self-contained). LGPL-2.1 — see node_modules/lamejs/LICENSE.
   { pkg: "lamejs", src: "lame.min.js", dst: "wasmtts/lame.min.js" },
+  // The Matcha engine itself, vendored whole from the wasmtts git dependency
+  // (pinned in package.json, bumped by Renovate) instead of hand-copied into
+  // public/ — upstream runs the release gates (FST golden, RTF, memory, ASR
+  // CER) this repo cannot, and the hand-copies had already drifted both ways
+  // by the time they were retired. matcha-fst.js is the JS applier the node
+  // tests use as their FST oracle; the product worker runs the real kaldifst
+  // wasm (matcha-kaldifst-normalizer.*, built and committed upstream).
+  { pkg: "wasmtts", src: "platform/matcha-frontend.js", dst: "wasmtts/matcha-frontend.js" },
+  { pkg: "wasmtts", src: "platform/matcha-synthesis.js", dst: "wasmtts/matcha-synthesis.js" },
+  { pkg: "wasmtts", src: "platform/matcha-fst.js", dst: "wasmtts/matcha-fst.js" },
+  { pkg: "wasmtts", src: "platform/kaldifst-normalizer.js", dst: "wasmtts/kaldifst-normalizer.js" },
+  { pkg: "wasmtts", src: "platform/kaldifst-wasm/dist/matcha-kaldifst-normalizer.js", dst: "wasmtts/matcha-kaldifst-normalizer.js" },
+  { pkg: "wasmtts", src: "platform/kaldifst-wasm/dist/matcha-kaldifst-normalizer.wasm", dst: "wasmtts/matcha-kaldifst-normalizer.wasm" },
 ];
 
 mkdirSync(outDir, { recursive: true });
 mkdirSync(join(outDir, "wasmtts"), { recursive: true });
 const versions = {};
+const declared = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).devDependencies;
 for (const { pkg, src, dst } of BUNDLES) {
   const pkgDir = join(root, "node_modules", pkg);
   copyFileSync(join(pkgDir, src), join(outDir, dst));
-  versions[pkg] = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).version;
+  // the wasmtts git dependency carries no version field — record the pinned
+  // spec (its release tag) so versions.json still says what shipped
+  versions[pkg] = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).version ?? declared[pkg];
 }
 writeFileSync(join(outDir, "versions.json"), JSON.stringify(versions, null, 2) + "\n");
 

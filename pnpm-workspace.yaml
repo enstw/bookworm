@@ -5,3 +5,6 @@ allowBuilds:
   # transitive via onnxruntime-web (vendored dist files only — its build
   # script generates nothing we consume)
   protobufjs: false
+  # transitive via the wasmtts git dep's benchmark toolchain; bookworm only
+  # copies browser files out of that package and never runs node inference
+  onnxruntime-node: false

@@ -1,4 +1,7 @@
-// Unit test for public/matcha-fst.js, the JS applier for sherpa's zh rule FSTs.
+// Unit test for the JS applier for sherpa's zh rule FSTs — vendored from
+// wasmtts (public/vendor/wasmtts/matcha-fst.js). The product worker runs the
+// real kaldifst wasm; this applier survives as the node-side oracle precisely
+// because these fixtures proved it byte-identical to kaldifst.
 //
 // The always-on half builds its own OpenFST archives in memory, so it needs no
 // model files and stays in the `pnpm test` chain. Those fixtures are not
@@ -21,7 +24,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import "../public/matcha-fst.js";
+import "../public/vendor/wasmtts/matcha-fst.js";
 
 const { readFst, applyFst, createNormalizer } = globalThis.MatchaFst;
 

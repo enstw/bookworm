@@ -474,7 +474,8 @@ const WASMTTS_FILES = new Set([
   // the ort build the engine was verified against; the version rides the
   // filename so a bump that forgets to re-cut the release 404s loudly
   "ort-1.27.0-wasm-simd-threaded.wasm",
-  // sherpa's zh text-normalization tables, applied by public/matcha-fst.js
+  // sherpa's zh text-normalization tables, applied by the kaldifst wasm
+  // vendored from wasmtts
   "phone-zh.fst", "date-zh.fst", "number-zh.fst",
 ]);
 
