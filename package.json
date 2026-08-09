@@ -24,9 +24,9 @@
     "test:offline": "node scripts/test-offline-e2e.mjs"
   },
   "devDependencies": {
-    "fflate": "^0.8.3",
-    "opencc-js": "^1.4.1",
+    "fflate": "0.8.3",
+    "opencc-js": "1.4.1",
     "wasmtts": "github:enstw/wasmtts#v0.1.7",
-    "wrangler": "^4.114.0"
+    "wrangler": "4.114.0"
   }
 }

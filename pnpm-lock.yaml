@@ -9,16 +9,16 @@ importers:
   .:
     devDependencies:
       fflate:
-        specifier: ^0.8.3
+        specifier: 0.8.3
         version: 0.8.3
       opencc-js:
-        specifier: ^1.4.1
+        specifier: 1.4.1
         version: 1.4.1
       wasmtts:
         specifier: github:enstw/wasmtts#v0.1.7
         version: wasmtts-benchmark@https://codeload.github.com/enstw/wasmtts/tar.gz/19104e48390529b6aed176d042ccf86cd6f9b1d8
       wrangler:
-        specifier: ^4.114.0
+        specifier: 4.114.0
         version: 4.114.0
 
 packages:
