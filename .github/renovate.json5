@@ -9,6 +9,11 @@
 // lands in ONE grouped roll-up PR. Merging it is the week's single release:
 // the push-to-main gate runs the full desktop suite and only deploys green,
 // so the roll-up needs no pre-merge checks of its own.
+//
+// Third-party releases must age 30 days before they can enter a roll-up —
+// long enough for a yanked or compromised publish to surface elsewhere first.
+// Our own upstreams (enstw/wasmtts, enstw/font) are exempt: we cut those tags,
+// so waiting on them buys nothing and only delays fixes we already know about.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["config:recommended"],
@@ -22,6 +27,16 @@
       matchPackageNames: ["*"],
       groupName: "weekly upstream roll-up",
       groupSlug: "weekly-roll-up",
+    },
+    {
+      // 30-day quarantine for everything we do not publish ourselves. A
+      // negation-only matchPackageNames means "everything except these" —
+      // renovate rejects "*" alongside other patterns. Both spellings of the
+      // git dep are listed because renovate matches this against packageName
+      // (enstw/wasmtts) or depName (wasmtts, the package.json key) depending
+      // on the manager.
+      matchPackageNames: ["!wasmtts", "!enstw/wasmtts", "!enstw/font"],
+      minimumReleaseAge: "30 days",
     },
   ],
   customManagers: [
