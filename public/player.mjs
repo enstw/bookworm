@@ -1092,8 +1092,15 @@ function markSpoken(off) {
   const c = player.chunks[ttsCore.chunkIndexFor(player.chunks, off)];
   if (!c) return;
   const i = Math.max(0, Math.min(off - c.start, c.chars - 1));
-  highlightSentence(c.start + ttsCore.sentenceStartFor(c.text, i),
-    c.start + ttsCore.sentenceEndFor(c.text, i));
+  let a = ttsCore.sentenceStartFor(c.text, i);
+  const b = ttsCore.sentenceEndFor(c.text, i);
+  // a paragraph's first sentence begins right after the previous \n — on the
+  // 段首 indent, which the rendered paragraph does not hold (data-off starts
+  // at ink). Advance to ink so the wash maps onto the trimmed node; a span
+  // that is ALL whitespace (the tick between lines) keeps the current mark.
+  while (a < b && !c.text[a].trim()) a++;
+  if (a >= b) return;
+  highlightSentence(c.start + a, c.start + b);
 }
 
 function onAudioTime() {

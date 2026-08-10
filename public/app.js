@@ -1356,7 +1356,11 @@ async function openChapter(i, offset = 0) {
     const s = line.trim(); // not `t` — that name is the translator now
     // the heading line itself is rendered as the <h2>, skip its paragraph
     if (s && !(s === ch.title.trim() && !headingSkipped && (headingSkipped = true))) {
-      frag.append(el("p", { "data-off": off }, s));
+      // data-off names the trimmed line's FIRST char in raw-text coords, not
+      // the raw line start: the node holds the trimmed line, so offset maths
+      // over it (the sentence wash, per-char rects) only lines up when the
+      // 段首 indent the trim removed is skipped here too.
+      frag.append(el("p", { "data-off": off + (line.length - line.trimStart().length) }, s));
     }
     off += line.length + 1;
   }
@@ -1542,9 +1546,10 @@ const rectDist = (c, r) => (settings.vertical
 // must work on the character, not the paragraph: a novel paragraph spans
 // pages, and the paragraph's start edge would pin every offset inside it to
 // the paragraph's first page. Falls back to the paragraph rect at its start
-// (or when the Range yields nothing). data-off counts the raw line while
-// the DOM holds the trimmed line, so the index can sit a char or two early
-// — invisible at page granularity.
+// (or when the Range yields nothing). data-off counts from the trimmed
+// line's first char, so in-paragraph offsets map onto the node exactly; an
+// offset inside a 段首 indent lands on the previous paragraph's tail rect,
+// adjacent at page granularity.
 function offsetRect(offset) {
   const ps = $("#content")?.querySelectorAll("p[data-off]");
   if (!ps?.length) return null;
@@ -1590,9 +1595,10 @@ function followScroll(offset) {
 // glides natively, replaced wholesale each call — ordinary DOM painting,
 // which WebKit always invalidates. A sentence never crosses a paragraph
 // (\n is an ender), so one Range in one text node, clamped to the trimmed
-// line: raw offsets count the untrimmed line, the same 1–2 char drift the
-// page maths accepts. null removes the wash. The heading renders as <h2>,
-// not p[data-off], so the title announcement has nothing to paint.
+// line the node holds — the caller hands in a span that starts on ink
+// (markSpoken skips the 段首 indent), so the raw→node mapping is exact.
+// null removes the wash. The heading renders as <h2>, not p[data-off], so
+// the title announcement has nothing to paint.
 function highlightSentence(start, end) {
   if (start == null) return void $("#ttsHl")?.remove();
   const c = $("#content");

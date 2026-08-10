@@ -56,9 +56,12 @@ const MIME = {
 const PARA = "話說天下大勢，分久必合，合久必分。周末七國分爭，併入於秦。及秦滅之後，楚漢分爭，又併入於漢，一統天下。";
 // chapter 1's body is ONE paragraph spanning several pages: the shape that
 // pins both start-at-page-start and the mid-paragraph page turn (with no
-// next paragraph to lean on, only char-precise page maths can turn a page)
-const chapterText = (i) => `第${i}章 串流測試\n\n`
-  + (i === 1 ? PARA.repeat(12) : Array(4).fill(PARA).join("\n"));
+// next paragraph to lean on, only char-precise page maths can turn a page).
+// Every body line carries the 兩字段首縮排 real books have — the reader trims
+// it out of the DOM, so the sentenceMarked assertion below is what pins the
+// raw→trimmed offset mapping (an unindented fixture cannot see it drift).
+const chapterText = (i) => `第${i}章 串流測試\n\n　　`
+  + (i === 1 ? PARA.repeat(12) : Array(4).fill(PARA).join("\n　　"));
 const chapters = [1, 2, 3].map((i) => ({
   file: `ch${i}.txt`, title: `第${i}章 串流測試`, chars: chapterText(i).length,
 }));
