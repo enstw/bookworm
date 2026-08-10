@@ -23,6 +23,9 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+// shadows the global: the d1() shell-outs below outlive a pooled keep-alive
+// socket, and the request that inherits the dead one has to be replayed
+import { fetch } from "./retry-fetch.mjs";
 
 // the API rightly requires https:// endpoints, so the loopback capture
 // server is registered straight into the local D1 instead of through
@@ -113,27 +116,6 @@ const announceUrl = (b) => `/api/admin/announce-build?build=${encodeURIComponent
 execFileSync("pnpm",
   ["exec", "wrangler", "d1", "execute", "bookworm", "--local", "--file=schema.sql"],
   { stdio: "ignore" });
-
-// Every request below goes to the local worker, and undici pools keep-alive
-// sockets between them. The `d1()` shell-outs take seconds, so workerd often
-// closes an idle pooled socket during one; the next request then leaves on a
-// dead connection and throws UND_ERR_SOCKET ("other side closed"). Undici
-// will not replay it — a PUT is not idempotent as far as it knows — so retry
-// here, where we do know: the server never read the request, so nothing
-// happened twice. Shadows the global for the whole module, hence above the
-// first call site. Only this error code, so a genuinely dead server still
-// fails fast instead of retrying three times.
-const nativeFetch = globalThis.fetch;
-const fetch = async (...args) => {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await nativeFetch(...args);
-    } catch (e) {
-      if (attempt >= 2 || e?.cause?.code !== "UND_ERR_SOCKET") throw e;
-      await sleep(100);
-    }
-  }
-};
 
 // --- boot wrangler dev unless a worker was pointed at ---
 let dev = null;

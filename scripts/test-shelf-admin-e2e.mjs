@@ -14,6 +14,10 @@ import { spawn, execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// shadows the global: the d1()/r2put() shell-outs below outlive a pooled
+// keep-alive socket, and the request that inherits the dead one has to be
+// replayed — this suite has the same exposure push-api-e2e went red on
+import { fetch } from "./retry-fetch.mjs";
 
 // its own port: a `pnpm run dev` server on 8787 belongs to the developer
 const DEV_PORT = 8790;
