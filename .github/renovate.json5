@@ -14,6 +14,14 @@
 // long enough for a yanked or compromised publish to surface elsewhere first.
 // Our own upstreams (enstw/wasmtts, enstw/font) are exempt: we cut those tags,
 // so waiting on them buys nothing and only delays fixes we already know about.
+//
+// The wait is not a trap for security fixes: GitHub vulnerability alerts are
+// enabled on the repo, and renovate's vulnerabilityAlerts defaults
+// (minimumReleaseAge: null, prCreation: "immediate", groupName: null) let an
+// advisory-driven update skip both the quarantine and the weekly group. That
+// is the one thing allowed to open a PR outside the roll-up — nothing here
+// configures it, the defaults already do. Turning the repo setting back off
+// silently restores the 30-day wait for CVEs too.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["config:recommended"],

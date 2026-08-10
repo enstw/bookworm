@@ -37,7 +37,14 @@ decision in that subsystem.
   `renovate/weekly-roll-up` PR (`.github/renovate.json5`), and the
   workflow merges it and dispatches this gated deploy. Major updates get
   their own PR and wait for review; there is no Renovate App — the CLI
-  runs in Actions, or by hand via the command in the config header.
+  runs in Actions, or by hand via the command in the config header. A
+  third-party release must be **30 days old** before it can join a roll-up,
+  so a yanked or compromised publish has time to surface somewhere else
+  first; expect the pins to sit a release or two behind npm on purpose. Our
+  own upstreams (`enstw/wasmtts`, `enstw/font`) are exempt — we cut those
+  tags. The quarantine has one bypass: a dependency with a GitHub advisory
+  gets an immediate ungrouped PR, because Renovate's `vulnerabilityAlerts`
+  defaults override the wait.
 
 ## The owner's suggestion queue
 
