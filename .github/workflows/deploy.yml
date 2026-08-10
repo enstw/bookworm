@@ -13,7 +13,9 @@ name: deploy
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md"]
+    # renovate's own config cannot change a byte the worker serves, and a
+    # roll-up that edits it still touches package.json and deploys normally
+    paths-ignore: ["**.md", ".github/renovate.json5"]
   workflow_dispatch:
 
 permissions:
