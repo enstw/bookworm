@@ -61,13 +61,13 @@ jobs:
         run: |
           echo "::warning::這個 repo 是公開的，本次執行的輸入和記錄（含書名、章節名）任何人都看得到。有版權的書請改用私有 fork，或用 /admin 從瀏覽器上傳。"
 
-      - uses: actions/checkout@v4.4.0
-      - uses: pnpm/action-setup@v4.4.0
+      - uses: actions/checkout@v7.0.0
+      - uses: pnpm/action-setup@v6.0.9
         with:
           version: 11.21.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v6.4.0
         with:
-          node-version: 22.23.2
+          node-version: 24.18.0
           cache: pnpm
       # --s2t 會 import opencc-js，它是 devDependency，所以照樣要裝
       - run: pnpm install --frozen-lockfile
