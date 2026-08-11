@@ -4,6 +4,10 @@ One entry per green deploy — the commits that went live, newest first. Written
 by scripts/update-releases.mjs from the deploy workflow; the `released` tag
 marks where the last entry ended. Do not edit entries by hand.
 
+## 2026-08-12 — `21dbf5e67a19`
+
+- ci: decide wasmtts builds in allowBuilds before the v1.0.0 roll-up (`21dbf5e`)
+
 ## 2026-08-11 — `32b40054231a`
 
 - ci: fold majors into the weekly roll-up, source CVE alerts from osv.dev (`32b4005`)
