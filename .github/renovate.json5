@@ -15,13 +15,15 @@
 // Our own upstreams (enstw/wasmtts, enstw/font) are exempt: we cut those tags,
 // so waiting on them buys nothing and only delays fixes we already know about.
 //
-// The wait is not a trap for security fixes: GitHub vulnerability alerts are
-// enabled on the repo, and renovate's vulnerabilityAlerts defaults
-// (minimumReleaseAge: null, prCreation: "immediate", groupName: null) let an
-// advisory-driven update skip both the quarantine and the weekly group. That
-// is the one thing allowed to open a PR outside the roll-up — nothing here
-// configures it, the defaults already do. Turning the repo setting back off
-// silently restores the 30-day wait for CVEs too.
+// The wait must not trap security fixes, but GitHub's own alert feed cannot
+// be the escape hatch: the workflow's GITHUB_TOKEN cannot read vulnerability
+// alerts and no `permissions:` key grants it (renovate warned on every run,
+// so the bypass never actually worked). osvVulnerabilityAlerts pulls the
+// same advisories from osv.dev with no token at all; renovate's
+// vulnerabilityAlerts defaults (minimumReleaseAge: null, prCreation:
+// "immediate", groupName: null) then let an advisory-driven update skip both
+// the quarantine and the weekly group — the one thing allowed to open a PR
+// outside the roll-up.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["config:recommended"],
@@ -30,6 +32,11 @@
   // ranges Renovate stays silent until the next major (it does not do
   // Dependabot-style in-range lockfile bumps)
   rangeStrategy: "pin",
+  // config:recommended would put majors on their own branch
+  // (renovate/major-weekly-roll-up) — one the merge step in renovate.yml
+  // never looks at, so majors sat unmerged forever. One branch, one PR.
+  separateMajorMinor: false,
+  osvVulnerabilityAlerts: true,
   packageRules: [
     {
       matchPackageNames: ["*"],
