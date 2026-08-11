@@ -80,6 +80,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.4.0
+        with:
+          # update-releases.mjs walks released..HEAD; a shallow clone has
+          # neither the tag nor the history behind it
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4.4.0
         with:
           version: 11.21.0
@@ -100,3 +104,20 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           VAPID_PRIVATE_JWK: ${{ secrets.VAPID_PRIVATE_JWK }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+      # Ledger the release: prepend what shipped to RELEASES.md, then move the
+      # `released` tag onto the docs commit so the next entry starts after it.
+      # Pushing from here cannot loop: an md-only commit is paths-ignored
+      # above, and a GITHUB_TOKEN push never triggers `on: push` anyway — the
+      # same recursion guard renovate.yml leans on.
+      - name: Record the release in RELEASES.md
+        run: |
+          node scripts/update-releases.mjs
+          git add RELEASES.md
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: record release ${GITHUB_SHA::12}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          git tag -f released
+          git push -f origin released
