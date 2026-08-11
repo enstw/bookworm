@@ -8,3 +8,6 @@ allowBuilds:
   # transitive via the wasmtts git dep's benchmark toolchain; bookworm only
   # copies browser files out of that package and never runs node inference
   onnxruntime-node: false
+  # v1.0.0 grew build scripts that compile the kaldifst wasm from source; the
+  # browser files bookworm vendors are committed in the tag, so never build
+  wasmtts: false
