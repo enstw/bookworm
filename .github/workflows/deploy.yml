@@ -105,10 +105,11 @@ jobs:
           VAPID_PRIVATE_JWK: ${{ secrets.VAPID_PRIVATE_JWK }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
       # Ledger the release: prepend what shipped to RELEASES.md, then move the
-      # `released` tag onto the docs commit so the next entry starts after it.
-      # Pushing from here cannot loop: an md-only commit is paths-ignored
-      # above, and a GITHUB_TOKEN push never triggers `on: push` anyway — the
-      # same recursion guard renovate.yml leans on.
+      # `released` tag onto the deployed commit — commits that land mid-deploy
+      # stay inside the next range; the script filters the ledger's own docs
+      # commits out of entries. Pushing from here cannot loop: an md-only
+      # commit is paths-ignored above, and a GITHUB_TOKEN push never triggers
+      # `on: push` anyway — the same recursion guard renovate.yml leans on.
       - name: Record the release in RELEASES.md
         run: |
           node scripts/update-releases.mjs
@@ -119,5 +120,5 @@ jobs:
           git commit -m "docs: record release ${GITHUB_SHA::12}"
           git pull --rebase origin main
           git push origin HEAD:main
-          git tag -f released
+          git tag -f released "$GITHUB_SHA"
           git push -f origin released

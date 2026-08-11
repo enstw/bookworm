@@ -2,7 +2,11 @@
 
 One entry per green deploy — the commits that went live, newest first. Written
 by scripts/update-releases.mjs from the deploy workflow; the `released` tag
-marks where the last entry ended. Do not edit entries by hand.
+marks the last deployed commit. Do not edit entries by hand.
+
+## 2026-08-12 — `61da4bb06cb0`
+
+- chore(deps): update weekly upstream roll-up (`61da4bb`)
 
 ## 2026-08-12 — `21dbf5e67a19`
 
