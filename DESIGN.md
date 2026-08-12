@@ -83,9 +83,16 @@ decision in that subsystem.
   the `released` tag — if `main` moved mid-gate the merge fails closed and
   the next release's ledger covers both ranges.
 - The repo settings that no file records (2026-08-12): secret scanning with
-  push protection is on; a ruleset on `main` blocks force-push and deletion
-  (a rebase that rewrites a pushed branch is still fine — the ruleset only
-  guards `main`); and **Actions must be pinned to a full 40-character commit
+  push protection is on; a ruleset on `main` ("main: candidate-gate before
+  merge", expanded 2026-08-13) blocks force-push and deletion and now also
+  requires every change to arrive by PR (0 approvals, conversation threads
+  resolved, rebase/squash only, linear history) with a green `candidate-gate`
+  check from the Actions app, strict mode, no bypass actors — a direct push
+  to `main` or a merge over a red gate is rejected server-side (a rebase that
+  rewrites any other pushed branch is still fine — the ruleset only guards
+  `main`). Merge-commit merges are disabled repo-wide, merged branches
+  auto-delete, and the update-branch button is on. Also on: **Actions must
+  be pinned to a full 40-character commit
   digest** (`sha_pinning_required`, repo → Settings → Actions). `uses:
   actions/checkout@v7` no longer runs — write the digest and keep the
   version in a trailing comment, which is the form Renovate updates. A tag
