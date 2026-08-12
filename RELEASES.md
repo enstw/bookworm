@@ -9,6 +9,12 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-13 — `447beaa1f264`
+
+> wasmtts v1.0.0 → v1.0.2
+
+- chore(deps): update dependency wasmtts to v1.0.2 (`447beaa`)
+
 ## 2026-08-13 — `1e860a35d7dc`
 
 - ci: pin renovate, split the roll-up merge behind a fail-closed verifier (`1e860a3`)
