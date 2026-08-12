@@ -80,6 +80,7 @@ A 藍（逐行+1行）、B 紅（區塊算術）。黑色虛線＝右緣基準�
 </main>
 <div id="pager"></div>
 <div id="edgeline"></div>
+<script src="/testlog.js"></script>
 <script>
 "use strict";
 
@@ -102,11 +103,7 @@ const upload = (() => {
   return (data) => {
     if (!data || data === last) return;
     last = data;
-    const body = JSON.stringify({ page: "pgtest", device, data });
-    try {
-      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
-        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
-    } catch { /* offline is fine */ }
+    bwTestlogSend("pgtest", device, data);
   };
 })();
 

@@ -28,7 +28,7 @@ scripts in `scripts/` are the source of truth.
 | suite | command | needs |
 | --- | --- | --- |
 | slug, worker-pool, push-crypto | `pnpm run test:slug` etc. | nothing (pure node) |
-| vertical, bg | `pnpm run test:vertical` / `test:bg` | Chromium only (own static server) |
+| vertical, bg, testlog | `pnpm run test:vertical` / `test:bg` / `test:testlog` | Chromium only (own static server) |
 | auth, sync, admin, shelf-admin, push-api | `pnpm run test:auth` etc. | dev server + ADMIN_TOKEN |
 | tts-stream | `pnpm run test:tts-stream` | Chromium + `ffmpeg` on PATH (own static server) |
 | **everything above** | `ADMIN_TOKEN=… pnpm test` | dev server + Chromium |
@@ -97,6 +97,12 @@ genuinely dead (`browser-e2e` explains why emulation cannot substitute):
   window puts the pager in a typographic regime readers never see.
 - New suites join `package.json` as `test:<name>`; only single-command
   suites join the `pnpm test` chain (the offline two-stage stays manual).
+- **An in-process static server must map `/admin` and `/vhtest` to
+  `admin.html` and `vhtest.html`** the way Cloudflare's assets layer does
+  (`if (!file.includes(".") && exists(file + ".html")) file += ".html"`).
+  Miss it and the SPA fallback quietly returns the reader shell instead:
+  the page under test never loads, and every assertion about it passes
+  vacuously. `test:testlog` has the rule.
 - A "second device" needs no second browser: positions belong to the KEY's
   user, so a `POST /api/position` from node with the same key is one, and
   `test:sync` is the reference. It also dispatches `visibilitychange` by hand

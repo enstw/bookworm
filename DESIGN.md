@@ -479,6 +479,25 @@ the pre-publication history, which lives in the owner's private archive.
   and was rejected — with the folds closed the page is already one screen,
   so a second navigation system would be furniture for a problem that no
   longer exists.
+- **The diagnostic-upload switch is a door on your own house (2026-08-12).**
+  `/admin` → 裝置診斷 has a checkbox that stops THIS device's diagnostic pages
+  from POSTing readouts (`bw_testlog` in localStorage, read by
+  `public/testlog.js` before every send). It protects nothing: `POST
+  /api/testlog` stays open by design — the service worker can hold no
+  credential, and gating the write blinds the log in the one case it exists
+  to diagnose — so anything that wants to write still can, curl included. A
+  frontend switch is not a gate on the street, and if endpoint abuse ever
+  matters the answer is a `page` allowlist in the worker, not this. What it
+  does buy is the actual source of noise: six pages uploading on a redraw
+  loop will bury the newest-500 window by themselves, and turning them off
+  needs no deploy. The service worker's push breadcrumb deliberately does
+  **not** ride the flag — a SW cannot read localStorage, reaching it would
+  cost a message channel, it is one row per push rather than a loop, and it
+  is the line most worth having in the field. The five copies of the upload
+  block collapsed into `testlog.js` at the same time: a flag checked in five
+  copies is a flag that works in four. A device with uploads off says so on
+  the console once per page, because the failure mode is otherwise
+  silent — you curl the log, see nothing, and blame the phone.
 - **Check and fix are different buttons (2026-07-30).** On /admin, 健康檢查
   is read-only and 修復 is the only thing that writes — a check that
   mutates what it is checking is not a check, and the check treats the D1

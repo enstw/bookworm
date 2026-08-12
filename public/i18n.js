@@ -168,6 +168,8 @@ const BW_STRINGS = {
     "diag.scroll": "雙捲動測試",
     "diag.speech": "系統朗讀測試",
     "diag.wasm": "WASM 朗讀測試",
+    "diag.upload": "上傳診斷讀數",
+    "diag.uploadHint": "關掉之後，這台裝置的診斷頁就不再把讀數傳回伺服器；推播的收送記錄不受影響。",
 
     // --- 上傳新書 (/admin) ---
     "admin.docTitle": "Bookworm · 管理",
@@ -441,6 +443,8 @@ const BW_STRINGS = {
     "diag.scroll": "dual-scroll test",
     "diag.speech": "system TTS test",
     "diag.wasm": "WASM TTS test",
+    "diag.upload": "Upload diagnostic readouts",
+    "diag.uploadHint": "Off means this device's diagnostic pages stop sending readouts to the server; push delivery records are unaffected.",
 
     // --- upload a book (/admin) ---
     "admin.docTitle": "Bookworm · Manage",

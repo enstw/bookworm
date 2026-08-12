@@ -104,6 +104,7 @@ try {
   }
   run("vertical-e2e", ["node", "scripts/test-vertical-e2e.mjs"]);
   run("bg-e2e", ["node", "scripts/test-bg-e2e.mjs"]);
+  run("testlog-e2e", ["node", "scripts/test-testlog-e2e.mjs"]);
   run("tts-stream", ["node", "scripts/test-tts-stream-e2e.mjs"]);
   run("tts-stream-chain", ["node", "scripts/test-tts-stream-e2e.mjs", "chain"]);
 } finally {
