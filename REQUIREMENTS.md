@@ -94,10 +94,11 @@ on the wire automatically by Cloudflare.
 secret minted on `/admin`, delivered to a device as a `/?key=…` link, and
 mapped server-side to the reader id whose positions and settings that
 device then uses. Content routes (`/api/books`, `/books/*`, TTS, positions,
-settings) 401 without one; the app shell, `/api/feedback` and writes to
-`/api/testlog` stay open — reads of the log are gated, because its rows
-quote the book. The key rides as a server-set cookie (so `<audio>`, sendBeacon
-and the service worker authenticate for free); revocation is deleting the
+settings) 401 without one; the app shell and `/api/feedback` stay open.
+`/api/testlog` takes a credential in both directions: a reader key to read
+(its rows quote the book) and an admin cookie to write. The key rides as a
+server-set cookie (so `<audio>`, sendBeacon and the service worker
+authenticate for free); revocation is deleting the
 row on `/admin`. Ids asserted by clients are never trusted — the v1 model
 (the 6-hex id in the URL as a capability token, resisting stumbling but not
 enumeration) was accepted for a trusted circle and retired when the repo

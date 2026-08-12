@@ -258,6 +258,14 @@
     function unlock() {
       $("authMsg").textContent = t("admin.verified");
       $("authMsg").className = "small ok";
+      // This device's diagnostic pages and its service worker write to
+      // /api/testlog with a cookie, not with this token: sendBeacon cannot
+      // carry a header and a service worker has no page to read one from
+      // (see testlog.js). Minted on every unlock — including the silent one
+      // initAuth() does on load — so it re-signs long before it can lapse,
+      // which matters because an expired cookie is a 401 that sendBeacon
+      // reports to nobody.
+      fetch("/api/admin/session", { method: "POST", headers: authHeaders() });
       for (const id of ["books", "readers", "pick", "house", "fb", "diag"]) $(id).hidden = false;
       loadBooks();
       loadReaders();

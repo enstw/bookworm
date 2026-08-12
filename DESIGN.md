@@ -94,8 +94,9 @@ cleared.
   belongs to the KEY's user — client-asserted ids are ignored. Keys are
   minted/revoked on `/admin` (`POST /api/admin/readers`); the admin Bearer
   passes the gate but has no reading identity. Open by design: the shell,
-  `/api/feedback`, `/api/testlog` WRITES only, push vapid/unsubscribe. e2e suites mint
-  their own key — the e2e runbook has the rules.
+  `/api/feedback`, push vapid/unsubscribe. `/api/testlog` needs a credential
+  both ways — a reader key to read, the `bw_tlog` admin cookie to write. e2e
+  suites mint their own key — the e2e runbook has the rules.
 
 ## The phone is the product
 
@@ -480,20 +481,59 @@ the pre-publication history, which lives in the owner's private archive.
   shipped never rang and never would. A mismatch now answers `stale worker`
   and `deploy.sh` retries for 30 s.
 - **testlog is the phone's console, and it is split by verb (2026-08-08).**
-  An iPhone has no console and a push lands with no page alive, so writes to
-  `/api/testlog` are unauthenticated by design, size-capped, self-pruned to
-  the newest 500 rows — a permanent tenant. **Reads are gated**: the rows
-  quote the book (dropped glyphs, synthesis prompts), and that is content.
-  The gate stops at POST because the writer that matters most cannot pass
-  one — a service worker logging a push delivery holds only the `bw_key`
-  cookie, and once Safari's 7-day cap evicts it nothing in a worker can
-  re-earn it (`reauth()` lives in the page; `localStorage` is unreachable
-  from a worker). Gating the write would blind the log in exactly the case
-  it exists to diagnose. An open write is a nuisance — junk rows pushing
-  real ones out of the window — not a leak. The on-device diagnostic pages
-  (`/vhtest`, `/pgtest`, `/scrolltest`, `/pagedtest`, linked from /admin)
-  write their readouts there; read them with
+  An iPhone has no console and a push lands with no page alive, so the
+  diagnostic pages (`/vhtest`, `/pgtest`, `/scrolltest`, `/pagedtest`,
+  `/wasmtest`, `/speechtest`, linked from /admin), the player's flight
+  recorder and the service worker all drop their readouts here — a permanent
+  tenant. **Reads are gated**: the rows quote the book (dropped glyphs,
+  synthesis prompts), and that is content. Read them with
   `curl -H "authorization: Bearer $ADMIN_TOKEN" '<origin>/api/testlog?page=…&limit=5'`.
+- **Writing the testlog needs a cookie, because the writers cannot send a
+  header (2026-08-12).** `POST /api/testlog` was open until now, on the
+  argument that the writer that matters most cannot authenticate. The half of
+  that which is true is narrower than it looked: sendBeacon takes only
+  `(url, data)` — no headers argument exists — and it is what every uploader
+  uses, because it is the only send that survives `pagehide`; a service worker
+  has no page to read a token from either. What that rules out is a *header*,
+  not a *credential*. Cookies are exactly the carrier this codebase already
+  uses for `<audio src>`, sendBeacon and SW fetches (see the reader key
+  below), so /admin now mints `bw_tlog` from the Bearer on every unlock and
+  the three sendBeacon call sites did not change by one character.
+  It is **not** the admin token in a cookie: the value is a stateless
+  `<exp>.<HMAC(ADMIN_TOKEN, "testlog:<exp>")>` — no session table, no D1 read
+  on the write path, and rotating `ADMIN_TOKEN` invalidates every outstanding
+  one at once. It cannot reach `/api/admin/*` either, and not because of a
+  `SameSite` rule: `handleAdmin` checks the Bearer header itself and never
+  reads a cookie, so the route structurally cannot see this credential.
+  The cost, accepted deliberately: a device with only a reader key stops
+  logging. `player.mjs` (page=player) and `app.js` (page=push) run in the
+  reader app, so on someone else's phone those go silent — "did THEIR phone
+  get the notification" is no longer answerable from the log. The alternatives
+  were worse. A body token needs a `fetch` probe to be observable at all,
+  because sendBeacon returns whether the UA *queued* the request and never
+  the status — a 401 is invisible, so a stale token is permanent silence with
+  no signal anywhere. And a signature is not merely expensive but
+  structurally impossible on the path that matters: WebCrypto is async, and
+  a `pagehide` handler cannot await.
+- **The testlog quota is per page, because a shared window is won by the
+  loudest writer (2026-08-12).** The table self-pruned to the newest 500 rows
+  overall, and that budget was not shared, it was raced for. `player.mjs`
+  heartbeats every 10 s and coalesces on a 1.5 s timer, so roughly six rows a
+  minute: one 83-minute listening session evicted the entire table — including
+  the `page=push` breadcrumbs, which are the lowest-volume and highest-value
+  rows in it, and the only witness to whether a phone got a notification.
+  Auth does not fix this; it happened on one device, to itself. So the same
+  500 rows are now split by page (`TESTLOG_PAGES` in `src/worker.js`:
+  player 200, push 120, six diagnostic pages 30 each), which also makes the
+  page list load-bearing — a quota is per bucket, so an unlisted page name
+  would be an unbounded row count, and `ELSE 0` drops rows in pages nobody
+  lists (which is how pre-quota rows clean themselves up). The prune runs on
+  every 25th insert rather than every one: it is a full-table scan, and on
+  D1's free plan rows-**read** binds long before rows-written — every-insert
+  pruning cost ~3000 reads a minute with the recorder running. The table
+  drifts at most 24 rows over quota in between, which buys a 25× margin.
+  `testlog (page, id DESC)` indexes both readers: the gated GET and the
+  prune's window function.
 - **/admin is folds, not one scroll (2026-08-12).** Eight panels stacked open
   made the page 1959 px on a 430×932 phone — over two screens before the
   first tap. Each panel below the key gate is a `<details class="fold">`
@@ -517,15 +557,13 @@ the pre-publication history, which lives in the owner's private archive.
 - **The diagnostic-upload switch is a door on your own house (2026-08-12).**
   `/admin` → 裝置診斷 has a checkbox that stops THIS device's diagnostic pages
   from POSTing readouts (`bw_testlog` in localStorage, read by
-  `public/testlog.js` before every send). It protects nothing: `POST
-  /api/testlog` stays open by design — the service worker can hold no
-  credential, and gating the write blinds the log in the one case it exists
-  to diagnose — so anything that wants to write still can, curl included. A
-  frontend switch is not a gate on the street, and if endpoint abuse ever
-  matters the answer is a `page` allowlist in the worker, not this. What it
-  does buy is the actual source of noise: six pages uploading on a redraw
-  loop will bury the newest-500 window by themselves, and turning them off
-  needs no deploy. The service worker's push breadcrumb deliberately does
+  `public/testlog.js` before every send). It is not the gate — the gate is the
+  `bw_tlog` cookie in the worker, a different door on a different wall, and
+  nothing in `testlog.js` reads or sends that cookie because it rides
+  sendBeacon by itself. What the switch buys is the source of noise the gate
+  cannot see, since the noise is your own: six pages uploading on a redraw
+  loop will fill their own quotas by themselves, and turning them off needs no
+  deploy. The service worker's push breadcrumb deliberately does
   **not** ride the flag — a SW cannot read localStorage, reaching it would
   cost a message channel, it is one row per push rather than a loop, and it
   is the line most worth having in the field. The five copies of the upload

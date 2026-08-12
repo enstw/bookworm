@@ -47,20 +47,41 @@ out.gate = gated.every((r) => r.status === 401) && open.every((r) => r.ok)
   ? "ok (content 401s; feedback stays open)"
   : `FAIL gated=${gated.map((r) => r.status).join("/")} open=${open.map((r) => r.status).join("/")}`;
 
-// 1b. testlog is the one route split by verb: reads are gated because the
-// rows quote the book, writes are not because the service worker logging a
-// push delivery has no page to re-earn a cookie from. Both halves are load-
-// bearing — a gate that creeps onto POST blinds the phone's only console.
+// 1b. testlog is split by verb AND by credential: reads take a reader key
+// (the rows quote the book), writes take the bw_tlog cookie /admin mints from
+// the Bearer. The cookie exists because sendBeacon and the service worker —
+// the writers that matter — cannot send a header at all, so proving the
+// Bearer alone does NOT open the write is the point of this block: a header
+// that worked here would be a header nothing in the field can send.
 const logBare = await fetch(`${BASE}/api/testlog?limit=1`);
 const logAuth = await fetch(`${BASE}/api/testlog?limit=1`, { headers: auth });
-const logWrite = await fetch(`${BASE}/api/testlog`, {
+const writeAs = (cookie, page = "wasmtest") => fetch(`${BASE}/api/testlog`, {
   method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ page: "authe2e", device: "auth-e2e", data: "gate check" }),
+  headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+  body: JSON.stringify({ page, device: "auth-e2e", data: "gate check" }),
 });
-out.testlogGate = logBare.status === 401 && logAuth.ok && logWrite.ok
-  ? "ok (read 401s bare, reads with a credential, writes keyless)"
-  : `FAIL bare=${logBare.status} auth=${logAuth.status} write=${logWrite.status}`;
+const writeBare = await writeAs(null);
+const writeBearer = await fetch(`${BASE}/api/testlog`, {
+  method: "POST",
+  headers: { ...auth, "content-type": "application/json" },
+  body: JSON.stringify({ page: "wasmtest", device: "auth-e2e", data: "gate check" }),
+});
+const session = await fetch(`${BASE}/api/admin/session`, { method: "POST", headers: auth });
+const tlog = (session.headers.get("set-cookie") ?? "").split(";")[0];
+const writeCookie = await writeAs(tlog);
+// a page nobody lists is refused rather than given a bucket of its own: the
+// quota is per page, so an open-ended set of names is an open-ended row count
+const writeUnknown = await writeAs(tlog, "authe2e");
+// the cookie is scoped to logging — it must not stand in for the Bearer
+const adminByCookie = await fetch(`${BASE}/api/admin/ping`, { headers: { cookie: tlog } });
+out.testlogGate =
+  logBare.status === 401 && logAuth.ok && writeBare.status === 401
+  && writeBearer.status === 401 && tlog.startsWith("bw_tlog=") && writeCookie.ok
+  && writeUnknown.status === 400 && adminByCookie.status === 401
+    ? "ok (read needs a key; write needs the cookie, not the Bearer; unlisted page 400s)"
+    : `FAIL bare=${logBare.status} auth=${logAuth.status} write=${writeBare.status} `
+      + `bearer=${writeBearer.status} cookie=${writeCookie.status} `
+      + `unknown=${writeUnknown.status} adminByCookie=${adminByCookie.status}`;
 
 // 2. /api/auth refuses what it should
 const [badStatus] = await j(await fetch(`${BASE}/api/auth`, {
