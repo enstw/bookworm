@@ -683,3 +683,5 @@ the pre-publication history, which lives in the owner's private archive.
 what the old behaviour claimed, what it actually did, what the new rule is, and
 which costs were accepted. Decisions worth keeping are distilled into
 **Standing decisions** above; superseded entries are deleted, not annotated.
+
+<!-- verifier fail-closed probe: disallowed file, must be refused -->
