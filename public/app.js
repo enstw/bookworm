@@ -426,14 +426,62 @@ async function checkVersion() {
     if (build !== versionDismissed) navigator.setAppBadge?.(1).catch(() => {});
     if (build === versionNoticed) return;
     versionNoticed = build;
-    showUpdateNotice(build);
+    showUpdateNotice(build, await releaseNotes());
   } catch { /* offline or slow: the next foreground flip asks again */ }
 }
 
-function showUpdateNotice(build) {
+// What the releases since THIS shell say to a reader. Fetched only once an
+// update is known to exist — which is rare — so it costs nothing on the
+// foreground flips that find nothing.
+//
+// Every release the device skipped is included, not just the newest: a phone
+// left alone for a month should hear about the whole month. Walking stops at
+// this shell's own build, so a reader is never told about what they are
+// already running. releases.json is a deploy product (gitignored, written by
+// gen-release-notes.mjs) — a dev run has none, and a 404 means "no notes",
+// which is also the honest answer for a release that said nothing.
+async function releaseNotes() {
+  try {
+    const res = await fetch("/releases.json", {
+      cache: "no-store", signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return [];
+    const { releases } = await res.json();
+    if (!Array.isArray(releases)) return [];
+    const mine = BUILD.split(" ")[0]; // the stamp is "<short sha> · <when>"
+    const out = [];
+    for (const r of releases) {
+      // the ledger keys on a longer sha than the build stamp carries
+      if (mine && typeof r.build === "string" && r.build.startsWith(mine)) break;
+      out.push(...(r.notes ?? []));
+    }
+    return out;
+  } catch {
+    return []; // slow or offline: the pill still works, it just says less
+  }
+}
+
+function showUpdateNotice(build, notes = []) {
   document.querySelector(".updatenote")?.remove();
+  // The pill is one nowrap row and the notes are prose, so the list rides a
+  // line of its own (.notelist takes the full basis of a wrapping flex row) —
+  // no second layout, no restructuring of the row. It starts collapsed because
+  // "a new version is live" is the message; the notes are the follow-up.
+  const list = notes.length
+    ? el("ul", { class: "notelist", hidden: true }, notes.map((n) => el("li", {}, n)))
+    : null;
   const note = el("div", { class: "jumpnote updatenote" },
     el("span", { class: "jumpnote-text" }, t("update.available", build)),
+    list
+      ? el("button", {
+          id: "whatsNewBtn", // an id, not the label: the label is translated
+          class: "linklike",
+          onclick: (e) => {
+            list.hidden = !list.hidden;
+            e.target.textContent = list.hidden ? t("update.whatsNew") : t("update.hideNew");
+          },
+        }, t("update.whatsNew"))
+      : null,
     el("button", {
       id: "updateReloadBtn",
       class: "linklike",
@@ -450,7 +498,8 @@ function showUpdateNotice(build) {
         navigator.clearAppBadge?.().catch(() => {});
         note.remove();
       },
-    }, "✕"));
+    }, "✕"),
+    list);
   document.body.append(note);
 }
 

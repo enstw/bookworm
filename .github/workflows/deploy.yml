@@ -97,6 +97,10 @@ jobs:
       - run: node scripts/sync-wasmtts-assets.mjs
         env:
           GH_TOKEN: ${{ github.token }}
+      # before deploy.sh, not with the ledger step below: this file is UPLOADED
+      # by the deploy, so it has to exist first — while RELEASES.md must not be
+      # written until the deploy is known green. Same computation either way.
+      - run: node scripts/gen-release-notes.mjs
       - run: ./scripts/deploy.sh
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

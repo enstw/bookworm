@@ -438,6 +438,19 @@ button {
 
 .jumpnote .linklike { white-space: nowrap; }
 
+/* 有什麼新的: the release notes drop onto a line of their own inside the same
+   pill — a full flex basis in a wrapping row, so the row above it is untouched
+   whether the list is open or not. */
+.jumpnote { flex-wrap: wrap; }
+.notelist {
+  flex-basis: 100%;
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  white-space: normal;
+}
+.notelist li { margin: 0.15rem 0; }
+
 /* ---------- table of contents ---------- */
 
 .toc {

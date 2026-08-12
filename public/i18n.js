@@ -68,6 +68,8 @@ const BW_STRINGS = {
     // --- 新版本通知 ---
     "update.available": (b) => `新版本已上線（${b}）。`,
     "update.reload": "立即更新",
+    "update.whatsNew": "有什麼新的",
+    "update.hideNew": "收起來",
     "lib.build": (b) => `版本 ${b}`,
     "lib.refresh": "重新整理",
     "lib.refreshTitle": "從伺服器重新下載程式（保留離線章節）",
@@ -346,6 +348,8 @@ const BW_STRINGS = {
     // --- new-version notice ---
     "update.available": (b) => `A new version is live (${b}).`,
     "update.reload": "Update now",
+    "update.whatsNew": "What's new",
+    "update.hideNew": "Hide",
     "lib.build": (b) => `build ${b}`,
     "lib.refresh": "refresh",
     "lib.refreshTitle": "Re-download the app from the server (keeps offline chapters)",
