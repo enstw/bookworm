@@ -56,9 +56,15 @@ export function checkDeployPolicy(text) {
     if (name === "test") {
       if (writes.length) violations.push(`test job holds write permissions: ${writes.join(", ")}`);
       if (!/^\s+contents: read\s*$/m.test(body)) violations.push("test job is missing contents: read");
-    } else if (name === "failure-report" || name === "deploy") {
+    } else if (name === "failure-report") {
       if (writes.join(",") !== "contents") {
         violations.push(`job ${name} must hold exactly contents: write, has: ${writes.join(", ") || "none"}`);
+      }
+    } else if (name === "deploy") {
+      // contents for the ledger/tag, pull-requests + actions to open the
+      // ledger PR and dispatch its candidate-gate (H-03) — nothing else
+      if (writes.sort().join(",") !== "actions,contents,pull-requests") {
+        violations.push(`deploy job must hold exactly actions/contents/pull-requests write, has: ${writes.join(", ") || "none"}`);
       }
     } else if (writes.length) {
       violations.push(`unexpected job ${name} holds write permissions: ${writes.join(", ")}`);
@@ -95,8 +101,30 @@ export function checkDeployPolicy(text) {
   return violations;
 }
 
+// The candidate workflow executes PR code pre-merge, so it lives by the test
+// job's rules: read-only token, credential-free checkout, no repository
+// secrets — and never the pull_request_target trigger, which would hand
+// untrusted code a privileged context.
+export function checkCandidatePolicy(text) {
+  const violations = [];
+  if (/^\s*pull_request_target:/m.test(text)) violations.push("candidate uses pull_request_target");
+  if (/\$\{\{\s*secrets\./.test(text)) violations.push("candidate references repository secrets");
+  const { jobs } = splitJobs(text);
+  const gate = jobs["candidate-gate"];
+  if (!gate) return [...violations, "job candidate-gate is missing"];
+  const writes = [...gate.matchAll(/^\s+(\w[\w-]*): write\s*$/gm)].map((m) => m[1]);
+  if (writes.length) violations.push(`candidate-gate holds write permissions: ${writes.join(", ")}`);
+  if (!/^\s+contents: read\s*$/m.test(gate)) violations.push("candidate-gate is missing contents: read");
+  if (!/persist-credentials: false/.test(gate)) violations.push("candidate-gate checkout persists credentials");
+  return violations;
+}
+
 const real = readFileSync(new URL(`../${WORKFLOW}`, import.meta.url), "utf8");
 assert.deepEqual(checkDeployPolicy(real), [], `${WORKFLOW} violates the permission policy`);
+
+const CANDIDATE = ".github/workflows/candidate.yml";
+const candidate = readFileSync(new URL(`../${CANDIDATE}`, import.meta.url), "utf8");
+assert.deepEqual(checkCandidatePolicy(candidate), [], `${CANDIDATE} violates the permission policy`);
 
 // each seeded violation must be caught — an assertion that can only pass is
 // not a gate
@@ -107,7 +135,8 @@ const mutations = [
   ["failure-report checkout", (t) => t.replace("      - uses: actions/download-artifact@", "      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n      - uses: actions/download-artifact@")],
   ["failure-report running repo code", (t) => t.replace("          set -euo pipefail\n", "          set -euo pipefail\n          node scripts/update-releases.mjs\n")],
   ["secrets outside deploy", (t) => t.replace("      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}", "      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}")],
-  ["deploy job losing its explicit grant", (t) => t.replace("  deploy:\n    needs: test\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write", "  deploy:\n    needs: test\n    runs-on: ubuntu-latest")],
+  ["deploy job gaining an extra grant", (t) => t.replace("      pull-requests: write\n      actions: write", "      pull-requests: write\n      actions: write\n      issues: write")],
+  ["deploy job losing a grant", (t) => t.replace("      pull-requests: write\n      actions: write", "      pull-requests: write")],
 ];
 for (const [label, mutate] of mutations) {
   const mutated = mutate(real);
@@ -115,4 +144,16 @@ for (const [label, mutate] of mutations) {
   assert.notEqual(checkDeployPolicy(mutated).length, 0, `mutation "${label}" was not caught`);
 }
 
-console.log("✓ deploy.yml permission policy");
+const candidateMutations = [
+  ["pull_request_target trigger", (t) => t.replace("on:\n  pull_request:", "on:\n  pull_request_target:")],
+  ["candidate-gate write grant", (t) => t.replace("    permissions:\n      contents: read", "    permissions:\n      contents: write")],
+  ["candidate secrets reference", (t) => t.replace("      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}", "      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}")],
+  ["candidate persisted credential", (t) => t.replace("          # this job runs the PR's code; leave no token on disk for it\n          persist-credentials: false\n", "")],
+];
+for (const [label, mutate] of candidateMutations) {
+  const mutated = mutate(candidate);
+  assert.notEqual(mutated, candidate, `mutation "${label}" did not apply — fixture drifted from candidate.yml`);
+  assert.notEqual(checkCandidatePolicy(mutated).length, 0, `mutation "${label}" was not caught`);
+}
+
+console.log("✓ deploy.yml + candidate.yml permission policy");

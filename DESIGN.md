@@ -68,6 +68,20 @@ decision in that subsystem.
   which starts only after a green gate and is the only job that sees the
   Cloudflare/production secrets. `scripts/test-deploy-policy.mjs` asserts
   the split and self-tests that each seeded violation is caught.
+  Merges into `main` have their own pre-merge gate (2026-08-13): the
+  `candidate` workflow runs the full suite on every PR as a required check
+  named `candidate-gate` — same containment rules as the deploy test job
+  (read-only token, credential-free checkout, generated-not-secret env),
+  never `pull_request_target`. PRs whose branch was pushed with
+  GITHUB_TOKEN (the release ledger, renovate's roll-up) never fire
+  `pull_request`, so the workflow that opened them dispatches `candidate`
+  explicitly and waits on the check via
+  `scripts/wait-candidate-gate.mjs` before merging. The release ledger
+  itself stopped pushing to `main` directly: the deploy job commits
+  RELEASES.md to an `automation/release-ledger-<run>` branch, opens a PR,
+  waits for its green `candidate-gate`, rebase-merges, and only then moves
+  the `released` tag — if `main` moved mid-gate the merge fails closed and
+  the next release's ledger covers both ranges.
 - The repo settings that no file records (2026-08-12): secret scanning with
   push protection is on; a ruleset on `main` blocks force-push and deletion
   (a rebase that rewrites a pushed branch is still fine — the ruleset only
