@@ -44,7 +44,8 @@ jobs:
   merge-and-deploy:
     needs: renovate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # long enough to sit through the candidate-gate run it dispatches
+    timeout-minutes: 40
     permissions:
       contents: write
       pull-requests: write
@@ -92,6 +93,12 @@ jobs:
           git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
           node scripts/verify-renovate-pr.mjs "$META" "$CHECKS" "$BASE_SHA" "$HEAD_SHA" \
             2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+          # main requires a green candidate-gate on the PR head (H-03), and
+          # renovate's branch was pushed with GITHUB_TOKEN, which never fires
+          # pull_request — dispatch the gate and wait for it to land
+          gh workflow run candidate --ref renovate/weekly-roll-up -R enstw/bookworm
+          node scripts/wait-candidate-gate.mjs "$HEAD_SHA"
 
           # A main update after verification invalidates the inspected diff.
           # --match-head-commit closes the equivalent race on the PR side.

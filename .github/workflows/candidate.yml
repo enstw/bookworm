@@ -1,0 +1,68 @@
+# The pre-merge gate: every PR into main runs the same desktop suite the
+# deploy gate runs, as a required check named candidate-gate. A bad commit is
+# stopped BEFORE it reaches main, not after — the deploy gate then re-runs
+# the suite on the merged result as the last line of defence.
+#
+# Two triggers, one job: pull_request covers PRs pushed by people; PRs whose
+# branch was pushed with GITHUB_TOKEN (the release ledger PR, the renovate
+# roll-up) never fire pull_request — the same recursion guard the ledger
+# lean on — so the workflow that opened them dispatches this one explicitly
+# at the same head SHA. The check run lands on the commit either way, which
+# is all the ruleset's required check looks at.
+#
+# This job executes the PR's code, so it mirrors the deploy test job's
+# containment: read-only token, credential-free checkout, no repository
+# secrets (ADMIN_TOKEN/VAPID are generated per run). Never converted to
+# pull_request_target — that would hand untrusted code a privileged context.
+name: candidate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # one gate per PR branch; a re-push cancels the stale run. workflow_dispatch
+  # runs key on the ref instead, which is the same branch string.
+  group: candidate-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  candidate-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}
+      BROWSER_BIN: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # this job runs the PR's code; leave no token on disk for it
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.21.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: ffmpeg for the tts-stream fixture
+        run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Scaffold .dev.vars and the local D1 schema
+        run: |
+          {
+            printf 'ADMIN_TOKEN=%s\n' "$ADMIN_TOKEN"
+            printf "VAPID_PRIVATE_JWK='%s'\n" "$(node scripts/gen-vapid.mjs | head -1 | cut -d= -f2-)"
+            printf 'VAPID_SUBJECT=mailto:ci@bookworm.invalid\n'
+          } > .dev.vars
+          pnpm run db:init:local
+      - name: Run the test gate
+        run: node scripts/run-ci-tests.mjs
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-gate-report
+          path: test-artifacts/
