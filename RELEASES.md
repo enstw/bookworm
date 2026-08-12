@@ -4,6 +4,10 @@ One entry per green deploy — the commits that went live, newest first. Written
 by scripts/update-releases.mjs from the deploy workflow; the `released` tag
 marks the last deployed commit. Do not edit entries by hand.
 
+## 2026-08-12 — `0b90b03a019c`
+
+- reader: pull the bookmark again in the background (`0b90b03`)
+
 ## 2026-08-12 — `0fb2bd094ff9`
 
 - ci: pin every action to a commit digest (`0fb2bd0`)
