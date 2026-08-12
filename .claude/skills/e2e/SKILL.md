@@ -29,7 +29,7 @@ scripts in `scripts/` are the source of truth.
 | --- | --- | --- |
 | slug, worker-pool, push-crypto | `pnpm run test:slug` etc. | nothing (pure node) |
 | vertical, bg | `pnpm run test:vertical` / `test:bg` | Chromium only (own static server) |
-| auth, admin, shelf-admin, push-api | `pnpm run test:auth` etc. | dev server + ADMIN_TOKEN |
+| auth, sync, admin, shelf-admin, push-api | `pnpm run test:auth` etc. | dev server + ADMIN_TOKEN |
 | tts-stream | `pnpm run test:tts-stream` | Chromium + `ffmpeg` on PATH (own static server) |
 | **everything above** | `ADMIN_TOKEN=… pnpm test` | dev server + Chromium |
 | **everything above, one command** | `ADMIN_TOKEN=… node scripts/run-ci-tests.mjs` | Chromium (spawns its own server if 8787 is silent; per-suite logs in `test-artifacts/`) |
@@ -97,3 +97,11 @@ genuinely dead (`browser-e2e` explains why emulation cannot substitute):
   window puts the pager in a typographic regime readers never see.
 - New suites join `package.json` as `test:<name>`; only single-command
   suites join the `pnpm test` chain (the offline two-stage stays manual).
+- A "second device" needs no second browser: positions belong to the KEY's
+  user, so a `POST /api/position` from node with the same key is one, and
+  `test:sync` is the reference. It also dispatches `visibilitychange` by hand
+  — on a page that really is visible, which is the branch the handler takes
+  when a phone comes back — rather than driving the browser's own lifecycle.
+- Counting event listeners (`DOMDebugger.getEventListeners` on the window
+  objectId) is per registration *site* — `type@scriptId:line:col`. Per type
+  is wrong: app.js and player.mjs both own a `pagehide`, correctly.

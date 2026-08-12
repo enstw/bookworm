@@ -133,6 +133,8 @@ const BW_STRINGS = {
     // --- 跨裝置書籤提示 ---
     "jump.synced": (here, there) => `已同步到「${here}」；此裝置上次讀到「${there}」`,
     "jump.back": "回到上次位置",
+    "jump.remote": (there) => `另一台裝置讀到「${there}」`,
+    "jump.go": "跳過去",
 
     // --- 背景紙色 ---
     "bg.default": "預設",
@@ -404,6 +406,8 @@ const BW_STRINGS = {
     // --- cross-device bookmark ---
     "jump.synced": (here, there) => `Synced to “${here}”; this device last read “${there}”`,
     "jump.back": "Back to where I was",
+    "jump.remote": (there) => `Another device is reading “${there}”`,
+    "jump.go": "Go there",
 
     // --- paper colours ---
     "bg.default": "Default",
