@@ -5,9 +5,12 @@
 // POSTs to /api/testlog, so "did this page upload" is answered by the wire
 // rather than by a spy in the page.
 //
-// The switch is a courtesy to your own phones, not a gate on the endpoint —
-// POST /api/testlog stays open by design — so what is asserted here is exactly
-// that: this device stops uploading, and nothing else changes.
+// The switch is a courtesy to your own phones, not the gate on the endpoint —
+// that is the bw_tlog cookie, asserted in test-auth-e2e.mjs — so what is
+// asserted here is exactly the switch: this device stops uploading, and
+// nothing else changes. The static server below answers every POST 200 on
+// purpose: whether the worker would have accepted the write is a different
+// suite's question, and stubbing it keeps this one about the flag.
 //
 //   node scripts/test-testlog-e2e.mjs
 

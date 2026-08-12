@@ -62,9 +62,14 @@ subscribe/test) 401 without a credential. The rules a suite lives by:
   identity: positions/settings answer it 401.
 - A browser profile enrolls by navigating `/?key=…` once — the app swallows
   the key and earns the cookie; `test-auth-e2e.mjs` is the reference.
-- Still open (never send a key): `/api/feedback`, POSTs to `/api/testlog`,
-  `/api/push/vapid`, `/api/push/unsubscribe`, the shell. Reading the testlog
-  is gated — send the admin Bearer, as `test-push-api-e2e.mjs` does.
+- Still open (never send a key): `/api/feedback`, `/api/push/vapid`,
+  `/api/push/unsubscribe`, the shell. Reading the testlog is gated — send the
+  admin Bearer, as `test-push-api-e2e.mjs` does.
+- Writing the testlog needs the `bw_tlog` cookie, and the admin Bearer does
+  NOT substitute for it: `POST /api/admin/session` with the Bearer, then send
+  the `set-cookie` value back (`test-auth-e2e.mjs` is the reference). A header
+  would be the wrong shape to test — sendBeacon and the service worker, the
+  writers this endpoint exists for, cannot send one.
 - In-process suites (vertical, bg, tts-stream) stub their own `/api` and
   never see the gate.
 

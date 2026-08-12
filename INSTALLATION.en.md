@@ -291,9 +291,10 @@ post-repair re-check still reports something, that is a bug — report it as one
 Book content, positions and narration sit behind the reader key: without a live key, 401. The key is a
 server-set cookie on the device (one year, self-repairing) and dies with revocation; chapters already
 cached on the device survive it — revocation fences the server, not the phone. Open by design: the app
-shell (the code is public anyway), `/api/feedback` and writes to `/api/testlog` — the log is written by
-a service worker that can hold no credential, but reading it back needs one, since its rows quote the
-book. Administration and publishing
+shell (the code is public anyway) and `/api/feedback`. `/api/testlog` takes a credential both ways:
+a reader key to read (its rows quote the book) and the `bw_tlog` cookie `/admin` mints to write — a
+cookie rather than a header because sendBeacon and the service worker, which do the writing, cannot
+send one. Administration and publishing
 stay behind `ADMIN_TOKEN`, independent of reader keys. Reader ids are not strong authentication and
 suit only a small trusted group.
 

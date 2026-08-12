@@ -51,7 +51,10 @@ CREATE TABLE IF NOT EXISTS settings (
 -- /scrolltest — linked from /admin) and the service worker's push
 -- breadcrumbs: each row is one uploaded readout, so the laptop can curl the
 -- phone's results (GET /api/testlog) instead of trading screenshots.
--- Self-pruned to the newest 500 rows on write.
+-- Self-pruned on write to a quota PER PAGE (TESTLOG_PAGES in src/worker.js),
+-- summing to the same 500 rows it used to hold as one shared window — a
+-- shared window is won by whichever page writes fastest, which is never the
+-- one worth keeping.
 CREATE TABLE IF NOT EXISTS testlog (
   id     INTEGER PRIMARY KEY AUTOINCREMENT,
   page   TEXT    NOT NULL,
@@ -59,6 +62,9 @@ CREATE TABLE IF NOT EXISTS testlog (
   ts     INTEGER NOT NULL DEFAULT 0,
   data   TEXT    NOT NULL
 );
+-- Both readers walk one page newest-first: the GET above and the per-page
+-- prune's window function. Without this they scan the table.
+CREATE INDEX IF NOT EXISTS testlog_page_id ON testlog (page, id DESC);
 
 -- 改進建議 (the feedback queue): improvement notes the owner writes from
 -- /admin, for an AI dev session to read back through the unauthenticated

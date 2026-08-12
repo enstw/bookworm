@@ -5,7 +5,7 @@
 
 import { chunkChapter, ttsPrompt } from "../public/tts-core.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
-import { vapidPublicKey, sendPush } from "./push.js";
+import { vapidPublicKey, sendPush, b64u } from "./push.js";
 
 function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
@@ -32,19 +32,16 @@ export default {
       // or start a synthesis requires a reader key (see authenticate); the
       // admin Bearer passes too, because the /admin shelf reads /api/books.
       // Still open: the app shell (it is the public repo's contents),
-      // /api/feedback (the AI's inbox reads it keyless by design), WRITES to
-      // /api/testlog (see below), /api/wasmtts/* (public OSS binaries proxied
-      // for the /wasmtest diagnostic), and the push vapid/unsubscribe pair (a
-      // public key, and a revoked device must always be able to unregister).
+      // /api/feedback (the AI's inbox reads it keyless by design),
+      // /api/wasmtts/* (public OSS binaries proxied for the /wasmtest
+      // diagnostic), and the push vapid/unsubscribe pair (a public key, and a
+      // revoked device must always be able to unregister).
       //
-      // /api/testlog is the one route split by verb. Reading it is gated
-      // because the table carries fragments of the book; writing it is not,
-      // because the writer that matters most CANNOT authenticate — the
-      // service worker logging a push delivery with no page alive holds only
-      // the bw_key cookie, and once Safari's 7-day cap evicts that, nothing
-      // in a worker can re-earn it (reauth() lives in the page, and
-      // localStorage is not reachable from here). A gate on POST would go
-      // blind in exactly the case the log exists to diagnose.
+      // /api/testlog is the one route split by verb, and by credential. GET
+      // is listed here: a reader key or the admin Bearer, because the rows
+      // quote the book. POST is NOT listed — it checks its own cookie inside
+      // handleTestlog, because it wants ADMIN rights from writers that cannot
+      // carry a header at all (see testlogSessionOk).
       const gated =
         path === "/api/books" || path.startsWith("/api/books/") ||
         path === "/api/position" || path === "/api/settings" ||
@@ -116,6 +113,73 @@ async function authenticate(request, env, url) {
     "SELECT user, label FROM readers WHERE key = ?",
   ).bind(key).first();
   return row ? { user: row.user, label: row.label } : null;
+}
+
+// ---- the diagnostic-log session cookie ----------------------------------
+//
+// Writing /api/testlog takes admin rights, but every writer that matters is
+// one that cannot carry an Authorization header. sendBeacon has no headers
+// argument at all — only (url, data) — and it is what testlog.js, player.mjs
+// and the pagehide flushes use, because it is the only send that survives a
+// page going away. The service worker has no page to read a token from. That
+// is the same problem the reader key already solved: cookies are what
+// <audio src>, sendBeacon and service-worker fetches authenticate with (see
+// readerKey), so admin gets a cookie too, minted from the Bearer when /admin
+// unlocks.
+//
+// This is NOT the admin token in a cookie, and it does not open /api/admin/*.
+// handleAdmin checks the Bearer header itself and never looks at a cookie, so
+// this credential structurally cannot reach 發書 or 刪書 — no SameSite rule is
+// holding that line, the route simply does not read it. What it authorizes is
+// one thing: appending a log row.
+//
+// Stateless: <exp>.<HMAC(ADMIN_TOKEN, "testlog:<exp>")>. No session table and
+// no D1 read on the write path — the write stays one INSERT. Rotating
+// ADMIN_TOKEN invalidates every outstanding cookie at once, because the
+// signature stops matching; there is nothing to revoke.
+const TESTLOG_COOKIE = "bw_tlog";
+// Long, deliberately. sendBeacon returns a boolean meaning "queued", never
+// the status, so an expired cookie is a silent 401 — the phone stops logging
+// and nothing anywhere says why. The blast radius of a leaked one is junk log
+// rows, which the per-page quota already bounds, so lapsing is the worse risk
+// of the two. /admin re-mints on every unlock anyway.
+const TESTLOG_TTL_MS = 180 * 24 * 3600 * 1000;
+
+async function testlogSign(env, exp) {
+  const te = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", te.encode(env.ADMIN_TOKEN), { name: "HMAC", hash: "SHA-256" },
+    false, ["sign"]);
+  return `${exp}.${b64u.enc(await crypto.subtle.sign("HMAC", key, te.encode(`testlog:${exp}`)))}`;
+}
+
+async function testlogSessionOk(request, env) {
+  if (!env.ADMIN_TOKEN) return false;
+  const m = (request.headers.get("cookie") ?? "")
+    .match(new RegExp(`(?:^|;\\s*)${TESTLOG_COOKIE}=([^;]+)`));
+  if (!m) return false;
+  const value = decodeURIComponent(m[1]);
+  const exp = Number(value.split(".")[0]);
+  if (!Number.isFinite(exp) || exp <= Date.now()) return false;
+  return value === await testlogSign(env, exp);
+}
+
+// POST /api/admin/session — trade the Bearer for that cookie. Reached only
+// through handleAdmin, so the Bearer has already been checked.
+async function mintTestlogSession(request, env) {
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+  // Secure only on https, for the same reason handleAuth does it: wrangler
+  // dev serves plain http, where a Secure cookie is silently dropped
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  const exp = Date.now() + TESTLOG_TTL_MS;
+  // Path is the route itself, not /: unlike the reader key this credential
+  // has exactly one destination, so there is no reason for it to ride every
+  // chapter fetch and every TTS request on the admin's own phone.
+  return json({ ok: true, exp }, 200, {
+    "set-cookie": `${TESTLOG_COOKIE}=${await testlogSign(env, exp)}; Path=/api/testlog; `
+      + `Max-Age=${Math.floor(TESTLOG_TTL_MS / 1000)}; SameSite=Lax; HttpOnly${secure}`,
+    "cache-control": "no-store",
+  });
 }
 
 // POST /api/auth {key} — trade a key for an identity: validate it, answer
@@ -504,10 +568,42 @@ async function serveWasmttsAsset(path) {
 // (see swlog), which only a phone can observe.
 //
 // Split by verb at the gate above: GET needs a reader key (the rows quote
-// the book), POST does not (the service worker has no way to hold one). An
-// open write is a nuisance — junk rows pushing real ones out of the
-// newest-500 window — not a leak, so inputs are firmly capped, the table
-// self-prunes, and the timestamp is server-side.
+// the book), POST needs the admin cookie (see testlogSessionOk — a header is
+// not an option for the writers that matter). Inputs are firmly capped, the
+// timestamp is server-side, and the table self-prunes per page.
+//
+// The quota is per page, not one newest-500 window, because that window is
+// shared and the noisiest bucket wins it. The player's flight recorder
+// heartbeats once every 10 s (player.mjs), so about six rows a minute: a
+// single 83-minute listening session used to evict everything else in the
+// table, including the push breadcrumbs — the lowest-volume, highest-value
+// rows there are, and the only witness to whether a phone got a notification.
+// Splitting the same 500 rows by page fixes that without buying more of them.
+//
+// The page list is therefore load-bearing twice over: it names the buckets,
+// and because a quota is per bucket, an open-ended set of page names would be
+// an open-ended row count. A new diagnostic page adds its own line. Rows in a
+// page nobody lists are dropped by the ELSE 0 below, which is also how rows
+// written before this list existed clean themselves up.
+const TESTLOG_PAGES = {
+  // the field diagnostic: worker → push service → service worker → banner
+  push: 120,
+  // the flight recorder; 200 rows is a little over half an hour of playback,
+  // and background-suspension bugs show up as a GAP, so the tail is the part
+  // worth keeping
+  player: 200,
+  wasmtest: 30, speechtest: 30, vhtest: 30, pgtest: 30, scrolltest: 30, pagedtest: 30,
+};
+// keys are literals in the object above, never anything a request supplies
+const TESTLOG_QUOTA_CASE = Object.entries(TESTLOG_PAGES)
+  .map(([page, rows]) => `WHEN '${page}' THEN ${rows}`).join(" ");
+// The prune is a full-table scan, and on D1's free plan rows-READ is the
+// meter that binds first, not rows-written. Running it on every insert cost
+// ~500 reads per logged line — about 3000 a minute with the player recorder
+// on. Every 25th insert is the same ceiling (the table drifts at most 25 rows
+// over quota in between) for a twenty-fifth of the reads.
+const TESTLOG_PRUNE_EVERY = 25;
+
 async function handleTestlog(request, env, ctx, url) {
   if (request.method === "GET") {
     const page = url.searchParams.get("page");
@@ -524,6 +620,8 @@ async function handleTestlog(request, env, ctx, url) {
   }
 
   if (request.method === "POST") {
+    if (!(await testlogSessionOk(request, env)))
+      return json({ error: "unauthorized" }, 401);
     let body;
     try {
       body = await request.json();
@@ -532,21 +630,27 @@ async function handleTestlog(request, env, ctx, url) {
     }
     const { page, device, data } = body ?? {};
     if (
-      typeof page !== "string" || !/^[a-z0-9-]{1,32}$/.test(page) ||
+      typeof page !== "string" || !Object.hasOwn(TESTLOG_PAGES, page) ||
       typeof data !== "string" || !data || data.length > 4000 ||
       (device !== undefined && typeof device !== "string")
     )
       return json({ error: "invalid body" }, 400);
-    await env.DB.prepare(
+    const { meta } = await env.DB.prepare(
       "INSERT INTO testlog (page, device, ts, data) VALUES (?, ?, ?, ?)",
     )
       .bind(page, String(device ?? "").slice(0, 64), Date.now(), data)
       .run();
-    ctx.waitUntil(
-      env.DB.prepare(
-        "DELETE FROM testlog WHERE id NOT IN (SELECT id FROM testlog ORDER BY id DESC LIMIT 500)",
-      ).run(),
-    );
+    if ((meta?.last_row_id ?? 0) % TESTLOG_PRUNE_EVERY === 0)
+      ctx.waitUntil(
+        env.DB.prepare(
+          `DELETE FROM testlog WHERE id NOT IN (
+             SELECT id FROM (
+               SELECT id, page, ROW_NUMBER() OVER (PARTITION BY page ORDER BY id DESC) AS rn
+               FROM testlog
+             ) WHERE rn <= CASE page ${TESTLOG_QUOTA_CASE} ELSE 0 END
+           )`,
+        ).run(),
+      );
     return json({ ok: true });
   }
 
@@ -820,6 +924,10 @@ async function handleAdmin(request, env, ctx, path) {
 
   // GET /api/admin/ping — lets the /admin page validate a token up front
   if (path === "/api/admin/ping") return json({ ok: true });
+
+  // POST /api/admin/session — the bw_tlog cookie, so this device's
+  // sendBeacon-only writers can log (see testlogSign)
+  if (path === "/api/admin/session") return await mintTestlogSession(request, env);
 
   // POST /api/admin/feedback — one 改進建議 onto the AI's queue
   if (path === "/api/admin/feedback") return postFeedback(request, env);

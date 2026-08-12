@@ -11,17 +11,18 @@
 // 1 s re-render loop will bury the newest-500 window by themselves, and the
 // window is the whole point of the table.
 //
-// What it is NOT: protection for the endpoint. POST /api/testlog is
-// deliberately open — the service worker has no way to hold a credential, and
-// gating the write would blind the log in exactly the case it exists to
-// diagnose — so anything that wants to write can still write, curl included.
-// A frontend switch is a door on your own house, not on the street.
+// What it is NOT: the gate. POST /api/testlog wants the bw_tlog cookie that
+// /admin mints (see testlogSessionOk in the worker) — a door on the street,
+// and a different door from this one. Nothing here reads or sends that cookie:
+// it rides sendBeacon by itself, which is the entire reason the credential is
+// a cookie and not a header. This switch is the door on your own house, and
+// its job is that six pages on a re-render loop do not bury the log.
 //
 // The service worker's push breadcrumb deliberately does NOT ride this. A SW
 // cannot read localStorage, so reaching it would cost a message channel or an
 // IndexedDB hop; it is one row per push rather than a loop; and it is the line
 // you most want surviving in the field, where "did the phone get it" has no
-// other witness.
+// other witness. The cookie it needs, it gets for free.
 
 var BW_TESTLOG_KEY = "bw_testlog";
 
