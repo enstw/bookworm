@@ -479,6 +479,33 @@ the pre-publication history, which lives in the owner's private archive.
   dismissible jumpnote pill with one-tap restore. The original +100-chapter
   jump was never conclusively reproduced, so the recovery UI is the
   load-bearing fix.
+- **The bookmark pull runs in the background (2026-08-12).** `resolvePosition`
+  reconciles once, when the book opens — and an installed PWA is *reopened*,
+  not reloaded, so that one answer used to stand for as long as the app
+  stayed alive. A device that opened offline kept a stale bookmark even after
+  the network came back: the `online` handler only ever pushed. Both
+  directions now recover. `checkRemotePosition` re-runs the reconcile on the
+  foreground flip (how a phone "reopens") and after the online flush, and
+  answers with the same pill vocabulary as the runaway defense above — it
+  **never moves the page**, because "the other device is ahead" is a weaker
+  claim than "this reader asked to go there". Its rules: it stands down while
+  `state.dirty`, since a row that has not seen our own writes has nothing to
+  teach; it takes the looser 4 s cap rather than `NET_MS`, on
+  `checkVersion`'s reasoning — it blocks nothing, and a 1 s cap on a slow
+  link would just mean the notice never arrives; each remote `updated_at` is
+  offered exactly once, so a dismissal stays dismissed; and a same-chapter
+  difference is silent, because the pill would name the chapter the reader is
+  already in and two devices a few paragraphs apart resolve themselves on the
+  next LWW write. Direction is not a criterion — a phone that jumped
+  backwards is news too. Settings deliberately do NOT get this treatment: a
+  background `resolveSettings` would reflow a rendered chapter, which is the
+  one thing its own comment forbids. Reader event listeners moved into
+  `wireReaderEvents()` behind a once-guard at the same time: `initReader`
+  re-enters (a repaired 401, the key gate's retry) and today both paths turn
+  back before the tail, so nothing doubles — the guard is what keeps that
+  from being load-bearing. `test:sync` pins all of it, counting window
+  listeners per registration *site* rather than per type (app.js and
+  player.mjs both own a `pagehide`, correctly).
 - **Chapter bodies are blank-line free (2026-08-03).** The reader renders one
   `<p>` per line that survives `trim()`, so a blank line is pure char-offset
   padding — and "blank" must mean *takes no ink*, not just whitespace: scraped

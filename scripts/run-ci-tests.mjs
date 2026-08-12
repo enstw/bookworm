@@ -97,7 +97,10 @@ try {
   } else {
     run("auth-e2e", ["node", "scripts/test-auth-e2e.mjs"]);
     run("push-api-e2e", ["node", "scripts/test-push-api-e2e.mjs"]);
+    // after push-api, with shelf-admin: publishing a book writes a line into
+    // the push log, and push-api asserts against that log's last 20 entries
     run("shelf-admin-e2e", ["node", "scripts/test-shelf-admin-e2e.mjs"]);
+    run("sync-e2e", ["node", "scripts/test-sync-e2e.mjs"]);
   }
   run("vertical-e2e", ["node", "scripts/test-vertical-e2e.mjs"]);
   run("bg-e2e", ["node", "scripts/test-bg-e2e.mjs"]);

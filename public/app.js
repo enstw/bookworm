@@ -1181,6 +1181,24 @@ async function initReader(slug) {
   if (pos.back) showJumpNotice(pos.back);
   if (state.dirty) flush(); // local progress the server hasn't seen — push it now
 
+  wireReaderEvents();
+  applyWakeLock(); // the reader is where 恆亮 applies
+}
+
+// Once per page load, not once per initReader. initReader RE-ENTERS today —
+// a 401 that reauth repaired, the key gate's retry — and both of those turn
+// back before this point, so nothing doubles as the code stands. The guard is
+// what keeps that from being load-bearing: window listeners cannot be
+// un-registered from here, so a re-entry that ever reached the tail would
+// leave a second live copy of every one of them, doubling each flush and
+// fighting itself over the re-anchor. Every handler reads module state
+// (state, settings) rather than anything captured here, so one registration
+// serves every later open.
+let readerWired = false;
+
+function wireReaderEvents() {
+  if (readerWired) return;
+  readerWired = true;
   // capture: in 直排 the scroller is #content and scroll events don't bubble
   addEventListener("scroll", onScroll, { passive: true, capture: true });
   addEventListener("keydown", onKey);
@@ -1193,11 +1211,20 @@ async function initReader(slug) {
   // preload the player module so tapping 🔊 can call audio.play() inside
   // the gesture (iOS blocks playback started after an await)
   loadPlayer().catch(() => {});
-  addEventListener("online", () => { flush(); flushSettings(); updateOfflineWindow(); });
+  // the network coming back: push first, then ask what the row holds — the
+  // answer is only another device's if our own writes are already in it
+  addEventListener("online", () => {
+    flushSettings();
+    updateOfflineWindow();
+    flush().then(checkRemotePosition);
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") { flushSettings(true); return flush(true); }
     // narration crossed chapters while the screen was off — show it now
     playerMod?.visibleCatchup();
+    // the foreground flip is how an installed PWA "reopens": the moment to
+    // find out that the phone read three chapters on while this sat idle
+    checkRemotePosition();
   });
   addEventListener("pagehide", () => { flushSettings(true); flush(true); });
   // rotation / window resize re-derives the grid, which MOVES every page
@@ -1210,33 +1237,39 @@ async function initReader(slug) {
       if ($("#content p[data-off]")) restoreScroll(state.off);
     }, 200);
   });
-  applyWakeLock(); // the reader is where 恆亮 applies
 }
 
 let resizeTick = 0;
 
+// This reader's row for this book, or null for anything that went wrong
+// (offline, timed out, a dead API, a revoked key) — every caller's answer to
+// "no remote" is the same: keep what the device holds.
+async function fetchRemotePosition(opts) {
+  try {
+    const res = await fetch(
+      `/api/position?book=${encodeURIComponent(state.id)}&user=${encodeURIComponent(state.uid)}`,
+      opts,
+    );
+    const data = await res.json();
+    if (!data.position) return null;
+    return {
+      chapter: data.position.chapter,
+      offset: data.position.char_off,
+      updatedAt: data.position.updated_at,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function resolvePosition() {
   let local = null;
   try { local = JSON.parse(localStorage.getItem(posKey())); } catch { /* ignore */ }
-  let remote = null;
-  try {
-    // capped: resuming must not wait on a bookmark the device already holds.
-    // Losing this race cannot lose progress — the server takes a position
-    // write only when its updated_at is newer (LWW), so the local-wins flush
-    // that follows a timeout can never clobber a fresher remote bookmark.
-    const res = await fetch(
-      `/api/position?book=${encodeURIComponent(state.id)}&user=${encodeURIComponent(state.uid)}`,
-      capped(),
-    );
-    const data = await res.json();
-    if (data.position) {
-      remote = {
-        chapter: data.position.chapter,
-        offset: data.position.char_off,
-        updatedAt: data.position.updated_at,
-      };
-    }
-  } catch { /* offline is fine; local wins */ }
+  // capped: resuming must not wait on a bookmark the device already holds.
+  // Losing this race cannot lose progress — the server takes a position
+  // write only when its updated_at is newer (LWW), so the local-wins flush
+  // that follows a timeout can never clobber a fresher remote bookmark.
+  const remote = await fetchRemotePosition(capped());
 
   const pick =
     [local, remote].filter(Boolean).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0] ??
@@ -1259,16 +1292,69 @@ async function resolvePosition() {
   return pick;
 }
 
+const chapterTitle = (i) => state.manifest.chapters[i]?.title ?? t("lib.chapterN", i + 1);
+
 function showJumpNotice(back) {
   back.chapter = Math.min(Math.max(back.chapter, 0), state.manifest.chapters.length - 1);
-  const title = (i) => state.manifest.chapters[i]?.title ?? t("lib.chapterN", i + 1);
   const note = el("div", { class: "jumpnote" },
     el("span", { class: "jumpnote-text" },
-      t("jump.synced", title(state.idx), title(back.chapter))),
+      t("jump.synced", chapterTitle(state.idx), chapterTitle(back.chapter))),
     el("button", {
       class: "linklike",
       onclick: () => { note.remove(); openChapter(back.chapter, back.offset).then(() => flush()); },
     }, t("jump.back")),
+    el("button", { class: "iconbtn", title: t("ui.close"), onclick: () => note.remove() }, "✕"));
+  document.body.append(note);
+}
+
+// ---------- the bookmark another device moved (background pull) ----------
+//
+// resolvePosition runs once, when the book opens — and an installed PWA is
+// reopened, not reloaded, so that one open can stand for days. A device that
+// opened offline, or opened before the phone read on ahead, would otherwise
+// hold a stale bookmark with no way to ask again that does not involve
+// telling the reader to pull-to-refresh a PWA. This is the missing pull: the
+// same reconcile, re-run in the background when the app comes back to the
+// foreground and when the network returns.
+//
+// It never moves the page — a pill offers the jump, the mirror of the
+// runaway-bookmark pill that offers the way back. Text must not move under
+// someone who is reading it, and "the other device is ahead" is a weaker
+// claim than "this reader asked to go there".
+let posNoticed = 0; // the remote updated_at already offered or ruled out
+
+async function checkRemotePosition() {
+  if (!state.manifest || !state.id || !state.uid) return;
+  // local progress the server has not taken yet: whatever the row holds is
+  // older than what this device is about to push, so there is nothing to
+  // learn from it. The flush that clears this re-invites the check.
+  if (state.dirty) return;
+  // 4 s, not NET_MS: this blocks nothing (checkVersion's reasoning), and a
+  // 1 s cap on a slow link would mean the notice simply never arrives.
+  const remote = await fetchRemotePosition(capped(4000));
+  if (!remote) return;
+  if (remote.updatedAt <= Math.max(state.lastSaved?.updatedAt ?? 0, posNoticed)) return;
+  posNoticed = remote.updatedAt; // asked and answered, including a dismissal
+  // Same chapter is not worth a pill: it would name the chapter the reader is
+  // already in, and two devices a few paragraphs apart resolve themselves —
+  // whichever one moves next wins the LWW.
+  if (remote.chapter === state.idx) return;
+  showRemoteNotice(remote);
+}
+
+function showRemoteNotice(remote) {
+  // one pill at a time — they are all parked on the same fixed corner. The
+  // update note is spared: it is about the app, not about a position, and it
+  // has its own answered/dismissed bookkeeping.
+  document.querySelector(".jumpnote:not(.updatenote)")?.remove();
+  const note = el("div", { class: "jumpnote syncnote" },
+    el("span", { class: "jumpnote-text" }, t("jump.remote", chapterTitle(remote.chapter))),
+    el("button", {
+      class: "linklike",
+      // arriving there IS this device moving, so it takes a fresh timestamp
+      // through savePos — the row keeps meaning "last place anyone read".
+      onclick: () => { note.remove(); openChapter(remote.chapter, remote.offset).then(() => flush()); },
+    }, t("jump.go")),
     el("button", { class: "iconbtn", title: t("ui.close"), onclick: () => note.remove() }, "✕"));
   document.body.append(note);
 }
