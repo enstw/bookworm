@@ -13,10 +13,21 @@
   <style>
     .wrap { max-width: 34rem; margin: 0 auto; padding: 1.2rem 1rem 4rem; }
     h1 { font-size: 1.3rem; }
-    section {
+    section, details.fold {
       background: var(--card); border: 1px solid var(--border);
       border-radius: 10px; padding: 1rem; margin: 1rem 0;
     }
+    /* Eight panels stacked open made /admin one long phone scroll, so each is
+       a fold now — closed, the whole page is a stack of headings you can see
+       at once. <details> is the whole mechanism: it collapses without script,
+       so a failed module load leaves the page usable rather than blank. */
+    details.fold > summary {
+      cursor: pointer; font-size: 1rem; font-weight: 600;
+      /* the tap target is the whole row, not just the glyph */
+      margin: -1rem; padding: 1rem; border-radius: 10px;
+    }
+    details.fold[open] > summary { margin-bottom: 0; padding-bottom: 0.6rem; }
+    details.fold > summary::marker { color: var(--muted); }
     label { display: block; margin: 0.7rem 0 0.25rem; color: var(--muted); font-size: 0.85rem; }
     input[type="text"], input[type="password"], select, textarea {
       font: inherit; color: inherit; width: 100%;
@@ -54,7 +65,8 @@
     .panel .btn { margin-top: 0.6rem; margin-right: 0.5rem; }
     .msg { margin-top: 0.5rem; font-size: 0.85rem; }
     .hint { color: var(--muted); font-size: 0.8rem; margin: 0.4rem 0 0; }
-    #diag a { margin-right: 0.9rem; font-size: 0.9rem; }
+    .diaglinks { display: flex; flex-direction: column; gap: 0.1rem; }
+    .diaglinks a { padding: 0.5rem 0; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -74,20 +86,20 @@
       <div id="authMsg" class="small"></div>
     </section>
 
-    <section id="books" hidden>
-      <h2 data-i18n="admin.booksH">書架上的書</h2>
+    <details id="books" class="fold" hidden>
+      <summary data-i18n="admin.booksH">書架上的書</summary>
       <div id="bookList"></div>
       <!-- outcomes that outlive the row they came from (a delete removes it),
            and where 清理 reports what its index rebuild put back -->
       <div id="booksMsg" class="msg"></div>
-    </section>
+    </details>
 
     <!-- 讀者鑰匙: who gets to read. A key IS the identity — minted here,
          carried to a device as a /?key= link (AirDrop / iMessage), revoked
          here when a device is lost. Several keys can share one reader id:
          one key per DEVICE, so revoking a phone never logs out the rest. -->
-    <section id="readers" hidden>
-      <h2 data-i18n="rd.h">讀者鑰匙</h2>
+    <details id="readers" class="fold" hidden>
+      <summary data-i18n="rd.h">讀者鑰匙</summary>
       <p class="hint" data-i18n="rd.hint">每台裝置一把鑰匙。把連結傳到裝置上打開就完成登入；裝置遺失就撤銷那把鑰匙。同一位讀者（同代號）可以有多把鑰匙。</p>
       <div id="readerList"></div>
       <div class="row">
@@ -102,10 +114,10 @@
       </div>
       <button class="btn primary" id="rdCreate" data-i18n="rd.create">產生鑰匙</button>
       <div id="rdMsg" class="msg"></div>
-    </section>
+    </details>
 
-    <section id="pick" hidden>
-      <h2 data-i18n="admin.uploadH">上傳新書</h2>
+    <details id="pick" class="fold" hidden>
+      <summary data-i18n="admin.uploadH">上傳新書</summary>
       <label for="file" data-i18n="admin.file">書檔（.txt 或 .zip 內含一個大 .txt）</label>
       <input type="file" id="file" accept=".txt,.zip,text/plain,application/zip">
 
@@ -146,7 +158,7 @@
       <input type="text" id="pattern" placeholder="^第.+章">
 
       <button class="btn primary" id="analyze" disabled data-i18n="admin.analyze">分析章節</button>
-    </section>
+    </details>
 
     <section id="review" hidden>
       <div id="summary"></div>
@@ -160,8 +172,8 @@
          index and deletes what nothing can reach. Checking is the safe half and
          gets to be pressed on its own; 修復 stays dark until a check has found
          something for it to do. -->
-    <section id="house" hidden>
-      <h2 data-i18n="clean.h">檢查與修復</h2>
+    <details id="house" class="fold" hidden>
+      <summary data-i18n="clean.h">檢查與修復</summary>
       <p class="hint" data-i18n="clean.hint">先檢查，有問題再修。檢查只讀不寫，隨時可以按。修復會重建索引，再把讀不到的東西刪掉 —— 書架上沒有的，就是誰都讀不到的，不必搶救，刪掉重傳就好。</p>
       <button class="btn" id="checkBtn" data-i18n="clean.check">健康檢查</button>
       <button class="btn danger" id="fixBtn" disabled data-i18n="clean.fix">修復</button>
@@ -171,36 +183,40 @@
            the findings to be seen. -->
       <div id="auditConfirm" class="panel" hidden></div>
       <div id="auditList"></div>
-    </section>
+    </details>
 
     <!-- 改進建議: the owner's suggestion inbox for the AI. Written here (the
          phone is where ideas strike), read back by a dev agent with a plain
          unauthenticated GET /api/feedback — no key to hand over. Deleted by
          nobody: schema.sql empties the table on every deploy, so shipping
          the fix is what clears its note, and no delete button is needed. -->
-    <section id="fb" hidden>
-      <h2 data-i18n="fb.h">改進建議</h2>
+    <details id="fb" class="fold" hidden>
+      <summary data-i18n="fb.h">改進建議</summary>
       <p class="hint" data-i18n="fb.hint">隨手記下想改進的地方。AI 開工時會從 GET /api/feedback 讀取（不需密鑰）；建議做完部署上線，這裡就自動清空 — 還讀得到的，就是還沒做的。</p>
       <textarea id="fbBody" rows="3" maxlength="2000"></textarea>
       <button class="btn primary" id="fbSend" data-i18n="fb.send">張貼</button>
       <div id="fbMsg" class="msg"></div>
       <div id="fbList"></div>
-    </section>
+    </details>
 
     <!-- On-device diagnostics, moved off the library footer: they are for
          whoever runs the server, not for whoever reads on it. Born temporary,
          kept on purpose — every paging fix so far started from one of these
          readouts. (bare paths, not .html — the assets layer 307s .html to
          bare) -->
-    <section id="diag" hidden>
-      <h2 data-i18n="admin.diagH">裝置診斷</h2>
-      <a href="/vhtest" data-i18n="diag.vh">vh 測試</a>
-      <a href="/pgtest" data-i18n="diag.pg">翻頁測試</a>
-      <a href="/pagedtest" data-i18n="diag.paged">整頁測試</a>
-      <a href="/scrolltest" data-i18n="diag.scroll">雙捲動測試</a>
-      <a href="/speechtest" data-i18n="diag.speech">系統朗讀測試</a>
-      <a href="/wasmtest" data-i18n="diag.wasm">WASM 朗讀測試</a>
-    </section>
+    <details id="diag" class="fold" hidden>
+      <summary data-i18n="admin.diagH">裝置診斷</summary>
+      <!-- one tap target per row: these were bare inline <a>s running together
+           on one line, which on a phone is a single ambiguous smear of text -->
+      <div class="diaglinks">
+        <a href="/vhtest" data-i18n="diag.vh">vh 測試</a>
+        <a href="/pgtest" data-i18n="diag.pg">翻頁測試</a>
+        <a href="/pagedtest" data-i18n="diag.paged">整頁測試</a>
+        <a href="/scrolltest" data-i18n="diag.scroll">雙捲動測試</a>
+        <a href="/speechtest" data-i18n="diag.speech">系統朗讀測試</a>
+        <a href="/wasmtest" data-i18n="diag.wasm">WASM 朗讀測試</a>
+      </div>
+    </details>
   </div>
 
   <script type="module">
@@ -1038,6 +1054,28 @@
     }
     $("langBtn").onclick = () => { bwSetLang(bwOtherLang()); applyI18n(); };
     applyI18n();
+
+    // Which folds are open is remembered per device. /admin is a phone page
+    // opened for ONE errand — mint a key, jot a note, check the shelf — and a
+    // page that reopens the way it was left beats one that makes every visit
+    // start with the same scrolling. Restored here rather than in unlock():
+    // the elements exist while still hidden, and unlock() can run twice in a
+    // session (initAuth, then a re-save), which would double the listeners.
+    const OPEN_KEY = "bookworm:admin-open";
+    const FOLDS = ["books", "readers", "pick", "house", "fb", "diag"];
+    function saveFolds() {
+      try {
+        localStorage.setItem(OPEN_KEY, JSON.stringify(FOLDS.filter((id) => $(id).open)));
+      } catch { /* private mode */ }
+    }
+    let openFolds;
+    try { openFolds = JSON.parse(localStorage.getItem(OPEN_KEY)); } catch { /* ignore */ }
+    // first visit: the shelf is the overview, and the only one worth the room
+    if (!Array.isArray(openFolds)) openFolds = ["books"];
+    for (const id of FOLDS) {
+      $(id).open = openFolds.includes(id);
+      $(id).addEventListener("toggle", saveFolds);
+    }
 
     initAuth();
   </script>

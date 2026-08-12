@@ -459,6 +459,26 @@ the pre-publication history, which lives in the owner's private archive.
   (`/vhtest`, `/pgtest`, `/scrolltest`, `/pagedtest`, linked from /admin)
   write their readouts there; read them with
   `curl -H "authorization: Bearer $ADMIN_TOKEN" '<origin>/api/testlog?page=…&limit=5'`.
+- **/admin is folds, not one scroll (2026-08-12).** Eight panels stacked open
+  made the page 1959 px on a 430×932 phone — over two screens before the
+  first tap. Each panel below the key gate is a `<details class="fold">`
+  now, so closed the whole page is a stack of headings at 932 px: one
+  screen, exactly. `<details>` is the entire mechanism — it collapses with
+  no script, so a failed module load leaves a usable page rather than a
+  blank one, and the e2e suites keep driving it because a JS `.click()`
+  fires inside a closed fold. Which folds are open lives in
+  `bookworm:admin-open` (localStorage), restored at load rather than in
+  `unlock()` — the elements exist while still `hidden`, and `unlock()` can
+  run twice in a session, which would double the `toggle` listeners. First
+  visit opens 書架上的書 alone. 認證 stays a plain `<section>` (a gate that
+  folds is a gate you can lock yourself out of looking at) and so does
+  上傳預覽, which appears as the RESULT of 分析章節 and must not need a
+  second tap. The 裝置診斷 links became one tap target per row at the same
+  time: they were bare inline `<a>`s with no CSS at all, running together
+  into one ambiguous smear on a phone. An anchor-nav was the alternative
+  and was rejected — with the folds closed the page is already one screen,
+  so a second navigation system would be furniture for a problem that no
+  longer exists.
 - **Check and fix are different buttons (2026-07-30).** On /admin, 健康檢查
   is read-only and 修復 is the only thing that writes — a check that
   mutates what it is checking is not a check, and the check treats the D1
