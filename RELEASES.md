@@ -9,6 +9,11 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-12 — `5e9ae86e9073`
+
+- testlog: require an admin cookie to write, and a quota per page (#16) (`5e9ae86`)
+- docs: require Actions to be pinned to a commit digest (`1a3d8cd`)
+
 ## 2026-08-12 — `0081b255834e`
 
 > 更新提示多了「有什麼新的」，可以看這次到底改了什麼
