@@ -4,6 +4,18 @@ One entry per green deploy — the commits that went live, newest first. Written
 by scripts/update-releases.mjs from the deploy workflow; the `released` tag
 marks the last deployed commit. Do not edit entries by hand.
 
+The `>` lines are the reader-facing notes, taken from each commit's
+`Release-Note:` trailer plus the release's dependency bumps. A release with
+none says nothing to readers — which is the intended outcome for a week of
+pure CI work.
+
+## 2026-08-12 — `0081b255834e`
+
+> 更新提示多了「有什麼新的」，可以看這次到底改了什麼
+
+- ci: untrack public/releases.json, autostash the ledger rebase (`0081b25`)
+- reader: tell readers what shipped, in a sentence someone wrote (`14eeb1d`)
+
 ## 2026-08-12 — `cfd7fea8555b`
 
 - admin: a switch for this device's diagnostic uploads (`cfd7fea`)
