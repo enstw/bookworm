@@ -4,6 +4,10 @@ One entry per green deploy — the commits that went live, newest first. Written
 by scripts/update-releases.mjs from the deploy workflow; the `released` tag
 marks the last deployed commit. Do not edit entries by hand.
 
+## 2026-08-12 — `cfd7fea8555b`
+
+- admin: a switch for this device's diagnostic uploads (`cfd7fea`)
+
 ## 2026-08-12 — `d0cb32b6ea7e`
 
 - admin: fold the panels, one screen instead of two (`d0cb32b`)
