@@ -80,6 +80,7 @@ if (!(await alive())) {
 // pure-node suites run while the server boots
 run("slug", ["node", "scripts/test-slug.mjs"]);
 run("split-core", ["node", "scripts/test-split-core.mjs"]);
+run("release-notes", ["node", "scripts/test-release-notes.mjs"]);
 run("wasm-frontend", ["node", "scripts/test-wasm-frontend.mjs"]);
 run("matcha-fst", ["node", "scripts/test-matcha-fst.mjs"]);
 run("worker-pool", ["node", "scripts/test-worker-pool.mjs"]);

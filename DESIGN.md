@@ -421,6 +421,30 @@ the pre-publication history, which lives in the owner's private archive.
   chain — worker send, push-service status, SW receipt, badge — logs to
   `testlog` page=push, and the 測試 button pushes the phone itself so each
   outcome names a different fix.
+- **Release notes are written at ship time, never summarised (2026-08-12).**
+  A reader who came here for a novel must not be shown "ci: pin every action
+  to a commit digest", so RELEASES.md's commit subjects are the ledger and
+  not the message. The reader-facing line rides in the commit that earns it,
+  as a `Release-Note:` trailer written by whoever ships — the person or agent
+  making the change is the one who knows what it means, and they know it
+  then, not later. A commit without the trailer contributes nothing, which is
+  how CI and refactor work stays out of a reader's face with nobody
+  filtering it, and a release where nothing carried one says nothing at all.
+  Upstream bumps need no prose because the version numbers *are* the note:
+  they are read out of the `package.json` and `FONT_RELEASE` diff across the
+  release, so a roll-up week says something true even though renovate writes
+  one commit subject for the lot. **No AI summariser is involved and none is
+  wanted** — GitHub Models, which would have been the free way to run one,
+  was retired 2026-07-30 anyway. `scripts/release-notes.mjs` is the single
+  computation; `gen-release-notes.mjs` writes `public/releases.json`
+  **before** `deploy.sh` (the deploy uploads it, so it must exist first) and
+  `update-releases.mjs` writes the same notes into RELEASES.md as `> ` lines
+  **after** (a failed deploy must not claim a release). Those `> ` lines are
+  also where the shipped JSON reads its history back from, so there is no
+  second source of truth. The reader fetches `/releases.json` only once
+  `checkVersion` has found an update — rare — and walks it down to its own
+  build, so a phone left alone for a month hears about the whole month and
+  never about the version it is already running.
 - **A deploy announces itself (2026-08-08).** `checkVersion` in `app.js` can
   only run while a page is open, so an installed phone nobody opened never
   learns a newer shell exists. `deploy.sh` POSTs `/api/admin/announce-build`

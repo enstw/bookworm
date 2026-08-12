@@ -39,12 +39,26 @@ const manifest = { slug: "vt", title: "背景測試", generatedAt: "bg1",
   totalChars: chapters.reduce((a, c) => a + c.chars, 0), chapters };
 
 const settingsPosts = []; // bodies the client pushed to /api/settings
+// This page ships BUILD "dev", so "dev…" is the entry the walk must stop at:
+// everything above it is news, everything from it down is already running here.
+let releasesBody = JSON.stringify({
+  releases: [
+    { build: "ffffffffffff", date: "2026-08-12", notes: ["離線後連上網會自己補書籤", "wrangler 4.120.0 → 4.121.0"] },
+    { build: "eeeeeeeeeeee", date: "2026-08-11", notes: ["另一個改進"] },
+    { build: "dev000000000", date: "2026-08-10", notes: ["ALREADY-RUNNING"] },
+    { build: "cccccccccccc", date: "2026-08-09", notes: ["OLDER-STILL"] },
+  ],
+});
 const server = createServer((req, res) => {
   const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
   const out = (code, body, type) => { res.writeHead(code, { "content-type": type }); res.end(body); };
   if (path === "/api/books") return out(200, '{"books":[]}', MIME[".json"]);
   // a build the page (BUILD "dev") has never heard of → the update note
   if (path === "/api/version") return out(200, '{"build":"e2e-vNEXT"}', MIME[".json"]);
+  // the reader-facing release notes the deploy ships alongside the build.
+  // Mutable so the same run can also assert the shape of a release that had
+  // nothing to say — the case that must NOT grow a 有什麼新的 button.
+  if (path === "/releases.json") return out(200, releasesBody, MIME[".json"]);
   // settings:null = server never overrides the test's local state; POSTs are
   // captured so the push path can be asserted
   if (path === "/api/settings") {
@@ -111,9 +125,41 @@ out.btnExists = (await evalJs(`!!document.getElementById("bgBtn")`)) ? "ok" : "F
 const noteText = await evalJs(`document.querySelector(".updatenote")?.textContent ?? ""`);
 out.updateNote = /新版本|new version/i.test(noteText) && noteText.includes("e2e-vNEXT")
   ? "ok (note names the build)" : `FAIL: ${JSON.stringify(noteText)}`;
+// 有什麼新的: the notes ship with the build, and the walk stops at the one
+// this shell is already running — a reader is never told about their own
+// version, nor about anything older than it.
+const whatsNew = `document.getElementById("whatsNewBtn")`;
+out.whatsNewOffered = (await evalJs(`!!${whatsNew}`)) ? "ok" : "FAIL: no 有什麼新的 button";
+out.whatsNewLabel = /有什麼新的|What's new/.test(await evalJs(`${whatsNew}.textContent`))
+  ? "ok" : `FAIL: ${await evalJs(`${whatsNew}.textContent`)}`;
+out.notesStartHidden = (await evalJs(`document.querySelector(".notelist")?.hidden`)) === true
+  ? "ok" : "FAIL: the list was open before it was asked for";
+await evalJs(`${whatsNew}.click()`);
+const shown = await evalJs(`[...document.querySelectorAll(".notelist li")].map((li) => li.textContent)`);
+out.notesShown = JSON.stringify(shown) === JSON.stringify(
+  ["離線後連上網會自己補書籤", "wrangler 4.120.0 → 4.121.0", "另一個改進"])
+  ? "ok (both newer releases, in order)" : `FAIL: ${JSON.stringify(shown)}`;
+out.stopsAtOwnBuild = shown.some((s) => s.includes("ALREADY-RUNNING") || s.includes("OLDER-STILL"))
+  ? "FAIL: notes from this build or older reached the reader" : "ok";
+out.notesToggleBack = await (async () => {
+  await evalJs(`${whatsNew}.click()`);
+  return (await evalJs(`document.querySelector(".notelist")?.hidden`)) === true ? "ok" : "FAIL: would not close";
+})();
+
 await evalJs(`document.querySelector(".updatenote .iconbtn").click()`);
 out.updateDismiss = (await evalJs(`!!document.querySelector(".updatenote")`))
   ? "FAIL: note survived ✕" : "ok";
+
+// a release that said nothing to readers: the pill still announces the build,
+// but there must be nothing to expand — an empty "有什麼新的" is worse than none
+releasesBody = JSON.stringify({ releases: [] });
+await nav(`${BASE}/vt`);
+await sleep(500);
+out.quietReleaseStillNotes = (await evalJs(`!!document.querySelector(".updatenote")`))
+  ? "ok" : "FAIL: the build announcement itself went missing";
+out.quietReleaseNoButton = (await evalJs(`!!${whatsNew}`))
+  ? "FAIL: offered 有什麼新的 with nothing behind it" : "ok";
+await evalJs(`document.querySelector(".updatenote .iconbtn")?.click()`);
 // factory default is 金褐 (an explicitly stored choice would win)
 out.defaultTitle = (await evalJs(`document.getElementById("bgBtn").title`)) === "背景顏色：金褐"
   ? "ok" : "FAIL: " + (await evalJs(`document.getElementById("bgBtn").title`));

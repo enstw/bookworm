@@ -91,6 +91,15 @@ genuinely dead (`browser-e2e` explains why emulation cannot substitute):
 
 - CDP ports are 934x, profiles `/tmp/bookworm-<suite>-e2e-profile`; the
   offline stage-2 deliberately keeps its profile (that IS the test).
+- **A suite that throws leaves its browser alive**, because `close()` never
+  runs — and the next run's `launch()` connects to that survivor on the same
+  port, inheriting its localStorage. `rmSync(PROFILE)` does not help: the
+  zombie already holds the profile open. The symptom is a suite failing on
+  state that should be factory-default, with the wrong value *drifting
+  between runs* (bg-e2e starting on 雪白, then 淡綠, then 紫紅). It is not the
+  code under test. Check with
+  `ps ax | grep remote-debugging-port=93` and kill the strays before
+  believing any red run that follows a crashed one.
 - The chrome is 中文 first: assert user-facing strings against both
   languages, e.g. `/載入失敗|Failed to load/`.
 - 直排 suites run phone-shaped (`--window-size=430,900`) — a desktop-wide
