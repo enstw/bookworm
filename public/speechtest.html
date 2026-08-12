@@ -75,6 +75,7 @@
   <div id="log"></div>
 </main>
 
+<script src="/testlog.js"></script>
 <script>
 "use strict";
 // ---- timeline: on-screen log + batched uploads to /api/testlog ----------
@@ -90,12 +91,9 @@ let flushTimer = 0;
 function flush() {
   flushTimer = 0;
   if (!buf.length) return;
-  const body = JSON.stringify({ page: "speechtest", device, data: buf.join("\n") });
+  const lines = buf.join("\n");
   buf = [];
-  try {
-    if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
-      fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
-  } catch { /* offline is fine */ }
+  bwTestlogSend("speechtest", device, lines);
 }
 function log(line) {
   const row = stamp() + " " + line;

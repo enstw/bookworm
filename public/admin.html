@@ -8,6 +8,10 @@
   <meta name="color-scheme" content="light dark">
   <title>Bookworm · 管理</title>
   <script src="/i18n.js"></script>
+  <!-- the diagnostic pages' upload helper, here only for the switch that
+       silences them: bwTestlogOn / bwTestlogSet read the same localStorage
+       flag those pages check before every POST -->
+  <script src="/testlog.js"></script>
   <link rel="icon" type="image/png" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/app.css">
   <style>
@@ -65,7 +69,9 @@
     .panel .btn { margin-top: 0.6rem; margin-right: 0.5rem; }
     .msg { margin-top: 0.5rem; font-size: 0.85rem; }
     .hint { color: var(--muted); font-size: 0.8rem; margin: 0.4rem 0 0; }
-    .diaglinks { display: flex; flex-direction: column; gap: 0.1rem; }
+    .switch { display: flex; align-items: center; gap: 0.5rem; margin: 0; color: inherit; }
+    .switch input { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
+    .diaglinks { display: flex; flex-direction: column; gap: 0.1rem; margin-top: 0.8rem; }
     .diaglinks a { padding: 0.5rem 0; font-size: 0.9rem; }
   </style>
 </head>
@@ -208,6 +214,16 @@
       <summary data-i18n="admin.diagH">裝置診斷</summary>
       <!-- one tap target per row: these were bare inline <a>s running together
            on one line, which on a phone is a single ambiguous smear of text -->
+      <!-- A device-side courtesy, not a gate: POST /api/testlog stays open by
+           design (the service worker can hold no credential), so this silences
+           THIS phone's readout uploads — the six pages above upload on a redraw
+           loop and will bury the newest-500 window on their own. The service
+           worker's one-row-per-push breadcrumb deliberately keeps writing. -->
+      <label class="switch">
+        <input type="checkbox" id="testlogOn">
+        <span data-i18n="diag.upload">上傳診斷讀數</span>
+      </label>
+      <p class="hint" data-i18n="diag.uploadHint">關掉之後，這台裝置的診斷頁就不再把讀數傳回伺服器；推播的收送記錄不受影響。</p>
       <div class="diaglinks">
         <a href="/vhtest" data-i18n="diag.vh">vh 測試</a>
         <a href="/pgtest" data-i18n="diag.pg">翻頁測試</a>
@@ -1061,6 +1077,10 @@
     // start with the same scrolling. Restored here rather than in unlock():
     // the elements exist while still hidden, and unlock() can run twice in a
     // session (initAuth, then a re-save), which would double the listeners.
+    // the diagnostic upload switch (testlog.js owns the flag and the reasoning)
+    $("testlogOn").checked = bwTestlogOn();
+    $("testlogOn").onchange = (e) => bwTestlogSet(e.target.checked);
+
     const OPEN_KEY = "bookworm:admin-open";
     const FOLDS = ["books", "readers", "pick", "house", "fb", "diag"];
     function saveFolds() {

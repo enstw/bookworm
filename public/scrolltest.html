@@ -55,6 +55,7 @@
     <tbody></tbody>
   </table></div>
   <div class="grid" id="grid"></div>
+<script src="/testlog.js"></script>
 <script>
 "use strict";
 // readout uploads: a completed run also POSTs to /api/testlog, so the laptop
@@ -66,11 +67,7 @@ const upload = (() => {
   return (data) => {
     if (!data || data === last) return;
     last = data;
-    const body = JSON.stringify({ page: "scrolltest", device, data });
-    try {
-      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
-        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
-    } catch { /* offline is fine */ }
+    bwTestlogSend("scrolltest", device, data);
   };
 })();
 

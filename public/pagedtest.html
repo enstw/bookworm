@@ -101,6 +101,7 @@
 </main>
 <div id="ruler"></div>
 <div id="pagewrap"><div id="pager"></div></div>
+<script src="/testlog.js"></script>
 <script>
 "use strict";
 
@@ -119,11 +120,7 @@ const upload = (() => {
   return (data) => {
     if (!data || data === last) return;
     last = data;
-    const body = JSON.stringify({ page: "pagedtest", device, data });
-    try {
-      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
-        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
-    } catch { /* offline is fine */ }
+    bwTestlogSend("pagedtest", device, data);
   };
 })();
 
