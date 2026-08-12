@@ -122,7 +122,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "docs: record release ${GITHUB_SHA::12}"
-          git pull --rebase origin main
+          # --autostash: the deploy leaves build products behind (releases.json,
+          # public/vendor/), and if one of them is ever tracked by mistake this
+          # rebase dies with "cannot pull with rebase: You have unstaged
+          # changes" AFTER the deploy has already shipped — the ledger and the
+          # tag are then silently a release behind. Stashing costs nothing and
+          # turns that class of mistake back into a no-op.
+          git pull --rebase --autostash origin main
           git push origin HEAD:main
           git tag -f released "$GITHUB_SHA"
           git push -f origin released
