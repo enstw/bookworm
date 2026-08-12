@@ -79,6 +79,7 @@ if (!(await alive())) {
 
 // pure-node suites run while the server boots
 run("renovate-policy", ["node", "scripts/test-renovate-policy.mjs"]);
+run("deploy-policy", ["node", "scripts/test-deploy-policy.mjs"]);
 run("slug", ["node", "scripts/test-slug.mjs"]);
 run("split-core", ["node", "scripts/test-split-core.mjs"]);
 run("release-notes", ["node", "scripts/test-release-notes.mjs"]);

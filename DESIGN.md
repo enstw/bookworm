@@ -58,6 +58,16 @@ decision in that subsystem.
   the 40-hex format). The font pin is deliberately outside the allowlist and
   outside the roll-up group — its PR is a work order, not a change (see
   fetch-font.mjs); `scripts/test-renovate-policy.mjs` pins the bypass cases.
+  The deploy workflow itself splits its permissions per job (2026-08-13):
+  the `test` job executes the pushed code, so it runs with `contents: read`
+  and a credential-free checkout — a compromised dependency in the suite has
+  no token to write with. `contents: write` exists only in `failure-report`
+  (publishes the `test-failure-*` pre-release from the uploaded artifact
+  alone — it never checks out or runs repository code, and refuses unexpected
+  or oversized artifact files rather than publish them) and in `deploy`,
+  which starts only after a green gate and is the only job that sees the
+  Cloudflare/production secrets. `scripts/test-deploy-policy.mjs` asserts
+  the split and self-tests that each seeded violation is caught.
 - The repo settings that no file records (2026-08-12): secret scanning with
   push protection is on; a ruleset on `main` blocks force-push and deletion
   (a rebase that rewrites a pushed branch is still fine — the ruleset only
@@ -68,7 +78,12 @@ decision in that subsystem.
   is a moving pointer, so the tag form means a compromised upstream reaches
   a workflow that already holds deploy credentials. Everything under
   `.github/` was already pinned when this was enabled; the setting exists so
-  a future workflow cannot quietly reintroduce the tag form.
+  a future workflow cannot quietly reintroduce the tag form. Also on
+  (2026-08-13): "Allow GitHub Actions to create and approve pull requests" —
+  without it the renovate workflow's GITHUB_TOKEN gets a 403 opening the
+  roll-up PR (the branch pushes fine, so the failure looks like Renovate
+  silently doing nothing). The default workflow token permission stays
+  read-only; jobs that write declare it per job.
 
 ## The owner's suggestion queue
 
