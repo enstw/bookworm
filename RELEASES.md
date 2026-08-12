@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-13 — `6bbd11cb21a3`
+
+- ci: gate merges into main behind a candidate check (`6bbd11c`)
+
 ## 2026-08-13 — `29755dac2ecc`
 
 - ci: strip the write token from the deploy test job (`29755da`)
