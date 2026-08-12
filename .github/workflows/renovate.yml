@@ -1,8 +1,9 @@
 # The weekly upstream roll-up (Monday 06:03 Asia/Taipei): renovate opens or
 # refreshes the single grouped PR (.github/renovate.json5 groups every update
-# into it), then this job merges it and dispatches the gated deploy — one
-# release a week from upstream churn. The push-to-main gate stays the only
-# gate: a red suite publishes the test-failure pre-release and never deploys.
+# into it), then a separate least-privilege job verifies the exact PR shape,
+# merges it and dispatches the gated deploy — one release a week from upstream
+# churn. The push-to-main gate stays the only full product gate: a red suite
+# publishes the test-failure pre-release and never deploys.
 #
 # The explicit `gh workflow run deploy` is load-bearing: a merge performed
 # with GITHUB_TOKEN does not trigger `on: push` workflows (GitHub's
@@ -14,38 +15,94 @@ on:
     - cron: "3 22 * * 0" # Sunday 22:03 UTC = Monday 06:03 Asia/Taipei
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write # the dependency dashboard is an issue
-  actions: write
-
 jobs:
-  roll-up:
+  renovate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write # the dependency dashboard is an issue
     steps:
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24.19.0
-      # renovate shells out to pnpm to regenerate pnpm-lock.yaml; the job has
-      # no checkout, so the version cannot come from packageManager — keep it
-      # in step with deploy.yml
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 11.21.0
-      - run: npx --yes renovate --platform=github enstw/bookworm
+      # renovate shells out to pnpm to regenerate pnpm-lock.yaml; the job has
+      # no checkout, so the version cannot come from packageManager — keep it
+      # in step with deploy.yml
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.19.0
+      # A floating CLI would give whatever package resolves today four write
+      # permissions. Renovate updates this exact pin through its own PR, where
+      # the merge job below verifies that only dependency inputs changed.
+      - run: pnpm dlx "renovate@44.24.1" --platform=github enstw/bookworm
         env:
           RENOVATE_TOKEN: ${{ github.token }}
           LOG_LEVEL: info
+
+  merge-and-deploy:
+    needs: renovate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      # The verifier is always the copy on main that started this run. The PR
+      # head is fetched for diffing but never checked out or executed with the
+      # write token.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.19.0
       - name: Merge the roll-up and dispatch the gated deploy
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          PR=$(gh pr list -R enstw/bookworm --head renovate/weekly-roll-up --json number --jq '.[0].number // empty')
-          if [ -n "$PR" ]; then
-            gh pr merge "$PR" --rebase --delete-branch -R enstw/bookworm
-            gh workflow run deploy --ref main -R enstw/bookworm
-          else
+          set -euo pipefail
+          mapfile -t PRS < <(gh pr list -R enstw/bookworm \
+            --state open \
+            --base main \
+            --head renovate/weekly-roll-up \
+            --json number \
+            --jq '.[].number')
+          if [ "${#PRS[@]}" -eq 0 ]; then
             echo "no roll-up this week"
+            exit 0
           fi
+          if [ "${#PRS[@]}" -ne 1 ]; then
+            echo "refusing to choose among ${#PRS[@]} weekly roll-up PRs" >&2
+            exit 1
+          fi
+
+          PR="${PRS[0]}"
+          META=$(mktemp)
+          CHECKS=$(mktemp)
+          gh api "repos/enstw/bookworm/pulls/${PR}" > "$META"
+          gh pr view "$PR" -R enstw/bookworm --json statusCheckRollup > "$CHECKS"
+          BASE_SHA=$(jq -r '.base.sha' "$META")
+          HEAD_SHA=$(jq -r '.head.sha' "$META")
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          node scripts/verify-renovate-pr.mjs "$META" "$CHECKS" "$BASE_SHA" "$HEAD_SHA" \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+          # A main update after verification invalidates the inspected diff.
+          # --match-head-commit closes the equivalent race on the PR side.
+          CURRENT_MAIN=$(gh api repos/enstw/bookworm/git/ref/heads/main --jq '.object.sha')
+          if [ "$CURRENT_MAIN" != "$BASE_SHA" ]; then
+            echo "main moved from $BASE_SHA to $CURRENT_MAIN; rerun Renovate" >&2
+            exit 1
+          fi
+          gh pr merge "$PR" \
+            --rebase \
+            --delete-branch \
+            --match-head-commit "$HEAD_SHA" \
+            -R enstw/bookworm
+          gh workflow run deploy --ref main -R enstw/bookworm
