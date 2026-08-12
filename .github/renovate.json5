@@ -12,6 +12,9 @@
 //
 // Third-party releases must age 30 days before they can enter a roll-up —
 // long enough for a yanked or compromised publish to surface elsewhere first.
+// GitHub Actions are third-party too: they are pinned to commit digests (the
+// `# vX.Y.Z` comment is what stays readable), and their bumps ride the same
+// quarantine and the same weekly roll-up as npm.
 // Our own upstreams (enstw/wasmtts, enstw/font) are exempt: we cut those tags,
 // so waiting on them buys nothing and only delays fixes we already know about.
 //
@@ -26,7 +29,13 @@
 // outside the roll-up.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: ["config:recommended"],
+  // pinGitHubActionDigests: an action tag is a mutable pointer, and these
+  // workflows hand CLOUDFLARE_API_TOKEN to whatever it resolves to on the
+  // day. Pinned to a digest, a re-pointed tag changes nothing until a PR
+  // moves the SHA — the same argument as the 30-day npm quarantine, applied
+  // to the one supply chain that was still following labels. The preset only
+  // pins what is unpinned, so it is the guard for actions added later.
+  extends: ["config:recommended", "helpers:pinGitHubActionDigests"],
   timezone: "Asia/Taipei",
   // pin exact versions, so in-range releases still get a PR — with caret
   // ranges Renovate stays silent until the next major (it does not do
