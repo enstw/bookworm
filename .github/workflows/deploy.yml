@@ -8,6 +8,14 @@
 # failing suite and embed its log tail, then skips the deploy. The e2e
 # ADMIN_TOKEN/VAPID pair are generated per run — the dev server under test is
 # local to the runner, so nothing secret is involved in testing.
+#
+# Permissions are per job, never workflow-wide: the test job executes the
+# pushed code, so it runs with a read-only token and a credential-free
+# checkout — a compromised dependency inside the suite has nothing to write
+# with. Only the two jobs that never execute repository code from the tested
+# commit hold contents: write — failure-report (publishes the pre-release
+# from the uploaded artifact alone) and deploy (runs only after a green
+# gate). scripts/test-deploy-policy.mjs asserts this split stays true.
 name: deploy
 
 on:
@@ -18,9 +26,6 @@ on:
     paths-ignore: ["**.md", ".github/renovate.json5"]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 concurrency:
   group: deploy
   cancel-in-progress: false
@@ -29,11 +34,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     env:
       ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}
       BROWSER_BIN: /usr/bin/google-chrome
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # the suite runs the pushed code; leave no token on disk for it
+          persist-credentials: false
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 11.21.0
@@ -53,31 +63,65 @@ jobs:
           } > .dev.vars
           pnpm run db:init:local
       - name: Run the test gate
-        id: gates
-        continue-on-error: true
         run: node scripts/run-ci-tests.mjs
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-gate-report
           path: test-artifacts/
+
+  # Publishes the red-run record WITHOUT checking out or executing any code
+  # from the failed commit: everything it touches comes from the artifact the
+  # test job uploaded, validated against fixed names and a size cap before a
+  # byte of it becomes a public release asset.
+  failure-report:
+    needs: test
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: test-gate-report
+          path: test-artifacts
       - name: Publish failed-tests record
-        if: steps.gates.outcome != 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          cd test-artifacts
+          # fixed names only, and nothing bigger than a log tail has business
+          # being here — refuse the whole upload rather than publish a stray
+          for f in report.json report.md; do
+            [ -f "$f" ] || { echo "missing $f in artifact" >&2; exit 1; }
+          done
+          while IFS= read -r f; do
+            case "$f" in
+              ./report.json|./report.md|./logs/*.log) ;;
+              *) echo "unexpected file in artifact: $f" >&2; exit 1 ;;
+            esac
+          done < <(find . -type f)
+          TOTAL_KB=$(du -sk . | cut -f1)
+          if [ "$TOTAL_KB" -gt 102400 ]; then
+            echo "artifact is ${TOTAL_KB} KB, over the 100 MB cap" >&2
+            exit 1
+          fi
           gh release create "test-failure-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            test-artifacts/report.json \
-            test-artifacts/logs/*.log \
+            report.json \
+            logs/*.log \
             --target "$GITHUB_SHA" \
             --title "Failed tests — ${GITHUB_SHA::12}" \
-            --notes-file test-artifacts/report.md \
-            --prerelease
-          exit 1
+            --notes-file report.md \
+            --prerelease \
+            -R "$GITHUB_REPOSITORY"
 
   deploy:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
