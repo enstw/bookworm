@@ -45,6 +45,17 @@ decision in that subsystem.
   tags. The quarantine has one bypass: a dependency with a GitHub advisory
   gets an immediate ungrouped PR, because Renovate's `vulnerabilityAlerts`
   defaults override the wait.
+- The repo settings that no file records (2026-08-12): secret scanning with
+  push protection is on; a ruleset on `main` blocks force-push and deletion
+  (a rebase that rewrites a pushed branch is still fine — the ruleset only
+  guards `main`); and **Actions must be pinned to a full 40-character commit
+  digest** (`sha_pinning_required`, repo → Settings → Actions). `uses:
+  actions/checkout@v7` no longer runs — write the digest and keep the
+  version in a trailing comment, which is the form Renovate updates. A tag
+  is a moving pointer, so the tag form means a compromised upstream reaches
+  a workflow that already holds deploy credentials. Everything under
+  `.github/` was already pinned when this was enabled; the setting exists so
+  a future workflow cannot quietly reintroduce the tag form.
 
 ## The owner's suggestion queue
 
