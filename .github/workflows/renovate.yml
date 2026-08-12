@@ -94,10 +94,10 @@ jobs:
           node scripts/verify-renovate-pr.mjs "$META" "$CHECKS" "$BASE_SHA" "$HEAD_SHA" \
             2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
 
-          # main requires a green candidate-gate on the PR head (H-03), and
-          # renovate's branch was pushed with GITHUB_TOKEN, which never fires
-          # pull_request — dispatch the gate and wait for it to land
-          gh workflow run candidate --ref renovate/weekly-roll-up -R enstw/bookworm
+          # main requires a green candidate-gate on the PR head (H-03).
+          # renovate's PR was made with GITHUB_TOKEN, so its pull_request run
+          # sits held (action_required) — the waiter approves that run (the
+          # one the required check watches) and follows it to a conclusion
           node scripts/wait-candidate-gate.mjs "$HEAD_SHA"
 
           # A main update after verification invalidates the inspected diff.

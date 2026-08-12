@@ -193,8 +193,10 @@ jobs:
           gh pr create -R "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
             --title "docs: record release ${GITHUB_SHA::12}" \
             --body "Automated release ledger for deploy run ${GITHUB_RUN_ID}; merged by the deploy workflow once candidate-gate is green."
-          # a GITHUB_TOKEN push never fires pull_request — dispatch the gate
-          gh workflow run candidate --ref "$BRANCH" -R "$GITHUB_REPOSITORY"
+          # a GITHUB_TOKEN PR gets its pull_request run created *held*
+          # (action_required); the required check waits on that exact run, so
+          # the waiter approves it rather than dispatching a duplicate — a
+          # dispatched run's check suite never associates with the PR
           node scripts/wait-candidate-gate.mjs "$HEAD_SHA"
           gh pr merge "$BRANCH" -R "$GITHUB_REPOSITORY" \
             --rebase --delete-branch --match-head-commit "$HEAD_SHA"

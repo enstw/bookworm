@@ -72,11 +72,15 @@ decision in that subsystem.
   `candidate` workflow runs the full suite on every PR as a required check
   named `candidate-gate` — same containment rules as the deploy test job
   (read-only token, credential-free checkout, generated-not-secret env),
-  never `pull_request_target`. PRs whose branch was pushed with
-  GITHUB_TOKEN (the release ledger, renovate's roll-up) never fire
-  `pull_request`, so the workflow that opened them dispatches `candidate`
-  explicitly and waits on the check via
-  `scripts/wait-candidate-gate.mjs` before merging. The release ledger
+  never `pull_request_target`. PRs opened with GITHUB_TOKEN (the release
+  ledger, renovate's roll-up) get their `pull_request` run created *held*
+  (`action_required`) — GITHUB_TOKEN events never start workflows on their
+  own — and the ruleset's required check waits on exactly that held run: a
+  separately dispatched candidate run builds a check suite that never
+  associates with the PR, so the PR stays blocked however green the
+  dispatch is. `scripts/wait-candidate-gate.mjs` therefore approves the
+  held run (the callers hold `actions: write` for this) and follows the
+  check to a conclusion before the workflow merges. The release ledger
   itself stopped pushing to `main` directly: the deploy job commits
   RELEASES.md to an `automation/release-ledger-<run>` branch, opens a PR,
   waits for its green `candidate-gate`, rebase-merges, and only then moves
