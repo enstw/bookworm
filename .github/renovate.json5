@@ -62,8 +62,32 @@
       matchPackageNames: ["!wasmtts", "!enstw/wasmtts", "!enstw/font"],
       minimumReleaseAge: "30 days",
     },
+    {
+      // The font pin rides its own PR, not the roll-up. A FONT_RELEASE bump
+      // alone changes nothing served (fetch-font.mjs must regenerate the
+      // committed woff2 and bump SHELL on the branch — its header has the
+      // runbook), so the merge job's verifier would fail the whole roll-up
+      // closed over a change it cannot complete. Ungrouped, the font PR waits
+      // for a human or agent while the mechanical roll-up keeps merging.
+      matchPackageNames: ["enstw/font"],
+      groupName: null,
+      additionalBranchPrefix: "",
+      branchTopic: "ensfont-release",
+    },
   ],
   customManagers: [
+    // The workflow runs Renovate with its own exact version instead of
+    // downloading whatever `latest` means that day. Let Renovate propose the
+    // next exact version; the base-branch verifier permits only this number to
+    // change on that command line.
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^\\.github\/workflows\/renovate\\.yml$/"],
+      matchStrings: ['pnpm dlx "renovate@(?<currentValue>[^"\\s]+)"'],
+      depNameTemplate: "renovate",
+      datasourceTemplate: "npm",
+      versioningTemplate: "npm",
+    },
     // the ENSFont release pin: a plain const in the fetch script, not a
     // package.json entry, so no built-in manager sees it. The tag scheme
     // (v4.4.0_lxgw1.522_nerd3.5.0) is not semver — loose versioning sorts it.

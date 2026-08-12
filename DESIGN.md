@@ -44,7 +44,20 @@ decision in that subsystem.
   own upstreams (`enstw/wasmtts`, `enstw/font`) are exempt — we cut those
   tags. The quarantine has one bypass: a dependency with a GitHub advisory
   gets an immediate ungrouped PR, because Renovate's `vulnerabilityAlerts`
-  defaults override the wait.
+  defaults override the wait. The self-hosted Renovate CLI is an exact
+  version, and the job that runs it cannot dispatch Actions. A second job
+  loaded from `main` verifies the PR base/head/SHA and allows only monotonic
+  exact dependency pins, existing Actions' SHA/version lines and Renovate's
+  own exact version before it receives the separate merge/dispatch
+  permissions. New files, renamed files, scripts, workflow logic and Renovate
+  config all fail closed instead of riding the trusted bot branch into `main`.
+  Two checks close the holes a line diff cannot see: every URL in the lockfile
+  must be the wasmtts codeload source (a poisoned lockfile is how a clean
+  package.json still installs attacker code), and every moved action digest is
+  resolved against the upstream tag it claims (any fork-network commit fits
+  the 40-hex format). The font pin is deliberately outside the allowlist and
+  outside the roll-up group — its PR is a work order, not a change (see
+  fetch-font.mjs); `scripts/test-renovate-policy.mjs` pins the bypass cases.
 - The repo settings that no file records (2026-08-12): secret scanning with
   push protection is on; a ruleset on `main` blocks force-push and deletion
   (a rebase that rewrites a pushed branch is still fine — the ruleset only
