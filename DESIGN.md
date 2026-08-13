@@ -493,13 +493,41 @@ the pre-publication history, which lives in the owner's private archive.
   讀線, rounded to whole percent: the thread carries the precision. A real
   cover is a pure R2 convention, `books/<id>/cover.jpg`: it paints over the
   cloth and the `<img>`'s error handler removes it, so the cloth is also
-  what offline and cover-less books wear. No D1 column, no manifest field,
-  no upload UI — the enrichment path (backlog) just PUTs the file; the
-  worker serves book images with real content-types and a day's cache
-  (replaceable, unlike chapters), and the audit exempts the name from
-  stale-file accounting. Motion budget on the shelf: nothing beyond the
+  what offline and cover-less books wear. Still no manifest field: the
+  enriched-zip upload on /admin (see the enrichment entry below) just PUTs
+  the canonical JPEG; the worker serves book images with real content-types
+  and a day's cache (replaceable, unlike chapters), and the audit exempts
+  the enrichment sidecars from stale-file accounting. Motion budget on the shelf: nothing beyond the
   existing busy-pulse. The reader surface's measured decisions (grid, 字級,
   bars) are untouched by all of this.
+- **Enrichment rides sidecars, and a human carries the payload
+  (2026-08-13).** An agent — any vendor, per `docs/enrich-a-book.md` —
+  prepares `enriched-book.zip` (byte-faithful `book.txt`, researched
+  `meta.json`, an optional real cover) and the owner uploads it on /admin.
+  No tokens, no agent API access to the site: the runbook can be pasted
+  into any Claude/Codex project precisely because there is nothing in it to
+  leak. All normalization is client-side in the upload page, where the
+  owner is watching — cover transcoded to the canonical `cover.jpg`
+  (1200 px long edge, JPEG), meta filtered to the four-key contract
+  (title/author/synopsis/source, capped 100/100/2000/500). The sidecars
+  live beside the book in R2 and survive republish: a plain `.txt`
+  re-upload keeps the enrichment, because the sidecars are not the
+  manifest's to rebuild. The author is the one meta field surfaced into
+  D1 (`books.author`) — re-read from the sidecar by `sidecarAuthor()` at
+  every `registerBook` call site (publish, reindex, retitle), returned by
+  `/api/books` only when non-empty, and signed on the 題簽 in smaller
+  落款 characters. Schema evolution: `schema.sql` is re-applied with
+  `IF NOT EXISTS`, which never alters a live table — a new column must
+  also ship a guarded `ALTER` in `scripts/deploy.sh`.
+- **Identified API responses are `no-store` (2026-08-13).** The browser
+  HTTP cache does not vary on credentials: `/api/books` used to answer the
+  admin Bearer with `public, max-age=60`, so on the owner's phone the
+  /admin list fetch seeded a cached copy that the reader-cookie shelf then
+  read for the next minute — a just-uploaded book missing from the shelf.
+  Every 200 on that route is identified (keyless requests 401), so the
+  public copy served no one; it is `no-store` for every identity now.
+  Offline loses nothing — the shelf's offline path is the app's own
+  `bw_books` copy, never the HTTP cache.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:
@@ -720,12 +748,9 @@ the pre-publication history, which lives in the owner's private archive.
 
 ## Backlog
 
-- The agent book-enrichment path: an upload flow where an agent researches
-  the book on the web and fills in what a bare .txt cannot — author, 摘要,
-  and a cover image, found or AI-generated (the owner's genimage skills) —
-  normalized to `books/<id>/cover.jpg`, which the shelf already renders.
-  Author and summary need a manifest-field design when they land; the cover
-  needs none.
+- Surface the rest of the enrichment meta: `synopsis` (and `source`)
+  are already in the sidecar; a place to show them (long-press? the
+  reader's 書衣 page?) is undesigned.
 - Multi-lingual beyond the UI chrome: per-book `lang` in the manifest; TTS
   voice and chunker per language (ENDERS/PAUSES/CHARS_PER_SEC are CJK
   today); font stack and break rules per language; offer 直排 only for CJK
