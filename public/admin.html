@@ -40,6 +40,8 @@
     }
     textarea { resize: vertical; }
     input[type="file"] { width: 100%; }
+    .meta-preview { display: flex; gap: 0.8rem; align-items: flex-start; margin: 0.7rem 0; }
+    #coverThumb { max-height: 120px; max-width: 96px; border-radius: 4px; }
     .btn {
       display: inline-block; margin-top: 0.9rem; padding: 0.55rem 1.2rem;
       border: 1px solid var(--accent); border-radius: 8px; color: var(--accent);
@@ -124,7 +126,7 @@
 
     <details id="pick" class="fold" hidden>
       <summary data-i18n="admin.uploadH">上傳新書</summary>
-      <label for="file" data-i18n="admin.file">書檔（.txt 或 .zip 內含一個大 .txt）</label>
+      <label for="file" data-i18n="admin.file">書檔（.txt 或 .zip；可附 meta.json 與封面）</label>
       <input type="file" id="file" accept=".txt,.zip,text/plain,application/zip">
 
       <div class="row">
@@ -168,6 +170,16 @@
 
     <section id="review" hidden>
       <div id="summary"></div>
+      <!-- what the enriched zip brought along (the agent-upload contract):
+           cover already normalized to the JPEG that will be PUT, author and
+           簡介 exactly as meta.json will store them -->
+      <div id="metaPreview" class="meta-preview" hidden>
+        <img id="coverThumb" alt="" hidden>
+        <div>
+          <div id="metaAuthor" hidden></div>
+          <div id="metaSynopsis" class="small muted" hidden></div>
+        </div>
+      </div>
       <ul class="preview" id="chapterPreview"></ul>
       <button class="btn primary" id="upload" data-i18n="admin.upload">上傳</button>
       <progress id="bar" value="0" max="1" hidden></progress>
@@ -245,6 +257,13 @@
     const TOKEN_KEY = "bookworm:admin-token";
     let token = localStorage.getItem(TOKEN_KEY) ?? "";
     let entries = null, manifest = null;
+    // what an enriched zip brought beyond the text — meta.json (already
+    // normalized by pickMeta) and the cover as the JPEG blob that will be PUT
+    let extras = null, coverUrl = null;
+    // whether the user typed into these fields since picking the current
+    // file — meta.json only yields to that, never to a leftover or the
+    // filename guess onchange plants
+    let titleTouched = false, slugTouched = false;
 
     const authHeaders = () => ({ authorization: `Bearer ${token}` });
 
@@ -865,11 +884,14 @@
     $("file").onchange = () => {
       const f = $("file").files[0];
       if (!f) return;
+      titleTouched = slugTouched = false;
       const base = f.name.replace(/\.[^.]*$/, "");
       if (!$("title").value) $("title").value = base;
       if (!$("slug").value) $("slug").value = shortSlug(base);
       $("analyze").disabled = false;
     };
+    $("title").oninput = () => (titleTouched = true);
+    $("slug").oninput = () => (slugTouched = true);
 
     // crude but effective: compare counts of unambiguous simplified vs
     // traditional characters in a sample
@@ -880,21 +902,70 @@
       return count("惊蛰门龙书剑对说话头风这为过还开") > count("驚蟄門龍書劍對說話頭風這為過還開");
     }
 
-    async function extractText(file) {
+    // The enriched-zip contract, one field at a time: known keys only,
+    // trimmed, capped. Anything else an agent packed into meta.json is
+    // dropped here and never reaches the bucket.
+    function pickMeta(raw) {
+      const s = (v, cap) =>
+        typeof v === "string" && v.trim() ? v.trim().slice(0, cap) : undefined;
+      const m = Object.fromEntries(Object.entries({
+        title: s(raw.title, 100), author: s(raw.author, 100),
+        synopsis: s(raw.synopsis, 2000), source: s(raw.source, 500),
+      }).filter(([, v]) => v));
+      return Object.keys(m).length ? m : null;
+    }
+
+    async function extractPayload(file) {
       const buf = new Uint8Array(await file.arrayBuffer());
-      let bytes = buf;
+      let bytes = buf, meta = null, cover = null;
       if (/\.zip$/i.test(file.name) || (buf[0] === 0x50 && buf[1] === 0x4b)) {
         const { unzipSync } = await import("/vendor/fflate.js");
-        const files = unzipSync(buf, { filter: (f) => /\.txt$/i.test(f.name) });
-        const names = Object.keys(files);
-        if (!names.length) throw new Error(t("admin.noTxtInZip"));
+        const files = unzipSync(buf, {
+          filter: (f) => /\.(txt|json|jpe?g|png|webp)$/i.test(f.name),
+        });
+        // agents tend to zip a folder — match by basename, not path
+        const base = (n) => n.split("/").pop().toLowerCase();
+        const txts = [];
+        for (const n of Object.keys(files)) {
+          if (base(n) === "meta.json") {
+            let raw;
+            try { raw = JSON.parse(new TextDecoder().decode(files[n])); }
+            catch { throw new Error(t("admin.badMeta")); }
+            meta = pickMeta(raw);
+          } else if (/^cover\.(jpe?g|png|webp)$/.test(base(n))) cover = files[n];
+          else if (/\.txt$/i.test(n)) txts.push(n);
+        }
+        if (!txts.length) throw new Error(t("admin.noTxtInZip"));
         // one big txt expected — take the largest
-        names.sort((a, b) => files[b].length - files[a].length);
-        bytes = files[names[0]];
-        log(t("admin.fromZip", names[0], Math.round(bytes.length / 1e6)));
+        txts.sort((a, b) => files[b].length - files[a].length);
+        bytes = files[txts[0]];
+        log(t("admin.fromZip", txts[0], Math.round(bytes.length / 1e6)));
       }
-      const decoder = new TextDecoder($("charset").value, { fatal: false });
-      return decoder.decode(bytes).replace(/^﻿/, "").replace(/\r\n?/g, "\n");
+      // the enriched contract fixes the text at UTF-8 — the charset selector
+      // is for raw scraped files only
+      const cs = meta ? "utf-8" : $("charset").value;
+      const decoder = new TextDecoder(cs, { fatal: false });
+      const text = decoder.decode(bytes).replace(/^﻿/, "").replace(/\r\n?/g, "\n");
+      return { text, meta, cover };
+    }
+
+    // Whatever image the agent packed becomes the canonical 書衣 JPEG here,
+    // in the browser — the Worker never spends CPU on it. Long edge capped so
+    // a poster-sized find doesn't sit on the shelf at 8 MB.
+    async function normalizeCover(bytes) {
+      const bmp = await createImageBitmap(new Blob([bytes]));
+      const MAX = 1200;
+      const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * scale));
+      const h = Math.max(1, Math.round(bmp.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(bmp, 0, 0, w, h);
+      bmp.close();
+      const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.85));
+      if (!blob) throw new Error("canvas.toBlob failed");
+      return { blob, w, h };
     }
 
     async function convertS2T(text, onProgress) {
@@ -925,11 +996,28 @@
       $("log").replaceChildren();
       $("summary").textContent = "";
       $("chapterPreview").replaceChildren();
-      entries = manifest = null;
+      $("metaPreview").hidden = true;
+      $("metaAuthor").hidden = $("metaSynopsis").hidden = $("coverThumb").hidden = true;
+      if (coverUrl) { URL.revokeObjectURL(coverUrl); coverUrl = null; }
+      entries = manifest = extras = null;
       try {
-        let text = await extractText($("file").files[0]);
+        const picked = await extractPayload($("file").files[0]);
+        let text = picked.text;
+        extras = { meta: picked.meta, coverJpeg: null };
 
-        const mode = $("s2t").value;
+        if (picked.meta) {
+          log(t("admin.enriched"));
+          if (picked.meta.title && !titleTouched) {
+            $("title").value = picked.meta.title;
+            // empty slug re-derives from the real title in the dedup step below
+            if (!slugTouched) $("slug").value = "";
+          }
+        }
+
+        // enriched text is UTF-8 繁體 by contract, so the 簡繁 default steps
+        // back to auto-detect — still the safety net for a payload that
+        // breaks the contract, never a re-conversion of a compliant one
+        const mode = picked.meta && $("s2t").value === "yes" ? "auto" : $("s2t").value;
         const wantS2T = mode === "yes" || (mode === "auto" && looksSimplified(text));
         let title = $("title").value.trim();
         if (wantS2T) {
@@ -980,6 +1068,31 @@
             return li;
           }),
         );
+
+        // a bad cover downgrades the upload, never blocks it — the 書衣
+        // cloth fallback is exactly for a book without one
+        if (picked.cover) {
+          try {
+            const { blob, w, h } = await normalizeCover(picked.cover);
+            extras.coverJpeg = blob;
+            coverUrl = URL.createObjectURL(blob);
+            $("coverThumb").src = coverUrl;
+            $("coverThumb").hidden = false;
+            log(t("admin.coverReady", w, h, Math.round(blob.size / 1024)));
+          } catch (err) {
+            log(t("admin.coverFail", err.message), "err");
+          }
+        }
+        if (extras.meta?.author) {
+          $("metaAuthor").textContent = t("admin.metaAuthorLine", extras.meta.author);
+          $("metaAuthor").hidden = false;
+        }
+        if (extras.meta?.synopsis) {
+          $("metaSynopsis").textContent = extras.meta.synopsis;
+          $("metaSynopsis").hidden = false;
+        }
+        $("metaPreview").hidden =
+          !(extras.coverJpeg || extras.meta?.author || extras.meta?.synopsis);
       } catch (err) {
         log(`✗ ${err.message}`, "err");
       }
@@ -1011,15 +1124,27 @@
       let done = 0;
       try {
         const queue = [...entries];
+        const total = entries.length + (extras?.coverJpeg ? 1 : 0) + (extras?.meta ? 1 : 0) + 1;
         await Promise.all(
           Array.from({ length: 4 }, async () => {
             while (queue.length) {
               const e = queue.shift();
               await put(e.file, e.body, "text/plain; charset=utf-8");
-              $("bar").value = ++done / (entries.length + 1);
+              $("bar").value = ++done / total;
             }
           }),
         );
+        // cover and meta land before the manifest — the moment the book is on
+        // the shelf, its 書衣 is already whole. A plain .txt republish carries
+        // neither, and leaves whatever enrichment the book already has alone.
+        if (extras?.coverJpeg) {
+          await put("cover.jpg", extras.coverJpeg, "image/jpeg");
+          $("bar").value = ++done / total;
+        }
+        if (extras?.meta) {
+          await put("meta.json", JSON.stringify(extras.meta, null, 2) + "\n", "application/json");
+          $("bar").value = ++done / total;
+        }
         // manifest goes last so readers never see it referencing missing chapters
         await put("manifest.json", JSON.stringify(manifest, null, 2) + "\n", "application/json");
         $("bar").value = 1;
