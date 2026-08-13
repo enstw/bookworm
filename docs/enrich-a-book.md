@@ -78,8 +78,18 @@ wrong kind of image gets mangled there.
   canonical JPEG (1200 px long edge), so resolution beyond that is wasted.
 - If no genuine flat cover can be found, **omit the file** — the shelf
   dresses cover-less books in a cloth binding with the title on a 題簽,
-  which looks deliberate, not broken. Do not generate a fake cover unless
-  the owner asks for one.
+  which looks deliberate, not broken. Never generate a cover silently;
+  that is the owner's call.
+- **A generated cover, when the owner asks for one, is a designed cover,
+  not an illustration.** The shelf shows the image alone — a cover image
+  paints over the 題簽 — so the 書名 (and author) must be typeset on the
+  artwork itself, in clean 繁體. Garbled AI glyphs are worse than the
+  cloth fallback: if your image tool cannot set CJK type cleanly,
+  generate textless artwork and typeset the title over it with a real
+  tool (ImageMagick, canvas). Print-grade and 4:5 portrait, long edge
+  ≥ 1200 px (the uploader downscales to 1200, so more is wasted), drawn
+  from the book's actual mood and imagery — no watermarks, no mock-3D,
+  no 書腰. Say in the hand-back that the cover is generated.
 
 ## Hand-back
 
