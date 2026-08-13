@@ -503,9 +503,10 @@ the pre-publication history, which lives in the owner's private archive.
 - **Enrichment rides sidecars, and a human carries the payload
   (2026-08-13).** An agent — any vendor, per `docs/enrich-a-book.md` —
   prepares an enriched zip named after the book (byte-faithful `book.txt`,
-  researched `meta.json`, an optional flat front-cover image; the filename
-  matters because /admin pre-fills title and slug from it) and the owner
-  uploads it on /admin.
+  researched `meta.json`, a flat front-cover image — the real one when
+  findable, else generated to the runbook's designed-cover spec; the
+  filename matters because /admin pre-fills title and slug from it) and
+  the owner uploads it on /admin.
   No tokens, no agent API access to the site: the runbook can be pasted
   into any Claude/Codex project precisely because there is nothing in it to
   leak. All normalization is client-side in the upload page, where the

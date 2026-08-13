@@ -62,7 +62,7 @@ paragraph has destroyed the book.
   printed on the cover is worse than a blank one.
 - Plain UTF-8 JSON, no BOM, no comments.
 
-## The cover — flat front-cover art, or absent
+## The cover — real if findable, generated if not
 
 Find the actual front cover of this book (any edition) as **flat artwork
 in portrait orientation**: the image printed on the book's front, filling
@@ -76,20 +76,26 @@ wrong kind of image gets mangled there.
   prefer that exact image over anything from a shop listing.
 - Any of jpg / png / webp is fine; the uploader transcodes to its
   canonical JPEG (1200 px long edge), so resolution beyond that is wasted.
-- If no genuine flat cover can be found, **omit the file** — the shelf
-  dresses cover-less books in a cloth binding with the title on a 題簽,
-  which looks deliberate, not broken. Never generate a cover silently;
-  that is the owner's call.
-- **A generated cover, when the owner asks for one, is a designed cover,
-  not an illustration.** The shelf shows the image alone — a cover image
-  paints over the 題簽 — so the 書名 (and author) must be typeset on the
-  artwork itself, in clean 繁體. Garbled AI glyphs are worse than the
-  cloth fallback: if your image tool cannot set CJK type cleanly,
-  generate textless artwork and typeset the title over it with a real
-  tool (ImageMagick, canvas). Print-grade and 4:5 portrait, long edge
-  ≥ 1200 px (the uploader downscales to 1200, so more is wasted), drawn
-  from the book's actual mood and imagery — no watermarks, no mock-3D,
-  no 書腰. Say in the hand-back that the cover is generated.
+- If no genuine flat cover can be found, **generate one** to the spec
+  below — a book arriving on the shelf already dressed is much of what
+  enrichment is for. Omit the file only when you have no way to produce
+  an image at all; the shelf then falls back to a cloth binding with
+  the title on a 題簽.
+- **A generated cover is a designed cover, not an illustration.** The
+  shelf shows the image alone — a cover image paints over the 題簽 — so
+  the 書名 (and author) must be typeset on the artwork itself, in clean
+  繁體. Garbled AI glyphs are worse than the cloth fallback: if your
+  image tool cannot set CJK type cleanly, generate textless artwork and
+  typeset the title over it with a real tool (ImageMagick, canvas).
+  Print-grade, drawn from the book's actual mood and imagery — no
+  watermarks, no mock-3D, no 書腰. Say in the hand-back that the cover
+  is generated.
+- **Deliver the generated cover at 4:5 portrait, long edge ≥ 1200 px.**
+  Image models usually emit a 2:3 portrait frame; do not ship that —
+  the shelf center-crops covers to its 4:5 tile, which clips typography
+  near the edges. Crop to 4:5 yourself with a real tool, choosing the
+  window that keeps the title and author whole. Resolution beyond
+  1200 px is wasted — the uploader downscales to 1200.
 
 ## Hand-back
 
