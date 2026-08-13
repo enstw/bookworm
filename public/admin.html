@@ -1099,38 +1099,61 @@
       $("analyze").disabled = false;
     };
 
-    async function put(name, body, type) {
+    // one controller per upload run. Promise.all rejects on the FIRST worker
+    // that throws and cancels nothing — without the abort, the surviving
+    // workers keep uploading and writing the bar after 上傳失敗 is on screen,
+    // and a retry click then races two generations on one progress bar.
+    let uploadRun = null;
+
+    async function put(name, body, type, signal) {
       // keyed by id: the slug can change later, and nothing on disk should
       // have to move when it does
       const url = `/api/admin/objects/${encodeURIComponent(manifest.id)}/${encodeURIComponent(name)}`;
       for (let attempt = 1; ; attempt++) {
-        const res = await fetch(url, {
-          method: "PUT",
-          headers: { ...authHeaders(), "content-type": type },
-          body,
-        });
-        if (res.ok) return;
-        if (res.status === 401) throw new Error(t("admin.tokenExpired"));
-        if (attempt >= 3) throw new Error(`${name}: HTTP ${res.status}`);
+        let res = null;
+        try {
+          res = await fetch(url, {
+            method: "PUT",
+            headers: { ...authHeaders(), "content-type": type },
+            body,
+            signal,
+          });
+        } catch (err) {
+          // the network layer throwing is as transient as a 5xx — iOS Safari
+          // kills in-flight fetches when the page is backgrounded, and coming
+          // back should resume the run, not fail it. Only an abort is final.
+          if (signal?.aborted || err.name === "AbortError") throw err;
+          if (attempt >= 3) throw new Error(`${name}: ${err.message}`);
+        }
+        if (res) {
+          if (res.ok) return;
+          if (res.status === 401) throw new Error(t("admin.tokenExpired"));
+          if (attempt >= 3) throw new Error(`${name}: HTTP ${res.status}`);
+        }
         await new Promise((r) => setTimeout(r, 500 * attempt));
       }
     }
 
     $("upload").onclick = async () => {
       if (!entries) return;
+      uploadRun?.abort();
+      const run = (uploadRun = new AbortController());
+      // only the current run may touch the UI: a superseded run's late
+      // workers hit this guard instead of the bar
+      const tick = (v) => { if (run === uploadRun) $("bar").value = v; };
       $("upload").disabled = true;
       $("bar").hidden = false;
-      $("bar").value = 0;
+      tick(0);
       let done = 0;
       try {
         const queue = [...entries];
         const total = entries.length + (extras?.coverJpeg ? 1 : 0) + (extras?.meta ? 1 : 0) + 1;
         await Promise.all(
           Array.from({ length: 4 }, async () => {
-            while (queue.length) {
+            while (queue.length && !run.signal.aborted) {
               const e = queue.shift();
-              await put(e.file, e.body, "text/plain; charset=utf-8");
-              $("bar").value = ++done / total;
+              await put(e.file, e.body, "text/plain; charset=utf-8", run.signal);
+              tick(++done / total);
             }
           }),
         );
@@ -1138,24 +1161,28 @@
         // the shelf, its 書衣 is already whole. A plain .txt republish carries
         // neither, and leaves whatever enrichment the book already has alone.
         if (extras?.coverJpeg) {
-          await put("cover.jpg", extras.coverJpeg, "image/jpeg");
-          $("bar").value = ++done / total;
+          await put("cover.jpg", extras.coverJpeg, "image/jpeg", run.signal);
+          tick(++done / total);
         }
         if (extras?.meta) {
-          await put("meta.json", JSON.stringify(extras.meta, null, 2) + "\n", "application/json");
-          $("bar").value = ++done / total;
+          await put("meta.json", JSON.stringify(extras.meta, null, 2) + "\n", "application/json", run.signal);
+          tick(++done / total);
         }
         // manifest goes last so readers never see it referencing missing chapters
-        await put("manifest.json", JSON.stringify(manifest, null, 2) + "\n", "application/json");
-        $("bar").value = 1;
+        await put("manifest.json", JSON.stringify(manifest, null, 2) + "\n", "application/json", run.signal);
+        tick(1);
         const a = document.createElement("a");
         a.href = `/${encodeURIComponent(manifest.slug)}/`;
         a.textContent = t("admin.uploaded", manifest.title);
         $("log").append(a);
       } catch (err) {
-        log(t("admin.uploadFail", err.message), "err");
+        // this run is over: kill its surviving workers before they upload
+        // more or move the bar. A superseded run lands here too (AbortError)
+        // and must stay silent — the new run owns the log and the button.
+        run.abort();
+        if (run === uploadRun) log(t("admin.uploadFail", err.message), "err");
       }
-      $("upload").disabled = false;
+      if (run === uploadRun) $("upload").disabled = false;
     };
 
     // ---------- 改進建議 ----------
