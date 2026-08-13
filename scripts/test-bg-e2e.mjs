@@ -216,7 +216,7 @@ out.libraryBg = (await bodyBg()) === "rgb(250, 224, 253)" ? "ok" : `FAIL: ${awai
 // zh-TW is the shipped default, so the stamp reads 版本 …; startsWith because
 // the temporary diagnostics links follow it in the same paragraph
 const buildLine = await evalJs(
-  `[...document.querySelectorAll(".library p")].map((p) => p.textContent).find((t) => t.startsWith("版本 "))`);
+  `[...document.querySelectorAll(".library p")].map((p) => p.textContent.trim().replace(/\\s+/g, " ")).find((t) => t.startsWith("版本 "))`);
 out.buildStamp = buildLine?.startsWith("版本 dev · 重新整理") ? "ok" : `FAIL: ${buildLine}`; // git checkout is unstamped
 out.refreshBtn = (await evalJs(`!!document.getElementById("refreshBtn")`))
   ? "ok" : "FAIL: no refresh button";
@@ -224,7 +224,7 @@ out.refreshBtn = (await evalJs(`!!document.getElementById("refreshBtn")`))
 await evalJs(`document.getElementById("langBtn").click()`);
 await sleep(300);
 const enLine = await evalJs(
-  `[...document.querySelectorAll(".library p")].map((p) => p.textContent).find((t) => t.startsWith("build "))`);
+  `[...document.querySelectorAll(".library p")].map((p) => p.textContent.trim().replace(/\\s+/g, " ")).find((t) => t.startsWith("build "))`);
 out.langSwitch = enLine?.startsWith("build dev · refresh")
   && (await evalJs(`document.documentElement.lang`)) === "en"
   ? "ok" : `FAIL: ${enLine} lang=${await evalJs(`document.documentElement.lang`)}`;

@@ -520,54 +520,153 @@ button {
   border-radius: 8px;
 }
 
-.book-list { display: grid; gap: 0.8rem; margin: 1.5rem 0; }
+/* ---------- 書衣 (the shelf's covers) ----------
 
+   Every book wears a 線裝書-style cloth cover with a pasted 題簽 carrying
+   the title in 直排. Cloth and slip are MATERIAL colors, not theme tokens:
+   a book's cover does not change with the room's light, and the fixed
+   tones were picked to stand on all thirteen papers and the dark theme.
+   A real cover image (books/<id>/cover.jpg, uploaded by the future
+   agent-enrichment path) paints over the cloth when it exists; the
+   <img>'s error handler removes it, so the cloth IS the fallback. */
+
+.cover {
+  position: relative;
+  border-radius: 6px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.cloth-0 { background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), transparent), #3d4a5c; }
+.cloth-1 { background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), transparent), #47584c; }
+.cloth-2 { background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), transparent), #6e4a38; }
+.cloth-3 { background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), transparent), #574457; }
+
+.cover .slip {
+  position: absolute;
+  top: 7px;
+  left: 8px;                     /* 題簽貼於封面左上 */
+  max-height: calc(100% - 22px);
+  overflow: hidden;
+  background: #f7f1df;
+  color: #2c2620;
+  border: 1px solid rgba(60, 45, 20, 0.35);
+  box-shadow: inset 0 0 0 2px #f7f1df, inset 0 0 0 3px rgba(60, 45, 20, 0.25);
+  padding: 10px 5px;
+  writing-mode: vertical-rl;
+  font-size: 1.15rem;
+  letter-spacing: 0.18em;
+  line-height: 1;
+}
+
+.cover .coverimg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+/* an in-progress book: silk tab peeking from the pages */
+.cover .tab {
+  position: absolute;
+  right: 10px;
+  bottom: -6px;
+  width: 8px;
+  height: 26px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), 50% 100%, 0 calc(100% - 5px));
+}
+
+/* Generic row/card BEFORE the hero rules: .hero-card re-declares display
+   at equal specificity, so its flex must come later in the cascade. */
 .book-row { position: relative; }
+.book-card { display: block; color: inherit; text-decoration: none; }
 
-.book-card {
-  display: block;
-  /* the end padding is the ⇣'s column: the title must not run under it */
-  padding: 1rem 3.6rem 1rem 1.2rem;
+/* 續讀 hero: the open book, one thumb-tap tall */
+.hero { margin: 1.4rem 0; }
+.hero-card {
+  display: flex;
+  gap: 1rem;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
+  padding: 0.9rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
   color: inherit;
   text-decoration: none;
 }
-.book-card:hover { border-color: var(--accent); }
-.book-title { font-size: 1.05rem; margin-bottom: 0.25rem; }
+.hero-card .cover { flex: 0 0 88px; height: 116px; }
+.hero-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+}
+.hero-tag { font-size: 0.75rem; color: var(--accent); letter-spacing: 0.35em; }
+.hero-title { font-size: 1.4rem; line-height: 1.25; }
+.hero-where {
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
-/* The ⇣ sits ON the card but outside its <a> — sized to the 44 px iOS asks
-   for, because on a phone this is a thumb target and not a tooltip. */
+/* the reading thread: filled as far as you've read */
+.thread { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
+.thread .bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+  display: block;
+}
+.thread .fill { height: 100%; border-radius: 2px; background: var(--accent); display: block; }
+.thread .pct { font-size: 0.75rem; color: var(--muted); }
+
+.cover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1.1rem 1rem;
+  margin: 1.5rem 0;
+}
+.cover-grid .cover { aspect-ratio: 4 / 5; }
+.grid-meta { margin-top: 0.4rem; font-size: 0.8rem; color: var(--muted); }
+.grid-meta .acc { color: var(--accent); }
+
+/* The ⇣ sits ON the cover but outside its <a> — sized to the 44 px iOS asks
+   for, because on a phone this is a thumb target and not a tooltip. Quiet
+   over the cloth: a faint dark wash and a cream glyph (material colors,
+   like the cover it sits on), so it reads on every tone without becoming
+   the cover's loudest element. */
 .shelf-offline {
   position: absolute;
-  top: 0.5rem;
-  inset-inline-end: 0.5rem;
+  top: 0.35rem;
+  inset-inline-end: 0.35rem;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 2.75rem;
   height: 2.75rem;
   font-size: 1.1rem;
-  color: var(--muted);
+  color: rgba(247, 241, 223, 0.85);
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 10px;
 }
-/* .iconbtn.active paints the background var(--card) — which IS the card here,
-   so on the shelf the saved state is the accent plus a ring of it */
-.shelf-offline.active { color: var(--accent); background: none; border: 1px solid var(--accent); }
+.shelf-offline:hover { background: rgba(0, 0, 0, 0.35); }
+.shelf-offline.active {
+  color: var(--accent);
+  background: rgba(247, 241, 223, 0.92);
+  border: 1px solid var(--accent);
+}
 .shelf-offline.busy { animation: shelf-pulse 1.1s ease-in-out infinite; }
 @keyframes shelf-pulse { 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) {
   .shelf-offline.busy { animation: none; opacity: 0.45; }
 }
-
-/* reading progress: thin bar + exact percent, scannable across books */
-.book-progress { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
-.book-progress .bar {
-  flex: 1;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--border);
-  overflow: hidden;
-}
-.book-progress .fill { height: 100%; border-radius: 2px; background: var(--accent); }
-.book-progress span { font-size: 0.75rem; color: var(--muted); }
+/* on the hero the ⇣ sits over the card, not the cloth — token chrome there */
+.hero .shelf-offline { background: none; color: var(--muted); }
+.hero .shelf-offline.active { background: none; }

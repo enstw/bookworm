@@ -42,6 +42,10 @@ const BW_STRINGS = {
     "lib.offlineSave": "存到這台裝置，沒有網路也讀得到",
     "lib.offlineSaved": (n) => `已存 ${n} 章 · 點按刪除`,
     "lib.offlineFail": "下載失敗 — 存離線內容需要網路連線。",
+    // 書衣書架:「續讀」大卡與封面格的進度句
+    "lib.continue": "續讀",
+    "lib.notStarted": "未開始",
+    "lib.readPct": (pct) => `讀到 ${pct}%`,
     "lib.readingAs": "閱讀身分 ",
     "lib.change": "更換",
     "lib.bookmarkHint": "進度與設定跟著鑰匙對應的代號，在每台裝置自動同步。",
@@ -322,6 +326,9 @@ const BW_STRINGS = {
     "lib.offlineSave": "Save on this device — reads without a connection",
     "lib.offlineSaved": (n) => `${n} chapters saved — tap to remove`,
     "lib.offlineFail": "Download failed — saving for offline needs a connection.",
+    "lib.continue": "Continue",
+    "lib.notStarted": "not started",
+    "lib.readPct": (pct) => `${pct}% read`,
     "lib.readingAs": "Reading as ",
     "lib.change": "change",
     "lib.bookmarkHint": "Positions and settings follow the key's reader id — synced on every device.",
@@ -617,6 +624,19 @@ function bwSetLang(v) {
 function t(key, ...args) {
   const v = BW_STRINGS[bwLang()]?.[key] ?? BW_STRINGS[BW_DEFAULT_LANG][key] ?? key;
   return typeof v === "function" ? v(...args) : v;
+}
+
+// One pass over static markup: every [data-i18n] node takes its text from
+// the table, [data-i18n-title] its tooltip — so a page ships readable zh
+// in its HTML and a language switch re-sweeps in place instead of
+// re-rendering (or, on the shelf, re-fetching). Strings with arguments
+// stay JS-filled; textContent assignment is also why decorated nodes keep
+// their decoration in CSS (see .brand::before), never in child elements.
+function applyI18n() {
+  for (const node of document.querySelectorAll("[data-i18n]"))
+    node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll("[data-i18n-title]"))
+    node.title = t(node.dataset.i18nTitle);
 }
 
 bwApplyLang();

@@ -23,8 +23,103 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div id="app"></div>
-  <!-- classic script, before app.js: it defines the t() every string below
+  <!-- The screens are static markup, admin.html-style: sections raised and
+       lowered by showScreen() in app.js, zh defaults swept by applyI18n()
+       (i18n.js). JS fills only what carries data. The reader is not a
+       screen — it renders into #readerRoot and lowers all of them. -->
+  <div id="app">
+
+    <!-- the locked door (renderKeyGate) -->
+    <section id="gateScreen" class="library" hidden>
+      <h1><span class="brand">Bookworm</span></h1>
+      <p id="gateLead" class="muted" data-i18n="auth.need">這是私人書房，要有鑰匙才能開書。把鑰匙連結傳到這台裝置上打開，或把鑰匙貼在下面。</p>
+      <form id="keyForm">
+        <input id="keyInput" type="password" autocomplete="off">
+        <button id="keySubmit" class="linklike" type="submit" data-i18n="auth.submit">開門</button>
+      </form>
+      <p id="keyMsg" class="muted small"></p>
+      <p class="muted small" data-i18n="auth.hint">鑰匙由管理者在 /admin 產生，一台裝置一把。</p>
+    </section>
+
+    <!-- 書架 (renderLibrary / paintShelf): 書衣 covers with a 續讀 hero -->
+    <section id="shelfScreen" class="library" hidden>
+      <h1><span class="brand">Bookworm</span></h1>
+      <p id="staleNote" class="muted small" hidden>
+        <span data-i18n="lib.offlineList">離線 — 顯示上次看到的書目。 </span>
+        <button id="staleRetry" class="linklike" data-i18n="lib.retry">重試</button>
+      </p>
+      <!-- 續讀: the book this device has open (bw_last_book), same rule "/"
+           resumes by. The ⇣ is a sibling of the link, same as every row. -->
+      <div id="heroRow" class="book-row hero" hidden>
+        <a id="heroLink" class="book-card hero-card">
+          <div id="heroCover" class="cover"></div>
+          <div class="hero-info">
+            <span class="hero-tag" data-i18n="lib.continue">續讀</span>
+            <span class="hero-title" id="heroTitle"></span>
+            <span class="hero-where" id="heroWhere"></span>
+            <span class="thread">
+              <span class="bar"><span class="fill" id="heroFill"></span></span>
+              <span class="pct" id="heroPct"></span>
+            </span>
+          </div>
+        </a>
+        <button id="heroOffline" class="iconbtn shelf-offline">⇣</button>
+      </div>
+      <div id="bookList" class="cover-grid"></div>
+      <p id="emptyNote" class="muted" hidden data-i18n="lib.empty">書架還是空的 — 用 scripts/split-book.mjs 切好章節，再用 scripts/publish-book.mjs 上傳。</p>
+      <p class="muted small">
+        <span data-i18n="lib.readingAs">閱讀身分 </span><code id="uidCode">—</code>
+        <button id="changeKeyBtn" class="linklike" data-i18n="lib.change">更換</button>
+        <br>
+        <span data-i18n="lib.bookmarkHint">進度與設定跟著鑰匙對應的代號，在每台裝置自動同步。</span>
+      </p>
+      <!-- 新書上架 / 新版本已上線 (Web Push): shown only where the platform
+           can deliver — on iPhone that means the installed PWA -->
+      <p id="pushRow" class="muted small" hidden>
+        <span data-i18n="push.label">新書與更新通知：</span>
+        <button id="pushBtn" class="linklike">…</button>
+        <span id="pushTestWrap" hidden> ·
+          <button id="pushTestBtn" class="linklike" data-i18n="push.test">測試</button>
+        </span>
+      </p>
+      <p class="muted small">
+        <span id="buildLine"></span> ·
+        <button id="refreshBtn" class="linklike" data-i18n="lib.refresh" data-i18n-title="lib.refreshTitle">重新整理</button> ·
+        <button id="langBtn" class="linklike" data-i18n="lib.langSwitch" data-i18n-title="lib.langTitle">English</button>
+        <span id="installWrap"> ·
+          <button id="installBtn" class="linklike" data-i18n="lib.installHint">加入主畫面</button>
+        </span> ·
+        <a id="adminLink" class="linklike" href="/admin" data-i18n="lib.admin" data-i18n-title="lib.adminTitle">管理</a>
+      </p>
+    </section>
+
+    <!-- the install guide (renderInstallGuide) -->
+    <section id="guideScreen" class="library" hidden>
+      <h1><span class="brand">Bookworm</span></h1>
+      <h2 data-i18n="guide.h">加入主畫面</h2>
+      <p class="muted" data-i18n="guide.why">安裝成 App 之後全螢幕開啟、離線閱讀更可靠，也才能收到新書通知。</p>
+      <ol id="guideIos" class="guide-steps">
+        <li data-i18n="guide.ios1">在 Safari 點底部的分享按鈕（方框加向上箭頭）。</li>
+        <li data-i18n="guide.ios2">往下捲，選「加入主畫面」，再按「加入」。</li>
+        <li data-i18n="guide.done">之後就從主畫面開啟 Bookworm。</li>
+      </ol>
+      <ol id="guideOther" class="guide-steps" hidden>
+        <li data-i18n="guide.other1">打開瀏覽器選單（⋮）。</li>
+        <li data-i18n="guide.other2">選「安裝應用程式」或「加入主畫面」。</li>
+        <li data-i18n="guide.done">之後就從主畫面開啟 Bookworm。</li>
+      </ol>
+      <p><button id="guideContinue" class="linklike" data-i18n="guide.continue">先繼續閱讀</button></p>
+    </section>
+
+    <!-- loading / not-found / bad-url (renderMessage) -->
+    <section id="msgScreen" class="library" hidden>
+      <h1 id="msgTitle"></h1>
+      <p id="msgBody" class="muted"></p>
+    </section>
+
+    <div id="readerRoot"></div>
+  </div>
+  <!-- classic script, before app.js: it defines the t() every string above
        goes through, and app.js is not a module -->
   <script src="/i18n.js"></script>
   <script src="/app.js"></script>
