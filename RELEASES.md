@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-13 — `2a00cd0fdf3c`
+
+- admin: consume the enriched-book.zip contract, exempt its sidecars from repair (`2a00cd0`)
+
 ## 2026-08-13 — `267afdb5f2cd`
 
 - shelf: redraw "/" as 書衣 covers on static markup, with a cover-image slot (`267afdb`)
