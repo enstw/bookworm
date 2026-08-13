@@ -161,15 +161,31 @@ const enriched = await evalJs(`(async () => {
   $("file").files = dt.files;
   $("file").dispatchEvent(new Event("change"));
   $("analyze").click();
-  await wait(() => $("summary").textContent);
+  // the summary appears BEFORE analyze's async tail (cover normalization,
+  // then the meta lines) — the metaPreview unhides last, so wait for THAT
+  // before asserting anything the tail reveals, or a slow runner loses
+  await wait(() => !$("metaPreview").hidden, 50);
   steps.title = $("title").value;
   steps.enrichedNote = $("log").textContent.includes("meta.json") ? "ok" : "MISSING enriched note";
   steps.author = $("metaAuthor").hidden ? "MISSING author line" : $("metaAuthor").textContent;
-  await wait(() => !$("coverThumb").hidden, 50);
   steps.cover = !$("coverThumb").hidden && $("coverThumb").src.startsWith("blob:")
     ? "ok" : "MISSING cover thumb";
+  // one transient network kill on the first chapter PUT — iOS backgrounding
+  // in miniature: the run must retry and complete, not fail
+  const realFetch = window.fetch;
+  let killed = 0;
+  window.fetch = (u, o) => {
+    if (!killed && o && o.method === "PUT" && String(u).includes("/api/admin/objects/")) {
+      killed = 1;
+      return Promise.reject(new TypeError("Load failed"));
+    }
+    return realFetch(u, o);
+  };
   $("upload").click();
   await wait(() => /[✓✗]/.test($("log").textContent), 200);
+  window.fetch = realFetch;
+  steps.retriedTransient = killed === 1 && $("log").textContent.includes("✓")
+    ? "ok" : "FAIL killed=" + killed + " log=" + $("log").textContent;
   steps.uploadLog = $("log").textContent;
   return steps;
 })()`);
@@ -203,6 +219,56 @@ if (eb) {
 } else {
   out.enrichedServerState = "FAIL 豐收之書 not on the shelf";
 }
+
+// act 2b: a failing run must die whole. Sabotage a re-upload of the same
+// book — the first chapter PUT network-fails every attempt (the run fails
+// once its retries exhaust), the other chapter PUTs hang until aborted.
+// Under test: the catch aborts the run's controller, so the hanging
+// siblings reject instead of surviving as zombies that keep uploading and
+// fight the next run for the progress bar. Nothing lands server-side (all
+// PUTs are sabotaged and the manifest is never reached), so act 3 starts
+// from act 1's state.
+const zombie = await evalJs(`(async () => {
+  const $ = (id) => document.getElementById(id);
+  const wait = async (fn, n = 100) => {
+    for (let i = 0; i < n && !fn(); i++) await new Promise(r => setTimeout(r, 100));
+    return fn();
+  };
+  const steps = {};
+  const baseLen = $("log").textContent.length;
+  const realFetch = window.fetch;
+  let failUrl = null; const aborted = [];
+  window.fetch = (u, o) => {
+    const s = String(u);
+    if (o && o.method === "PUT" && s.includes("/api/admin/objects/")) {
+      if (failUrl === null) failUrl = s;
+      if (s === failUrl) return Promise.reject(new TypeError("Load failed"));
+      return new Promise((res, rej) => {
+        if (o.signal) o.signal.addEventListener("abort",
+          () => { aborted.push(s); rej(new DOMException("Aborted", "AbortError")); },
+          { once: true });
+      });
+    }
+    return realFetch(u, o);
+  };
+  $("upload").click();
+  await wait(() => $("log").textContent.slice(baseLen).includes("✗"), 200);
+  steps.failed = $("log").textContent.slice(baseLen).includes("✗")
+    ? "ok" : "DID NOT fail";
+  steps.buttonBack = !$("upload").disabled ? "ok" : "FAIL still disabled";
+  // the hanging sibling PUTs must have been aborted by the dying run —
+  // without the per-run controller they would dangle here forever
+  await wait(() => aborted.length >= 2, 30);
+  steps.siblingsAborted = aborted.length >= 2 ? "ok" : "FAIL aborted=" + aborted.length;
+  // and the bar must hold still now: no zombie worker left to move it
+  const barBefore = $("bar").value;
+  await new Promise(r => setTimeout(r, 500));
+  steps.barFrozen = $("bar").value === barBefore
+    ? "ok" : "FAIL bar moved " + barBefore + " -> " + $("bar").value;
+  window.fetch = realFetch;
+  return steps;
+})()`);
+out.failedRunDiesWhole = zombie;
 
 // act 3: a plain-.txt republish of the same title lands on the same id and
 // leaves the enrichment alone — meta.json and cover.jpg belong to the book,
