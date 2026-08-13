@@ -9,6 +9,14 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-14 — `ab4c4c10b018`
+
+- admin: an upload run dies whole — abort, retry, and own the bar (`ab4c4c1`)
+- docs(runbook): generate the cover when none is found — that is the enrichment (`f93e9af`)
+- docs(runbook): spec the generated cover — a designed cover, not an illustration (`6f765d6`)
+- docs(runbook): name the zip after the book, demand flat cover art (`b44f1b1`)
+- docs: the enrichment runbook an agent can be handed (`eb5cc9c`)
+
 ## 2026-08-13 — `c1635f2ac3f5`
 
 - shelf: surface the enrichment author on the 題簽 (`c1635f2`)
