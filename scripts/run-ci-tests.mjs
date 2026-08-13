@@ -103,6 +103,9 @@ try {
     // after push-api, with shelf-admin: publishing a book writes a line into
     // the push log, and push-api asserts against that log's last 20 entries
     run("shelf-admin-e2e", ["node", "scripts/test-shelf-admin-e2e.mjs"]);
+    // the /admin page driven in a real browser — including the enriched-zip
+    // (agent upload) contract: meta.json, cover transcode, republish survival
+    run("admin-e2e", ["node", "scripts/test-admin-e2e.mjs"]);
     run("sync-e2e", ["node", "scripts/test-sync-e2e.mjs"]);
   }
   run("vertical-e2e", ["node", "scripts/test-vertical-e2e.mjs"]);

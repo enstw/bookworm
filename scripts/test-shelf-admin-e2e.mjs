@@ -442,6 +442,11 @@ try {
     { method: "DELETE", headers: auth });                       // a chapter goes missing
   await put(`${ID3}/${chapterFile(1)}`, "short");               // and one is truncated
   await put(`${ID3}/9999_leftover.txt`, "from an older split"); // and one is left over
+  // and the enrichment pair rides along — cover and meta sidecar are
+  // first-class book files the sweep must NOT count as stale (their
+  // exemptions are what keeps `stale.files` at exactly 1 below)
+  await put(`${ID3}/cover.jpg`, "not-a-real-jpeg", "image/jpeg");
+  await put(`${ID3}/meta.json`, JSON.stringify({ author: "審計測試" }), "application/json");
 
   const runCheck = async () => {
     let r = {};
@@ -463,7 +468,7 @@ try {
   const stale = (cr.findings ?? []).find((f) => f.kind === "stale-file" && f.id === ID3);
   out.completeness = broken?.missing === 1 && broken.wrongSize === 1 &&
     broken.chapters === CHAPTERS && stale?.files === 1
-    ? `ok (1 missing, 1 wrong size, 1 leftover — out of ${CHAPTERS} chapters)`
+    ? `ok (1 missing, 1 wrong size, 1 leftover; cover+meta exempt — out of ${CHAPTERS} chapters)`
     : `FAIL ${JSON.stringify(broken)} ${JSON.stringify(stale)}`;
 
   // 12b. the case that motivated all of this: the index row is gone and the
@@ -530,16 +535,20 @@ try {
     ? "ok (409 for a book that is actually whole, and it is still there)"
     : `FAIL ${guarded.status} chapters=${ID2Alive?.chapters.length}`;
 
-  // clearing the leftovers must not touch the chapters the manifest DOES name
+  // clearing the leftovers must not touch the chapters the manifest DOES
+  // name — nor the enrichment pair, which no manifest ever names
   const [, staleCleared] = await clear("stale-file", ID3);
   const survivor = await fetch(`${BASE}/books/${ID3}/${encodeURIComponent(chapterFile(3))}`, { headers: RKEY });
   const leftover = await fetch(`${BASE}/books/${ID3}/9999_leftover.txt`, { headers: RKEY });
+  const coverKept = await fetch(`${BASE}/books/${ID3}/cover.jpg`, { headers: RKEY });
+  const metaKept = await fetch(`${BASE}/books/${ID3}/meta.json`, { headers: RKEY });
   const stillListed = (await shelf()).some((b) => b.id === ID3);
   const stillManifest = (await manifestOf(ID3))?.chapters.length === CHAPTERS;
   out.staleCleanup = staleCleared.removed === 1 && staleCleared.done &&
-    survivor.ok && leftover.status === 404 && stillListed && stillManifest
-    ? "ok (leftover gone, the book and its manifest untouched)"
-    : `FAIL ${JSON.stringify(staleCleared)} ch3=${survivor.status} leftover=${leftover.status} listed=${stillListed} manifest=${stillManifest}`;
+    survivor.ok && leftover.status === 404 && coverKept.ok && metaKept.ok &&
+    stillListed && stillManifest
+    ? "ok (leftover gone; the book, its manifest, its cover and its meta untouched)"
+    : `FAIL ${JSON.stringify(staleCleared)} ch3=${survivor.status} leftover=${leftover.status} cover=${coverKept.status} meta=${metaKept.status} listed=${stillListed} manifest=${stillManifest}`;
 
   // and the manifest carries per-chapter byte sizes, which is what makes the
   // wrong-size half of that check possible at all

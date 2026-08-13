@@ -1323,6 +1323,9 @@ async function checkChapters(env, id, manifest) {
   // the 書衣 slot: a cover is a first-class book file, not a stray — the
   // convention is exactly this name (the enrichment path normalizes to it)
   have.delete("cover.jpg");
+  // the enrichment sidecar (author/簡介, see the enriched-zip contract):
+  // like the cover it survives a re-split, so it is never a stale file
+  have.delete("meta.json");
   if (complete && have.size)
     out.push({
       kind: "stale-file", id, files: have.size,
@@ -1375,7 +1378,11 @@ async function cleanup(request, env) {
     if (!obj) return json({ error: "no manifest" }, 409);
     const m = await obj.json().catch(() => null);
     if (!m || !Array.isArray(m.chapters)) return json({ error: "bad manifest" }, 409);
-    const named = new Set([...m.chapters.map((c) => c.file), "manifest.json"]);
+    // the same first-class names the audit exempts — a stray next to a cover
+    // must not take the 書衣 (or the meta sidecar) with it
+    const named = new Set([
+      ...m.chapters.map((c) => c.file), "manifest.json", "cover.jpg", "meta.json",
+    ]);
     const list = await env.BOOKS.list({ prefix: `${id}/`, limit: 1000 });
     const keys = list.objects
       .map((o) => o.key)
