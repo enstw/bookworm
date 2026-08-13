@@ -1,13 +1,17 @@
 -- The shelf index: one row per book, keyed by the immutable book id, which is
 -- also the R2 prefix its chapter files live under. Everything here is derived
--- from that book's manifest.json (the source of truth) and rebuildable with
+-- from that book's manifest.json (the source of truth) plus its meta.json
+-- enrichment sidecar (the author line), and rebuildable with
 -- POST /api/admin/reindex — so a lost or drifted index is a repair, not a
 -- restore. indexed_at is stamped by each reindex run; rows left with an older
 -- stamp at the end of a run are books whose files are gone, and get pruned.
+-- NOTE: IF NOT EXISTS never alters a live table — a new column here must also
+-- be backfilled by the guarded ALTER in deploy.sh (see books.author there).
 CREATE TABLE IF NOT EXISTS books (
   id          TEXT PRIMARY KEY,
   slug        TEXT    NOT NULL,
   title       TEXT    NOT NULL DEFAULT '',
+  author      TEXT    NOT NULL DEFAULT '',
   chapters    INTEGER NOT NULL DEFAULT 0,
   total_chars INTEGER NOT NULL DEFAULT 0,
   updated_at  INTEGER NOT NULL DEFAULT 0,

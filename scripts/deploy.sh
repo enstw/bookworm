@@ -59,6 +59,21 @@ fi
 echo "==> applying schema.sql to remote D1"
 $W d1 execute bookworm --remote --file=schema.sql
 
+# schema.sql is CREATE TABLE IF NOT EXISTS — re-applied every deploy, it can
+# never ALTER a table that already exists. Columns added to a live table get
+# backfilled here, each behind its own PRAGMA probe so the step is idempotent.
+# (Captured into a variable, not piped: grep -q closing a pipe early would
+# trip pipefail on a probe that actually matched.)
+echo "==> ensuring books.author column"
+COLS=$($W d1 execute bookworm --remote --json --command "PRAGMA table_info(books)")
+if grep -q '"author"' <<<"$COLS"; then
+  echo "    (already present)"
+else
+  $W d1 execute bookworm --remote --command \
+    "ALTER TABLE books ADD COLUMN author TEXT NOT NULL DEFAULT ''"
+  echo "    added"
+fi
+
 echo "==> vendoring browser bundles (public/vendor/ is gitignored)"
 node scripts/vendor.mjs
 

@@ -229,12 +229,14 @@ async function listBooks(request, env, who) {
   if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
   const user = who.user;
   const rows = (await env.DB.prepare(
-    "SELECT id, slug, title, chapters, total_chars FROM books",
+    "SELECT id, slug, title, author, chapters, total_chars FROM books",
   ).all()).results ?? [];
   const books = rows.map((r) => ({
     id: r.id,
     slug: r.slug,
     title: r.title || r.slug,
+    // only when the enrichment sidecar named one — no empty keys on the wire
+    ...(r.author ? { author: r.author } : {}),
     chapters: r.chapters,
     totalChars: r.total_chars,
   }));
@@ -261,8 +263,15 @@ async function listBooks(request, env, who) {
   }
 
   books.sort((a, b) => a.title.localeCompare(b.title));
-  // per-user progress must never sit in a shared cache
-  return json({ books }, 200, { "cache-control": user ? "no-store" : "public, max-age=60" });
+  // no-store for EVERY identity. This used to be public/max-age=60 for the
+  // admin Bearer, but every 200 here is identified (keyless requests 401),
+  // so the public copy served no one — and the browser HTTP cache does not
+  // vary on credentials, so on the owner's phone the /admin list fetch would
+  // seed a cacheable copy that "/" then read for the next minute: a book
+  // uploaded on /admin was missing from the shelf (and progress blank) until
+  // it expired. Offline reads come from the app's own bw_books copy, not
+  // the HTTP cache, so nothing is lost by never caching.
+  return json({ books }, 200, { "cache-control": "no-store" });
 }
 
 // GET /api/books/<slug> — the slug in a URL is a label; this is what turns it
@@ -989,8 +998,9 @@ async function handleAdmin(request, env, ctx, path) {
       const isNew = !(await env.BOOKS.head(key));
       // registered BEFORE the object is written: a slug someone else already
       // owns must fail the publish outright, not leave a book on the shelf
-      // under a name that resolves to a different one
-      const reg = await registerBook(env, id, m2);
+      // under a name that resolves to a different one. The sidecar is already
+      // in the bucket — an enriched upload PUTs it before the manifest.
+      const reg = await registerBook(env, id, m2, await sidecarAuthor(env, id));
       if (!reg.ok) return json({ error: `slug "${reg.slug}" 已被其他書使用` }, 409);
       await env.BOOKS.put(key, bytes);
       if (isNew) ctx.waitUntil(pushNewBook(env, ctx, m2.title || id));
@@ -1009,12 +1019,25 @@ async function handleAdmin(request, env, ctx, path) {
   return json({ error: "method not allowed" }, 405);
 }
 
+// The author line rides the enrichment sidecar (books/<id>/meta.json, see
+// the enriched-zip contract), never the manifest: a plain republish rebuilds
+// the manifest but leaves the sidecar alone, so every registerBook caller
+// re-reads it here and the shelf keeps its author through re-splits,
+// retitles and reindexes alike. One subrequest; "" when there is no sidecar
+// or one that will not parse.
+async function sidecarAuthor(env, id) {
+  try {
+    const meta = await (await env.BOOKS.get(`${id}/meta.json`))?.json();
+    return String(meta?.author ?? "").trim().slice(0, 100);
+  } catch { return ""; }
+}
+
 // Write one book's row in the shelf index, plus the slug → id row that makes
 // its URL resolve. The manifest stays the source of truth; this is the
 // derived copy the library page reads. A slug already pointing at a DIFFERENT
 // book is refused ({ok:false}) rather than stolen — callers decide whether
 // that is a 409 (a publish) or a reason to fall back (a reindex).
-async function registerBook(env, id, m, indexedAt = Date.now()) {
+async function registerBook(env, id, m, author = "", indexedAt = Date.now()) {
   const slug = String(m.slug ?? id);
   if (!SLUG_RE.test(slug)) return { ok: false, slug, reason: "bad slug" };
   const owner = await env.DB.prepare("SELECT book FROM book_slugs WHERE slug = ?")
@@ -1023,13 +1046,13 @@ async function registerBook(env, id, m, indexedAt = Date.now()) {
   const now = Date.now();
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO books (id, slug, title, chapters, total_chars, updated_at, indexed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO books (id, slug, title, author, chapters, total_chars, updated_at, indexed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
-         slug = excluded.slug, title = excluded.title,
+         slug = excluded.slug, title = excluded.title, author = excluded.author,
          chapters = excluded.chapters, total_chars = excluded.total_chars,
          updated_at = excluded.updated_at, indexed_at = excluded.indexed_at`,
-    ).bind(id, slug, String(m.title ?? slug), m.chapters?.length ?? 0,
+    ).bind(id, slug, String(m.title ?? slug), author, m.chapters?.length ?? 0,
       Number(m.totalChars) || 0, now, indexedAt),
     env.DB.prepare(
       `INSERT INTO book_slugs (slug, book, created_at) VALUES (?, ?, ?)
@@ -1055,8 +1078,9 @@ async function registerBook(env, id, m, indexedAt = Date.now()) {
 // The one exception is a slug collision, which only shows itself when the row
 // is written, so there is nowhere else it could be found.
 //
-// Ten books a round: one listing, then per book a manifest read and an upsert.
-// That is the subrequest budget (50) with room to spare.
+// Ten books a round: one listing, then per book a manifest read, the author
+// sidecar read, and an upsert (a second upsert on a slug collision). That is
+// the subrequest budget (50) with room to spare.
 const REINDEX_PAGE = 10;
 async function reindex(request, env) {
   if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
@@ -1080,11 +1104,12 @@ async function reindex(request, env) {
     if (!obj) continue;
     const m = await obj.json().catch(() => null);
     if (!m) continue;
-    let reg = await registerBook(env, id, m, runAt);
+    const author = await sidecarAuthor(env, id);
+    let reg = await registerBook(env, id, m, author, runAt);
     if (!reg.ok) {
       // its slug belongs to another book: index it under its id instead, so
       // it stays reachable and the collision is visible rather than silent
-      reg = await registerBook(env, id, { ...m, slug: id }, runAt);
+      reg = await registerBook(env, id, { ...m, slug: id }, author, runAt);
       notes.push({ code: "slug-taken", id, slug: String(m.slug ?? "") });
     }
     indexed++;
@@ -1475,7 +1500,7 @@ async function handleAdminBook(request, env, id) {
     // so a half-applied edit must be the half that survives repair
     m.id = id;
     await env.BOOKS.put(manifestKey, JSON.stringify(m, null, 2) + "\n");
-    const reg = await registerBook(env, id, m);
+    const reg = await registerBook(env, id, m, await sidecarAuthor(env, id));
     if (!reg.ok) return json({ error: "slug taken" }, 409);
     return json({ ok: true, id, slug: m.slug, title: m.title });
   }
