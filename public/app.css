@@ -557,6 +557,17 @@ button {
   line-height: 1;
 }
 
+/* 落款: the author in smaller characters on their own column — vertical-rl
+   wraps blocks leftward, so the span lands beside the title — starting
+   lower, the way a 題簽 signs itself */
+.cover .slip-author {
+  display: block;
+  margin-top: 1.1em;
+  font-size: 0.68em;
+  letter-spacing: 0.12em;
+  opacity: 0.85;
+}
+
 .cover .coverimg {
   position: absolute;
   inset: 0;

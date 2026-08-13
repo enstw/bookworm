@@ -820,7 +820,10 @@ function coverInto(node, b, withTab) {
   node.className = `cover cloth-${clothTone(id)}`;
   // filter, because replaceChildren stringifies a bare null into "null"
   node.replaceChildren(...[
-    el("span", { class: "slip" }, b.title),
+    // the 題簽 carries the title and, when the enrichment sidecar named one,
+    // the author in smaller 落款 characters on their own column
+    el("span", { class: "slip" }, b.title,
+      b.author ? el("span", { class: "slip-author" }, b.author) : null),
     withTab && b.progress ? el("span", { class: "tab" }) : null,
     el("img", {
       class: "coverimg", alt: "", loading: "lazy",

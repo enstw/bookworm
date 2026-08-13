@@ -1,7 +1,8 @@
 // Full in-page E2E of /admin: auth → file → analyze (s2t auto) → upload,
 // then the enriched-zip contract (the agent upload path): meta.json + cover
-// ride the same form, the cover is transcoded to JPEG in the page, and a
-// plain-.txt republish leaves both enrichments alone.
+// ride the same form, the cover is transcoded to JPEG in the page, a
+// plain-.txt republish leaves both enrichments alone, and the reader-facing
+// shelf wears the author on the 書衣's 題簽.
 // Drives a headless Chromium via CDP with awaitPromise so async flows finish.
 //
 // Prereqs: `pnpm run dev` running, ADMIN_TOKEN=test-token-123 in .dev.vars
@@ -176,7 +177,8 @@ out.enriched = { ...enriched, title: enriched.title === "豐收之書" ? "ok" : 
 
 // act 2 (server side): the bucket holds the contract and nothing more —
 // meta filtered to known keys, the cover transcoded to a real JPEG under the
-// canonical name, the text split into its three chapters
+// canonical name, the text split into its three chapters — and the shelf
+// row itself carries the author (registerBook read the sidecar at publish)
 const authH = { authorization: `Bearer ${TOKEN}` };
 const books = async () =>
   (await (await fetch(`${ORIGIN}/api/books`, { cache: "no-store", headers: authH })).json()).books ?? [];
@@ -194,9 +196,10 @@ if (eb) {
     && cRes.headers.get("content-type") === "image/jpeg"
     && cBytes[0] === 0xff && cBytes[1] === 0xd8
     && man1?.chapters?.length === 3
-      ? "ok (meta filtered to the contract, cover a real JPEG, 3 chapters)"
+    && eb.author === "測試作者"
+      ? "ok (meta filtered to the contract, cover a real JPEG, 3 chapters, author on the row)"
       : `FAIL meta=${JSON.stringify(meta)} cover=${cRes.status}/${cRes.headers.get("content-type")} `
-        + `magic=${cBytes[0]},${cBytes[1]} chapters=${man1?.chapters?.length}`;
+        + `magic=${cBytes[0]},${cBytes[1]} chapters=${man1?.chapters?.length} rowAuthor=${eb.author}`;
 } else {
   out.enrichedServerState = "FAIL 豐收之書 not on the shelf";
 }
@@ -230,11 +233,55 @@ if (eb && eb2) {
   out.republishKeepsEnrichment =
     eb2.id === eb.id && meta2?.author === "測試作者" && cRes2.ok
     && man2.generatedAt !== man1?.generatedAt
-      ? "ok (same id, meta and cover survive, manifest re-generated)"
+    && eb2.author === "測試作者"
+      ? "ok (same id, meta, cover and shelf-row author survive, manifest re-generated)"
       : `FAIL id=${eb.id}→${eb2.id} meta=${JSON.stringify(meta2)} cover=${cRes2.status} `
-        + `regenerated=${man2.generatedAt !== man1?.generatedAt} log=${replay.uploadLog}`;
+        + `regenerated=${man2.generatedAt !== man1?.generatedAt} rowAuthor=${eb2.author} log=${replay.uploadLog}`;
 } else {
   out.republishKeepsEnrichment = `FAIL book lost: before=${!!eb} after=${!!eb2} log=${replay.uploadLog}`;
+}
+
+// act 4: the reader-facing shelf wears it — the 題簽 on the 書衣 carries the
+// author under the title. Through a real reader key: "/" sits behind the
+// reader gate, and the admin token in localStorage means nothing to it.
+if (eb2) {
+  const mint = await (await fetch(`${ORIGIN}/api/admin/readers`, {
+    method: "POST", headers: { ...authH, "content-type": "application/json" },
+    body: JSON.stringify({ user: "admin-e2e", label: "slip-check" }),
+  })).json();
+  // enrolling a never-enrolled profile lands on the install guide, not the
+  // shelf (auth-e2e proves that path) — this act is about the 題簽, so mark
+  // the guide seen before walking through the door. Same origin as /admin.
+  // And drop the bw_books cache: with one, the shelf paints it and refreshes
+  // through a CAPPED fetch that a busy CI server can outlast — the stale
+  // paint (with or without an old copy of this fixture) must not be what
+  // the assertion reads. No cache → the uncapped network paint, every run.
+  await evalJs(`{ localStorage.setItem("bw_install_seen", "1");
+                  localStorage.removeItem("bw_books"); }`);
+  await send("Page.navigate",
+    { url: `${ORIGIN}/?key=${encodeURIComponent(mint.key)}` }, sessionId);
+  await new Promise((r) => setTimeout(r, 1500));
+  const slip = await evalJs(`(async () => {
+    // the shelf paints the bw_books cache first and repaints when /api/books
+    // answers — wait for THIS book's row, not for the first paint
+    for (let i = 0; i < 100; i++) {
+      const row = [...document.querySelectorAll(".book-row")]
+        .find(r => r.querySelector(".slip")?.textContent.includes("豐收之書"));
+      if (row) return row.querySelector(".slip-author")?.textContent ?? "(no slip-author)";
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const api = await fetch("/api/books").then(async r => r.status + " " +
+      JSON.stringify(((await r.json().catch(() => ({}))).books ?? []).map(b => b.title)), e => "ERR " + e.message);
+    return "(no row) shelfHidden=" + document.getElementById("shelfScreen")?.hidden
+      + " slips=" + JSON.stringify([...document.querySelectorAll(".book-row .slip")].map(s => s.textContent))
+      + " api=" + api + " url=" + location.href.replace(/key=[^&]*/, "key=…");
+  })()`);
+  out.shelfSlip = slip === "測試作者"
+    ? "ok (題簽 carries the author)" : `FAIL slip author=${slip}`;
+  await fetch(`${ORIGIN}/api/admin/readers/${encodeURIComponent(mint.key)}`,
+    { method: "DELETE", headers: authH });
+} else {
+  out.shelfSlip = "FAIL no enriched book to look for";
 }
 
 // sweep the fixture book back off the shelf (books DELETE pages like /admin)
