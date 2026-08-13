@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-13 — `267afdb5f2cd`
+
+- shelf: redraw "/" as 書衣 covers on static markup, with a cover-image slot (`267afdb`)
+
 ## 2026-08-13 — `57beb350d3f8`
 
 - ci: approve the held pull_request run instead of dispatching the gate (`57beb35`)
