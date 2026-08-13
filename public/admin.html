@@ -1134,10 +1134,32 @@
       }
     }
 
+    // Hold the screen while an upload runs (iOS 16.4+). Auto-lock suspends
+    // Safari's fetches mid-run; put() survives that by retrying, but the
+    // upload makes no progress while the phone sleeps. The system releases
+    // the lock whenever the page hides — visibilitychange re-acquires it if
+    // a run is still going. uploadRun doubles as the "a run is live" signal:
+    // the handler nulls it when its run is over.
+    let uploadWake = null;
+    async function applyUploadWake() {
+      const want = !!uploadRun && document.visibilityState === "visible";
+      if (want && !uploadWake && "wakeLock" in navigator) {
+        try {
+          uploadWake = await navigator.wakeLock.request("screen");
+          uploadWake.addEventListener("release", () => { uploadWake = null; });
+        } catch { /* denied (e.g. low-power mode) — retried on next visibility flip */ }
+      } else if (!want && uploadWake) {
+        uploadWake.release().catch(() => {});
+        uploadWake = null;
+      }
+    }
+    document.addEventListener("visibilitychange", applyUploadWake);
+
     $("upload").onclick = async () => {
       if (!entries) return;
       uploadRun?.abort();
       const run = (uploadRun = new AbortController());
+      applyUploadWake();
       // only the current run may touch the UI: a superseded run's late
       // workers hit this guard instead of the bar
       const tick = (v) => { if (run === uploadRun) $("bar").value = v; };
@@ -1182,7 +1204,11 @@
         run.abort();
         if (run === uploadRun) log(t("admin.uploadFail", err.message), "err");
       }
-      if (run === uploadRun) $("upload").disabled = false;
+      if (run === uploadRun) {
+        $("upload").disabled = false;
+        uploadRun = null;
+      }
+      applyUploadWake();
     };
 
     // ---------- 改進建議 ----------
