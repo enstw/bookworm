@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <meta name="color-scheme" content="light dark">
-  <title>Bookworm · 管理</title>
+  <title data-i18n="admin.docTitle">Bookworm · 管理</title>
   <script src="/i18n.js"></script>
   <!-- the diagnostic pages' upload helper, here only for the switch that
        silences them: bwTestlogOn / bwTestlogSet read the same localStorage
@@ -83,7 +83,7 @@
     <!-- everything that needs the key lives here; / is for reading -->
     <a class="linklike" href="/?shelf" data-i18n="admin.toShelf">← 回書架</a>
     ·
-    <button class="linklike" id="langBtn"></button>
+    <button class="linklike" id="langBtn" data-i18n="lib.langSwitch" data-i18n-title="lib.langTitle"></button>
 
     <section id="auth">
       <label for="token" data-i18n="admin.token">管理密鑰（ADMIN_TOKEN）</label>
@@ -1067,15 +1067,8 @@
       }
     };
 
-    // one pass over the markup: every data-i18n node takes its string from
-    // the table, so the page ships readable zh-TW even before this runs
-    function applyI18n() {
-      document.title = t("admin.docTitle");
-      for (const node of document.querySelectorAll("[data-i18n]"))
-        node.textContent = t(node.dataset.i18n);
-      $("langBtn").textContent = t("lib.langSwitch");
-      $("langBtn").title = t("lib.langTitle");
-    }
+    // the sweep itself lives in i18n.js now (the shelf uses it too); the
+    // <title> and #langBtn carry data-i18n so one pass covers everything
     $("langBtn").onclick = () => { bwSetLang(bwOtherLang()); applyI18n(); };
     applyI18n();
 

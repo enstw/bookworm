@@ -300,15 +300,25 @@ async function serveBook(request, env, path) {
   if (!obj) return json({ error: "not found" }, 404);
 
   const isManifest = key.endsWith(".json");
+  // covers (books/<id>/cover.jpg — the shelf's 書衣 slot) are the one image
+  // in a book's prefix; without a real type the <img> would be sniffing
+  // text/plain
+  const isImage = /\.(jpe?g|png|webp)$/.test(key);
   const headers = {
     "content-type": isManifest
       ? "application/json"
+      : key.endsWith(".png") ? "image/png"
+      : key.endsWith(".webp") ? "image/webp"
+      : isImage ? "image/jpeg"
       : "text/plain; charset=utf-8",
     // Chapter files are immutable once published — and the reader appends
     // ?v=<manifest.generatedAt> so a re-split book busts them — so they can
     // cache for a month. Manifests may change on republish; keep them fresh.
+    // A cover can be replaced without a re-split, so it gets a day, not the
+    // immutable month.
     "cache-control": isManifest
       ? "public, max-age=60"
+      : isImage ? "public, max-age=86400"
       : "public, max-age=2592000, immutable",
     etag: obj.httpEtag,
   };
@@ -1310,6 +1320,9 @@ async function checkChapters(env, id, manifest) {
     });
 
   have.delete("manifest.json");
+  // the 書衣 slot: a cover is a first-class book file, not a stray — the
+  // convention is exactly this name (the enrichment path normalizes to it)
+  have.delete("cover.jpg");
   if (complete && have.size)
     out.push({
       kind: "stale-file", id, files: have.size,

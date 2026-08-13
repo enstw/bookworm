@@ -367,6 +367,43 @@ addEventListener("visibilitychange", () => document.hidden || clearBadge());
 // a forced reload — the reader may be mid-sentence.
 checkVersion();
 addEventListener("visibilitychange", () => document.hidden || checkVersion());
+
+// ---------- static chrome (the markup lives in index.html) ----------
+
+// zh ships in the markup; a device that picked English gets its sweep here,
+// before boot()'s first paint lands in the microtask queue
+applyI18n();
+
+$("#staleRetry").onclick = () => renderLibrary();
+$("#changeKeyBtn").onclick = async () => {
+  // switching identities means presenting a different KEY — an id is no
+  // longer taken at a device's word. adoptKey does the settings-timestamp
+  // handoff the old id prompt did here.
+  const v = prompt(t("auth.changePrompt"));
+  if (!v || !v.trim()) return;
+  try {
+    await adoptKey(extractKey(v));
+    renderLibrary();
+  } catch {
+    alert(t("auth.bad"));
+  }
+};
+$("#pushBtn").onclick = () => togglePush();
+$("#pushTestBtn").onclick = () => testPush();
+$("#refreshBtn").onclick = () => forceRefresh();
+// the switch names the language you would GET, which is the one form a
+// reader of either language can recognise without reading the other. A
+// switch is a re-sweep plus a repaint of the JS-filled strings — never a
+// refetch: the list on screen is already the list.
+$("#langBtn").onclick = () => {
+  bwSetLang(bwOtherLang());
+  applyI18n();
+  if (shelfPaint) paintShelf(...shelfPaint);
+};
+// a browser tab on a phone: the installed app is the product, so the way
+// in stays one tap away (the guide auto-offers only once, at enrollment)
+$("#installBtn").onclick = () => renderInstallGuide(renderLibrary);
+
 boot();
 
 // The route dispatch, async so enrolling (a /?key=… link) finishes before
@@ -400,6 +437,16 @@ async function boot() {
 
 function isStandalone() {
   return matchMedia("(display-mode: standalone)").matches || Boolean(navigator.standalone);
+}
+
+// The screens are static sections in index.html; raising one lowers the
+// rest. The reader is not a screen: buildReaderShell renders into
+// #readerRoot and lowers them all (id = null). Raising a screen also
+// clears the reader's DOM, so a failed initReader cannot leave a
+// half-built shell behind the message it fails into.
+function showScreen(id) {
+  for (const s of document.querySelectorAll("#app > section")) s.hidden = s.id !== id;
+  if (id) $("#readerRoot").replaceChildren();
 }
 
 // ---------- new-version notice ----------
@@ -519,19 +566,10 @@ function renderInstallGuide(next) {
   try { localStorage.setItem("bw_install_seen", "1"); } catch { /* private mode */ }
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
     (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent));
-  $("#app").replaceChildren(
-    el("div", { class: "library" },
-      el("h1", {}, brand()),
-      el("h2", {}, t("guide.h")),
-      el("p", { class: "muted" }, t("guide.why")),
-      el("ol", { class: "guide-steps" },
-        el("li", {}, t(ios ? "guide.ios1" : "guide.other1")),
-        el("li", {}, t(ios ? "guide.ios2" : "guide.other2")),
-        el("li", {}, t("guide.done"))),
-      el("p", {},
-        el("button", { id: "guideContinue", class: "linklike", onclick: next },
-          t("guide.continue")))),
-  );
+  $("#guideIos").hidden = !ios;
+  $("#guideOther").hidden = ios;
+  $("#guideContinue").onclick = next;
+  showScreen("guideScreen");
 }
 
 // ---------- the reader key (the door) ----------
@@ -628,7 +666,10 @@ async function whoami() {
 // key (if any) is genuinely dead, not merely a lost cookie.
 function renderKeyGate(retry, failed = false) {
   document.title = "Bookworm";
-  const submit = async (e) => {
+  $("#gateLead").textContent = t(failed ? "auth.bad" : "auth.need");
+  $("#keyInput").placeholder = t("auth.placeholder");
+  $("#keyMsg").textContent = "";
+  $("#keyForm").onsubmit = async (e) => {
     e.preventDefault();
     const raw = $("#keyInput").value;
     if (!raw.trim()) return;
@@ -639,25 +680,14 @@ function renderKeyGate(retry, failed = false) {
       $("#keyMsg").textContent = t("auth.bad");
     }
   };
-  $("#app").replaceChildren(
-    el("div", { class: "library" },
-      el("h1", {}, brand()),
-      el("p", { class: "muted" }, t(failed ? "auth.bad" : "auth.need")),
-      el("form", { id: "keyForm", onsubmit: submit },
-        el("input", {
-          id: "keyInput", type: "password", autocomplete: "off",
-          placeholder: t("auth.placeholder"),
-        }), " ",
-        el("button", { id: "keySubmit", class: "linklike", type: "submit" }, t("auth.submit"))),
-      el("p", { id: "keyMsg", class: "muted small" }),
-      el("p", { class: "muted small" }, t("auth.hint"))),
-  );
+  showScreen("gateScreen");
 }
 
 function renderMessage(title, children = []) {
-  $("#app").replaceChildren(
-    el("div", { class: "library" }, el("h1", {}, title), el("p", { class: "muted" }, children)),
-  );
+  $("#msgTitle").replaceChildren(title);
+  // filter, because replaceChildren stringifies a bare null into "null"
+  $("#msgBody").replaceChildren(...[children].flat().filter((c) => c != null));
+  showScreen("msgScreen");
 }
 
 // The wordmark: .brand carries the app icon as a ::before (see app.css). It
@@ -689,16 +719,17 @@ async function renderLibrary() {
   // fire-and-forget: no settings UI here, so a late server-wins repaint is
   // purely cosmetic (paper color / theme vars on the library chrome)
   if (uid) resolveSettings(uid);
-  renderMessage(brand(), t("lib.loading"));
-  let books;
-  let stale = false;
-  // the last shelf this device saw, read BEFORE the request because it also
-  // decides how long to wait for one: with a list to show, a hung connection
-  // costs a second and the shelf comes up marked stale; with nothing to show,
-  // the cap would only turn a slow open into a failed one
+  // The last shelf this device saw paints NOW — device-first, the same rule
+  // positions and settings follow — and the capped fetch below can only
+  // improve on it: a fresh list, or a stale mark when nothing answers.
+  // With nothing local to show, the network is the only answer: uncapped,
+  // behind a loading line.
   let cached = null;
   try { cached = JSON.parse(localStorage.getItem("bw_books")); } catch { /* ignore */ }
   const haveCached = Array.isArray(cached);
+  if (haveCached) paintShelf(cached, { uid, stale: false });
+  else renderMessage(brand(), t("lib.loading"));
+  let books;
   try {
     // the key cookie says who is asking; the server adds that reader's
     // per-book progress (the same chars-based pct as the reader's line)
@@ -719,105 +750,98 @@ async function renderLibrary() {
       for (const b of books) if (b.id) localStorage.setItem(`bw_book_${b.slug}`, b.id);
     } catch { /* full */ }
   } catch (err) {
-    // offline, capped, or a dead API: fall back to the last list we saw
-    books = cached;
+    // offline, capped, or a dead API: the painted cache stands, marked
     if (!haveCached) {
       return renderMessage(brand(), [
         t("lib.loadFail", err.message),
         el("button", { class: "linklike", onclick: renderLibrary }, t("lib.retry")),
       ]);
     }
-    stale = true;
+    return paintShelf(cached, { uid, stale: true });
   }
-  $("#app").replaceChildren(
-    el("div", { class: "library" },
-      el("h1", {}, brand()),
-      stale ? el("p", { class: "muted small" }, t("lib.offlineList"),
-        el("button", { class: "linklike", onclick: renderLibrary }, t("lib.retry"))) : null,
-      books.length
-        ? el("div", { class: "book-list" },
-            books.map((b) =>
-              // the ⇣ is a sibling of the card, not a child: a <button> inside
-              // an <a> is invalid HTML, and tapping it would open the book
-              el("div", { class: "book-row", "data-slug": b.slug },
-                el("a", { class: "book-card", href: `/${encodeURIComponent(b.slug)}` },
-                  el("div", { class: "book-title" }, b.title),
-                  el("div", { class: "muted small" }, t("lib.meta", b.chapters, b.totalChars)),
-                  b.progress
-                    ? el("div", { class: "book-progress", title: t("lib.chapterN", b.progress.chapter + 1) },
-                        el("div", { class: "bar" },
-                          el("div", { class: "fill", style: `width:${b.progress.pct}%` })),
-                        el("span", {}, `${b.progress.pct}%`))
-                    : null),
-                "caches" in window ? shelfOfflineBtn(b) : null)))
-        : el("p", { class: "muted" }, t("lib.empty")),
-      el("p", { class: "muted small" },
-        t("lib.readingAs"), el("code", {}, uid ?? "—"), " ",
-        el("button", {
-          id: "changeKeyBtn",
-          class: "linklike",
-          // switching identities means presenting a different KEY — an id is
-          // no longer taken at a device's word. adoptKey does the
-          // settings-timestamp handoff the old id prompt did here.
-          onclick: async () => {
-            const v = prompt(t("auth.changePrompt"));
-            if (!v || !v.trim()) return;
-            try {
-              await adoptKey(extractKey(v));
-              renderLibrary();
-            } catch {
-              alert(t("auth.bad"));
-            }
-          },
-        }, t("lib.change")),
-        el("br"),
-        t("lib.bookmarkHint")),
-      // 新書上架 / 新版本已上線 (Web Push): rendered only where the platform
-      // can deliver — on iPhone that means the installed PWA; a Safari tab
-      // has no PushManager and the row simply doesn't exist
-      "PushManager" in window && "Notification" in window
-        ? el("p", { class: "muted small" }, t("push.label"),
-            el("button", { id: "pushBtn", class: "linklike", onclick: togglePush }, "…"),
-            el("span", { id: "pushTestWrap", hidden: true }, " · ",
-              el("button", { id: "pushTestBtn", class: "linklike", onclick: testPush },
-                t("push.test"))))
-        : null,
-      el("p", { class: "muted small" },
-        t("lib.build", BUILD), " · ",
-        el("button", {
-          id: "refreshBtn",
-          class: "linklike",
-          title: t("lib.refreshTitle"),
-          onclick: forceRefresh,
-        }, t("lib.refresh")),
-        // the switch names the language you would GET, which is the one form
-        // a reader of either language can recognise without reading the other
-        " · ",
-        el("button", {
-          id: "langBtn",
-          class: "linklike",
-          title: t("lib.langTitle"),
-          onclick: () => { bwSetLang(bwOtherLang()); renderLibrary(); },
-        }, t("lib.langSwitch")),
-        // a browser tab on a phone: the installed app is the product, so the
-        // way in stays one tap away (the guide auto-offers only once, right
-        // after enrollment)
-        ...(isStandalone() ? [] : [" · ",
-          el("button", {
-            id: "installBtn",
-            class: "linklike",
-            onclick: () => renderInstallGuide(renderLibrary),
-          }, t("lib.installHint"))]),
-        // one door to everything that needs the key: uploading, retitling,
-        // re-slugging, deleting, and the on-device diagnostic pages all live
-        // on /admin. The shelf is for reading.
-        " · ",
-        el("a", { id: "adminLink", class: "linklike", href: "/admin", title: t("lib.adminTitle") },
-          t("lib.admin"))),
-    ),
-  );
+  paintShelf(books, { uid, stale: false });
+}
+
+// What paintShelf last drew, so the language switch can re-render the
+// JS-filled strings without asking the network for the same list again.
+let shelfPaint = null;
+
+function paintShelf(books, opts) {
+  shelfPaint = [books, opts];
+  showScreen("shelfScreen");
+  $("#staleNote").hidden = !opts.stale;
+  $("#emptyNote").hidden = books.length > 0;
+  // 續讀: the device's open book leads — the same book bare "/" resumes
+  const heroBook = books.find((b) => b.slug === lastBook()) ?? null;
+  paintHero(heroBook);
+  $("#bookList").replaceChildren(...books.filter((b) => b !== heroBook).map(shelfRow));
+  $("#uidCode").textContent = opts.uid ?? "—";
+  $("#buildLine").textContent = t("lib.build", BUILD);
+  // the push row exists only where the platform can deliver — on iPhone
+  // that means the installed PWA; a Safari tab has no PushManager
+  $("#pushRow").hidden = !("PushManager" in window && "Notification" in window);
+  $("#installWrap").hidden = isStandalone();
   refreshPushBtn();
   applyWakeLock(); // leaving the reader releases the screen hold
+}
+
+function paintHero(b) {
+  const row = $("#heroRow");
+  row.hidden = !b;
+  if (!b) return;
+  row.dataset.slug = b.slug;
+  $("#heroLink").href = `/${encodeURIComponent(b.slug)}`;
+  coverInto($("#heroCover"), b, false);
+  $("#heroTitle").textContent = b.title;
+  $("#heroWhere").textContent =
+    b.progress ? t("lib.chapterN", b.progress.chapter + 1) : t("lib.notStarted");
+  const pct = b.progress ? Math.round(b.progress.pct) : 0;
+  $("#heroFill").style.width = `${pct}%`;
+  $("#heroPct").textContent = `${pct}%`;
+  const dl = $("#heroOffline");
+  dl.hidden = !("caches" in window);
+  dl.onclick = () => toggleShelfOffline(dl, b);
+  paintShelfOffline(dl, b);
+}
+
+// 書衣: the cloth tone is keyed on the permanent id, so a re-slug keeps its
+// cover; a real cover image (books/<id>/cover.jpg — the agent-enrichment
+// slot, see DESIGN.md) paints over the cloth when the book has one, and the
+// <img>'s error handler removes it, so the cloth is also what offline and
+// cover-less books wear.
+function clothTone(id) {
+  let h = 0;
+  for (const c of String(id)) h = (h + c.charCodeAt(0)) % 4;
+  return h;
+}
+
+function coverInto(node, b, withTab) {
+  const id = b.id ?? b.slug;
+  node.className = `cover cloth-${clothTone(id)}`;
+  // filter, because replaceChildren stringifies a bare null into "null"
+  node.replaceChildren(...[
+    el("span", { class: "slip" }, b.title),
+    withTab && b.progress ? el("span", { class: "tab" }) : null,
+    el("img", {
+      class: "coverimg", alt: "", loading: "lazy",
+      src: assetUrl(id, "cover.jpg"),
+      onerror: (e) => e.target.remove(),
+    }),
+  ].filter(Boolean));
+  return node;
+}
+
+function shelfRow(b) {
+  const pct = b.progress ? Math.round(b.progress.pct) : null;
+  // the ⇣ is a sibling of the card, not a child: a <button> inside an <a>
+  // is invalid HTML, and tapping it would open the book
+  return el("div", { class: "book-row", "data-slug": b.slug },
+    el("a", { class: "book-card", href: `/${encodeURIComponent(b.slug)}` },
+      coverInto(el("div"), b, true),
+      el("div", { class: "grid-meta" },
+        t("lib.meta", b.chapters, b.totalChars), " · ",
+        pct === null ? t("lib.notStarted") : el("span", { class: "acc" }, t("lib.readPct", pct)))),
+    "caches" in window ? shelfOfflineBtn(b) : null);
 }
 
 // ---------- the ⇣ on a book card ----------
@@ -1410,7 +1434,8 @@ function showRemoteNotice(remote) {
 
 function buildReaderShell() {
   const m = state.manifest;
-  $("#app").replaceChildren(
+  showScreen(null); // the reader lowers every screen and owns #readerRoot
+  $("#readerRoot").replaceChildren(
     el("header", { class: "topbar" },
       el("a", { class: "iconbtn brand", href: "/?shelf", title: t("ui.library") }),
       el("div", { class: "titles" },

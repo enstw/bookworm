@@ -164,7 +164,7 @@ const nav = async (url) => {
 
 // a bare visit has no key: the app must show the door, not a broken shelf
 await nav(`${BASE}/`);
-out.gateScreen = await evalJs(`!!document.getElementById("keyForm")`)
+out.gateScreen = await evalJs(`!document.getElementById("gateScreen").hidden`)
   ? "ok (key gate rendered)" : "FAIL: no key gate";
 
 // paste the LINK the way a phone actually delivers it — wrapped in the
@@ -176,7 +176,7 @@ const unlocked = await evalJs(`(async () => {
   document.getElementById("keyForm").requestSubmit();
   await new Promise((r) => setTimeout(r, 1500));
   return {
-    library: !!document.getElementById("changeKeyBtn"),
+    library: !document.getElementById("shelfScreen").hidden,
     uid: localStorage.getItem("bw_uid"),
     msg: document.getElementById("keyMsg")?.textContent ?? "",
   };
@@ -191,7 +191,7 @@ const enrolled = await evalJs(`({
   uid: localStorage.getItem("bw_uid"),
   key: localStorage.getItem("bw_key") !== null,
   search: location.search,
-  gate: !!document.getElementById("keyForm"),
+  gate: !document.getElementById("gateScreen").hidden,
 })`);
 out.enroll = enrolled.uid === "authe2e" && enrolled.key && enrolled.search === "" && !enrolled.gate
   ? "ok (enrolled as authe2e, key scrubbed from the URL)"
@@ -199,7 +199,7 @@ out.enroll = enrolled.uid === "authe2e" && enrolled.key && enrolled.search === "
 
 // a headless Chromium is never standalone, so enrolling must offer the
 // install guide exactly once; continue lands on the library
-const guideShown = await evalJs(`!!document.getElementById("guideContinue")`);
+const guideShown = await evalJs(`!document.getElementById("guideScreen").hidden`);
 await evalJs(`document.getElementById("guideContinue")?.click()`);
 await new Promise((r) => setTimeout(r, 1200));
 const afterGuide = await evalJs(`({
@@ -214,8 +214,8 @@ out.installGuide = guideShown && afterGuide.library && afterGuide.seen === "1"
 // and the guide, once seen, stays away
 await evalJs(`localStorage.removeItem("bw_uid")`);
 await nav(`${BASE}/`);
-out.cookieCarries = !(await evalJs(`!!document.getElementById("keyForm")`)) &&
-  !(await evalJs(`!!document.getElementById("guideContinue")`)) &&
+out.cookieCarries = !(await evalJs(`!document.getElementById("gateScreen").hidden`)) &&
+  !(await evalJs(`!document.getElementById("guideScreen").hidden`)) &&
   (await evalJs(`localStorage.getItem("bw_uid")`)) === "authe2e"
   ? "ok (cookie alone re-seeds the identity; no repeat guide)"
   : "FAIL: cookie did not carry the reload";

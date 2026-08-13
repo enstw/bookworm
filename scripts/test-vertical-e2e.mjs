@@ -721,17 +721,17 @@ await evalJs(`document.getElementById("vertBtn").click()`);
 await nav(`${BASE}/?shelf`);
 out.libraryHorizontal = (await mode()) === "horizontal-tb" ? "ok" : `FAIL: ${await mode()}`;
 
-// book cards show reading progress: thin bar + exact percent, fill width
-// true to the server-computed pct
+// the open book leads as the 續讀 hero, its reading thread filled true to
+// the server-computed pct (rounded — the thread carries the precision)
 const prog = await evalJs(`(() => {
-  const row = document.querySelector(".book-card .book-progress");
-  if (!row) return null;
-  const bar = row.querySelector(".bar").getBoundingClientRect().width;
-  const fill = row.querySelector(".fill").getBoundingClientRect().width;
-  return { label: row.querySelector("span").textContent, ratio: fill / bar };
+  const row = document.querySelector("#heroRow");
+  if (!row || row.hidden) return null;
+  const bar = row.querySelector(".thread .bar").getBoundingClientRect().width;
+  const fill = row.querySelector(".thread .fill").getBoundingClientRect().width;
+  return { label: document.getElementById("heroPct").textContent, ratio: fill / bar };
 })()`);
 out.libraryProgress =
-  prog && prog.label === "42.5%" && Math.abs(prog.ratio - 0.425) < 0.01
+  prog && prog.label === "43%" && Math.abs(prog.ratio - 0.43) < 0.01
     ? "ok" : `FAIL: ${JSON.stringify(prog)}`;
 
 // 新書通知 row: rendered where the platform can deliver, and it reflects

@@ -475,6 +475,31 @@ the pre-publication history, which lives in the owner's private archive.
   — the page-follow tolerance. The player bar itself is near-transparent
   (35% of `--bar-bg` over the blur, no shadow) with 1.4rem icon buttons,
   so it floats over the page instead of hiding it.
+- **The shelf is 書衣, drawn on static markup (2026-08-13).** "/"'s screens
+  (gate, shelf, install guide, message) are static sections in `index.html`,
+  admin-style: `showScreen` raises exactly one, zh defaults live in the
+  markup and the shared `applyI18n` in `i18n.js` sweeps `data-i18n` /
+  `data-i18n-title`, JS fills only what carries data. A language switch is
+  therefore a sweep plus a repaint, never a refetch, and e2e asserts a
+  section's `hidden`, never an id's existence — the ids are all still there
+  when a screen is down. The shelf paints device-first, the same rule
+  positions follow: a cached `bw_books` renders immediately and the capped
+  fetch can only improve it (fresh list, or the stale mark). Visually every
+  book wears a 線裝書 cloth cover with a pasted 題簽 — cloth tone hashed
+  from the permanent id so a re-slug keeps its cover; cloth and slip are
+  MATERIAL colors, deliberately fixed, picked to stand on all 13 papers and
+  the dark theme — and the device's open book (`bw_last_book`, the same
+  book "/" resumes) leads as the 續讀 hero card. Progress is the accent
+  讀線, rounded to whole percent: the thread carries the precision. A real
+  cover is a pure R2 convention, `books/<id>/cover.jpg`: it paints over the
+  cloth and the `<img>`'s error handler removes it, so the cloth is also
+  what offline and cover-less books wear. No D1 column, no manifest field,
+  no upload UI — the enrichment path (backlog) just PUTs the file; the
+  worker serves book images with real content-types and a day's cache
+  (replaceable, unlike chapters), and the audit exempts the name from
+  stale-file accounting. Motion budget on the shelf: nothing beyond the
+  existing busy-pulse. The reader surface's measured decisions (grid, 字級,
+  bars) are untouched by all of this.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:
@@ -695,6 +720,12 @@ the pre-publication history, which lives in the owner's private archive.
 
 ## Backlog
 
+- The agent book-enrichment path: an upload flow where an agent researches
+  the book on the web and fills in what a bare .txt cannot — author, 摘要,
+  and a cover image, found or AI-generated (the owner's genimage skills) —
+  normalized to `books/<id>/cover.jpg`, which the shelf already renders.
+  Author and summary need a manifest-field design when they land; the cover
+  needs none.
 - Multi-lingual beyond the UI chrome: per-book `lang` in the manifest; TTS
   voice and chunker per language (ENDERS/PAUSES/CHARS_PER_SEC are CJK
   today); font stack and break rules per language; offer 直排 only for CJK
