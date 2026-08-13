@@ -390,15 +390,20 @@
       // deleting takes every reader's bookmark with it, so the slug has to be
       // typed out — two characters, and nothing else on this page is final
       const typed = el("input", { type: "text", autocomplete: "off" });
+      // no value on purpose: a sweep's total is unknowable up front (the
+      // server pages blindly through the prefix), so the bar only says
+      // "still working" — the 已清 count in the message carries the number
+      const bar = el("progress", { hidden: true });
       del.append(
         el("p", { class: "small", text: t("admin.deleteWarn", b.title) }),
         el("label", { text: t("admin.deleteConfirm", b.slug) }), typed,
         el("button", {
           class: "btn danger",
           text: t("admin.deleteGo"),
-          onclick: (e) => removeBook(b, typed.value.trim(), say, e.target),
+          onclick: (e) => removeBook(b, typed.value.trim(), say, e.target, bar),
         }),
-        el("button", { class: "btn", text: t("admin.cancel"), onclick: () => toggle(del) }));
+        el("button", { class: "btn", text: t("admin.cancel"), onclick: () => toggle(del) }),
+        bar);
 
       return el("div", { class: "book" },
         el("div", { class: "book-head" },
@@ -856,27 +861,36 @@
     // belief against the bucket before agreeing to any of it.
     async function sweepBook(id, onProgress, reason) {
       let removed = 0;
-      for (let round = 0; ; round++) {
-        if (round > 5000) throw new Error(t("admin.stuck"));
-        const q = round ? "?sweep=1" : reason ? `?expect=${reason}` : "";
-        const r = await api(bookUrl(id) + q, { method: "DELETE" });
-        removed += r.removed ?? 0;
-        if (r.done) return removed;
-        onProgress?.(removed);
+      sweepsLive++;
+      applyWake();
+      try {
+        for (let round = 0; ; round++) {
+          if (round > 5000) throw new Error(t("admin.stuck"));
+          const q = round ? "?sweep=1" : reason ? `?expect=${reason}` : "";
+          const r = await api(bookUrl(id) + q, { method: "DELETE" });
+          removed += r.removed ?? 0;
+          if (r.done) return removed;
+          onProgress?.(removed);
+        }
+      } finally {
+        sweepsLive--;
+        applyWake();
       }
     }
 
-    async function removeBook(b, typed, say, btn) {
+    async function removeBook(b, typed, say, btn, bar) {
       if (typed !== b.slug) return say(t("admin.deleteMismatch"), "err");
       btn.disabled = true;
+      bar.hidden = false;
       try {
         await sweepBook(b.id, (removed) => say(t("admin.sweeping", removed)));
       } catch (err) {
         btn.disabled = false;
+        bar.hidden = true;
         return say(t("admin.fail", err.message), "err");
       }
       btn.disabled = false;
-      await loadBooks(); // takes this row, and its message box, with it
+      await loadBooks(); // takes this row, its bar, and its message box, with it
       $("booksMsg").textContent = t("admin.deleted", b.title);
       $("booksMsg").className = "msg ok";
     }
@@ -1134,32 +1148,34 @@
       }
     }
 
-    // Hold the screen while an upload runs (iOS 16.4+). Auto-lock suspends
-    // Safari's fetches mid-run; put() survives that by retrying, but the
-    // upload makes no progress while the phone sleeps. The system releases
-    // the lock whenever the page hides — visibilitychange re-acquires it if
-    // a run is still going. uploadRun doubles as the "a run is live" signal:
-    // the handler nulls it when its run is over.
-    let uploadWake = null;
-    async function applyUploadWake() {
-      const want = !!uploadRun && document.visibilityState === "visible";
-      if (want && !uploadWake && "wakeLock" in navigator) {
+    // Hold the screen while work runs (iOS 16.4+) — an upload, or a delete
+    // sweep paging through thousands of objects. Auto-lock suspends Safari's
+    // fetches mid-run; put() survives that by retrying, but nothing makes
+    // progress while the phone sleeps. The system releases the lock whenever
+    // the page hides — visibilitychange re-acquires it if a run is still
+    // going. uploadRun doubles as the "an upload is live" signal (its handler
+    // nulls it when the run is over); sweeps count themselves in sweepsLive.
+    let wake = null;
+    let sweepsLive = 0;
+    async function applyWake() {
+      const want = (!!uploadRun || sweepsLive > 0) && document.visibilityState === "visible";
+      if (want && !wake && "wakeLock" in navigator) {
         try {
-          uploadWake = await navigator.wakeLock.request("screen");
-          uploadWake.addEventListener("release", () => { uploadWake = null; });
+          wake = await navigator.wakeLock.request("screen");
+          wake.addEventListener("release", () => { wake = null; });
         } catch { /* denied (e.g. low-power mode) — retried on next visibility flip */ }
-      } else if (!want && uploadWake) {
-        uploadWake.release().catch(() => {});
-        uploadWake = null;
+      } else if (!want && wake) {
+        wake.release().catch(() => {});
+        wake = null;
       }
     }
-    document.addEventListener("visibilitychange", applyUploadWake);
+    document.addEventListener("visibilitychange", applyWake);
 
     $("upload").onclick = async () => {
       if (!entries) return;
       uploadRun?.abort();
       const run = (uploadRun = new AbortController());
-      applyUploadWake();
+      applyWake();
       // only the current run may touch the UI: a superseded run's late
       // workers hit this guard instead of the bar
       const tick = (v) => { if (run === uploadRun) $("bar").value = v; };
@@ -1208,7 +1224,7 @@
         $("upload").disabled = false;
         uploadRun = null;
       }
-      applyUploadWake();
+      applyWake();
     };
 
     // ---------- 改進建議 ----------
