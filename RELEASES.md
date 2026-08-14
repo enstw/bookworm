@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-14 — `cd4ec29d7709`
+
+- admin: upload on a 16-wide pool, with retries and pace in the log (`cd4ec29`)
+
 ## 2026-08-14 — `4aa67c204f8c`
 
 - admin: show a bar and hold the screen while a delete sweeps (`4aa67c2`)
