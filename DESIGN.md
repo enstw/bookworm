@@ -412,6 +412,40 @@ the pre-publication history, which lives in the owner's private archive.
   across versions is identical, known 簡繁 defects included. Verify a
   runtime bump on the reader, not `/wasmtest`: the diagnostic plays a
   two-`<audio>` chain and cannot exercise backgrounded playback at all.
+- **吃字調查:鏈路洗清,真兇是聲學模型的隨機發音劣化 (2026-08-14).**
+  A full-chain local harness (real 劍來 chapters → `chunkChapter` →
+  `ttsPrompt` → `segments` → the real worker's mp3 units → sequence-mode
+  SourceBuffer appended *while playing*, with an AudioContext
+  ScriptProcessor tap recording the PCM the element actually played)
+  cleared every layer except synthesis. Text layer: all 1,182 chapters
+  (12.9M chars) through the frontend drop **zero** Chinese characters
+  (`unknown` catches only ASCII `-`/`*`/letters), so lexicon 簡繁
+  completion would rescue nothing — both single-char spellings are already
+  present, and a word entry for a non-破音字 word (前輩) yields the same
+  phones as per-char fallback. mp3 concat + MSE junctions: zero loss at
+  the *sample* level — capture PCM cross-correlates against the decoded
+  unit concatenation at one constant offset (the start latency) with NCC
+  0.92–1.00 at all 32 unit heads across two runs, and capture duration =
+  concat + latency to ~10 ms. The real defect: a steps-3 render
+  occasionally articulates one syllable as a different sound (人耳
+  confirmed 老 → 近似「巧」/「蓝」in the probe 這位老前輩說。, ~2–4 of 50
+  renders; which syllable is fragile depends on the carrier sentence).
+  **No true silent deletion was ever confirmed** — every "missing
+  syllable" flag turned out to be ASR error — so the on-device 體感
+  「沒發聲」 is this mis-articulation being perceived as a skip.
+  `noise_scale` 0.667 vs 1: no measurable difference, so the deliberate
+  noise-1 setting is not the culprit; mitigation is wasmtts-side (more ODE
+  steps or a different acoustic model), and the release gate's CER 骰運壓線
+  is very likely this same phenomenon. **ASR calibration for any future
+  listening test**: whisper-small alone is untrustworthy (its substitution
+  flags were wrong on human check), a lone large model back-fills weak
+  syllables via its LM; trust a flag only when small AND large-v3 mishear
+  the *same* syllable (2/2 human-confirmed so far), and treat any deletion
+  verdict as unproven until a human ear signs off. large-v3 int8 runs
+  ~2–4 s per 2 s clip on desktop CPU. The harnesses (chain e2e with PCM
+  tap, junction cross-correlation audit, dual-ASR consensus report) lived
+  in a session scratchpad and are NOT checked in — rebuild from this
+  description if needed.
 - **iOS lock-screen ground truth (2026-08-08, measured on iOS 18.7 with a
   LAN probe replaying real per-sentence mp3 units through the reader's exact
   MediaSource + Media Session discipline).** Four facts, three of them
@@ -766,6 +800,9 @@ the pre-publication history, which lives in the owner's private archive.
   today); font stack and break rules per language; offer 直排 only for CJK
   books; chapter-title detection beyond 第…回／章.
 - R2 `_tts/` eviction (lifecycle rule or admin sweep) if storage grows.
+- 吃字 mitigation (see 吃字調查 2026-08-14): evaluate a higher-step Matcha
+  export or another acoustic model in wasmtts, gated by the dual-ASR
+  consensus rate over real chapters and an on-phone RTF check.
 - Playback speed control (`audio.playbackRate`) in the player bar.
 - File the iOS scrollBy-doubles bug at bugs.webkit.org (evidence is in the
   archive's 2026-07-28 commits; low priority).
