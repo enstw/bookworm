@@ -211,6 +211,8 @@ const BW_STRINGS = {
     "admin.chapterLine": (title, chars) => `${title}（${chars.toLocaleString()} 字）`,
     "admin.tokenExpired": "密鑰失效 — 請重新驗證",
     "admin.uploaded": (title) => `✓ 已上傳《${title}》— 開始閱讀`,
+    "admin.uploadStats": (n, mb, s) => `${n} 章，${mb} MB，${s} 秒`,
+    "admin.putRetry": (name, why) => `⚠ 重試 ${name}（${why}）`,
     "admin.uploadFail": (msg) => `✗ 上傳失敗：${msg}`,
 
     // 書架管理（同一頁，驗證後才出現）
@@ -496,6 +498,8 @@ const BW_STRINGS = {
     "admin.chapterLine": (title, chars) => `${title} (${chars.toLocaleString()} chars)`,
     "admin.tokenExpired": "Key no longer valid — verify again",
     "admin.uploaded": (title) => `✓ Uploaded “${title}” — start reading`,
+    "admin.uploadStats": (n, mb, s) => `${n} chapters, ${mb} MB, ${s}s`,
+    "admin.putRetry": (name, why) => `⚠ Retrying ${name} (${why})`,
     "admin.uploadFail": (msg) => `✗ Upload failed: ${msg}`,
 
     // book management (same page, revealed once the key checks out)

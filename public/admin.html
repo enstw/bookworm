@@ -1124,7 +1124,7 @@
       // have to move when it does
       const url = `/api/admin/objects/${encodeURIComponent(manifest.id)}/${encodeURIComponent(name)}`;
       for (let attempt = 1; ; attempt++) {
-        let res = null;
+        let res = null, why;
         try {
           res = await fetch(url, {
             method: "PUT",
@@ -1138,12 +1138,17 @@
           // back should resume the run, not fail it. Only an abort is final.
           if (signal?.aborted || err.name === "AbortError") throw err;
           if (attempt >= 3) throw new Error(`${name}: ${err.message}`);
+          why = err.message;
         }
         if (res) {
           if (res.ok) return;
           if (res.status === 401) throw new Error(t("admin.tokenExpired"));
           if (attempt >= 3) throw new Error(`${name}: HTTP ${res.status}`);
+          why = `HTTP ${res.status}`;
         }
+        // retries used to be silent, which read as "upload got slower" with
+        // nothing in the log to show for it — a flaky network now leaves a trace
+        log(t("admin.putRetry", name, why));
         await new Promise((r) => setTimeout(r, 500 * attempt));
       }
     }
@@ -1183,29 +1188,32 @@
       $("bar").hidden = false;
       tick(0);
       let done = 0;
+      const t0 = performance.now();
       try {
-        const queue = [...entries];
-        const total = entries.length + (extras?.coverJpeg ? 1 : 0) + (extras?.meta ? 1 : 0) + 1;
+        // cover and meta ride the pool with the chapters — nothing orders
+        // them among the chapters, only before the manifest, which waits for
+        // the whole pool. A plain .txt republish carries neither, and leaves
+        // whatever enrichment the book already has alone.
+        const queue = entries.map((e) =>
+          ({ name: e.file, body: e.body, type: "text/plain; charset=utf-8" }));
+        if (extras?.coverJpeg)
+          queue.push({ name: "cover.jpg", body: extras.coverJpeg, type: "image/jpeg" });
+        if (extras?.meta)
+          queue.push({ name: "meta.json", body: JSON.stringify(extras.meta, null, 2) + "\n", type: "application/json" });
+        const total = queue.length + 1;
+        // a long book is thousands of ~30 KB chapters, so wall time is
+        // round-trips ÷ pool width, not bandwidth. Measured against the live
+        // origin: 16 in flight on the one h2 connection cut it ~4× over 4,
+        // with nothing left past 32.
         await Promise.all(
-          Array.from({ length: 4 }, async () => {
+          Array.from({ length: 16 }, async () => {
             while (queue.length && !run.signal.aborted) {
-              const e = queue.shift();
-              await put(e.file, e.body, "text/plain; charset=utf-8", run.signal);
+              const j = queue.shift();
+              await put(j.name, j.body, j.type, run.signal);
               tick(++done / total);
             }
           }),
         );
-        // cover and meta land before the manifest — the moment the book is on
-        // the shelf, its 書衣 is already whole. A plain .txt republish carries
-        // neither, and leaves whatever enrichment the book already has alone.
-        if (extras?.coverJpeg) {
-          await put("cover.jpg", extras.coverJpeg, "image/jpeg", run.signal);
-          tick(++done / total);
-        }
-        if (extras?.meta) {
-          await put("meta.json", JSON.stringify(extras.meta, null, 2) + "\n", "application/json", run.signal);
-          tick(++done / total);
-        }
         // manifest goes last so readers never see it referencing missing chapters
         await put("manifest.json", JSON.stringify(manifest, null, 2) + "\n", "application/json", run.signal);
         tick(1);
@@ -1213,6 +1221,8 @@
         a.href = `/${encodeURIComponent(manifest.slug)}/`;
         a.textContent = t("admin.uploaded", manifest.title);
         $("log").append(a);
+        const mb = (entries.reduce((sum, e) => sum + e.bytes, 0) / 1e6).toFixed(1);
+        log(t("admin.uploadStats", entries.length, mb, Math.round((performance.now() - t0) / 1000)));
       } catch (err) {
         // this run is over: kill its surviving workers before they upload
         // more or move the bar. A superseded run lands here too (AbortError)
