@@ -9,6 +9,12 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-15 — `3266aa5ab2dd`
+
+- test: fetch matcha assets from the pin, never the owner's wasmtts checkout (`3266aa5`)
+- docs: record the 吃字 investigation — chain exonerated, acoustic model convicted (`b38a74d`)
+- docs: record that the online tts engines are out of service in practice (`9918496`)
+
 ## 2026-08-14 — `cd4ec29d7709`
 
 - admin: upload on a 16-wide pool, with retries and pace in the log (`cd4ec29`)
