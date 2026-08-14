@@ -261,7 +261,14 @@ the pre-publication history, which lives in the owner's private archive.
   swap) elsewhere; `globalThis.bwPlayer` says which. The online backend
   speaks Microsoft Edge read-aloud (protocol gotchas commented in
   `src/edge-tts.js`); real Mandarin rate ≈ 4.5 chars/s; TTS chunk 0 is
-  always the chapter heading alone. Verify any backend change by
+  always the chapter heading alone. **The online engines are out of
+  service in practice (owner, 2026-08-14): every reading device has held
+  the Matcha pack since 2026-08-08, so all listening — including every
+  pronunciation report in the feedback queue — happens on the WASM
+  engine. Diagnose against Matcha first; reach for the edge-tts path only
+  when the report is from a pack-less device (fresh install, evicted
+  cache, `bw_tts="stream"`), which is the only traffic it still serves.**
+  Verify any backend change by
   Whisper-transcribing a sample — duration checks cannot hear garbage,
   which is how the Workers-AI MeloTTS breakage was confirmed. Rejected
   alternatives: Web Speech API (iOS pauses it on lock), Azure/OpenAI TTS
