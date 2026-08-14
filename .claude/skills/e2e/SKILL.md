@@ -46,6 +46,33 @@ change to `wasm-tts.mjs`, the worker allowlist, or the ort pin: it is the only
 thing that exercises two ort sessions, the mp3 encode and the SourceBuffer
 append together.
 
+### Fetching the weights (tts-wasm, and the gated halves of wasm-frontend / matcha-fst)
+
+**Never point `MATCHA_MODEL_DIR`/`MATCHA_FST_DIR` at a live wasmtts
+checkout** — that is the owner's working folder; its contents mutate and
+vanish mid-experiment (a batch died exactly this way, 2026-08-15). The
+assets are pinned through the wasmtts dependency, the same way the ort pin
+is resolved; fetch a private copy once:
+
+```sh
+REV=$(awk '/depName=matcha-frontend/{getline; print $3}' node_modules/wasmtts/platform/upstreams.yaml)
+D=~/.cache/bookworm-matcha/matcha-icefall-zh-en && mkdir -p "$D"
+for f in model-steps-3.onnx lexicon.txt tokens.txt phone-zh.fst date-zh.fst number-zh.fst; do
+  curl -sL -o "$D/$f" "https://huggingface.co/csukuangfj/matcha-icefall-zh-en/resolve/$REV/$f"
+done
+curl -sL -o ~/.cache/bookworm-matcha/vocos-16khz-univ.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-16khz-univ.onnx
+```
+
+Then:
+
+- `MATCHA_MODEL_DIR=~/.cache/bookworm-matcha pnpm run test:tts-wasm`
+  (add `MATCHA_FST_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en` to
+  assert the rule tables loaded; without it the run asserts the JS-rules
+  fallback half instead — that split is deliberate)
+- `MATCHA_MODEL_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en node scripts/test-wasm-frontend.mjs`
+- `MATCHA_FST_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en node scripts/test-matcha-fst.mjs`
+
 ## The reader gate (affects every server-backed suite)
 
 Content routes (`/api/books`, `/books/*`, TTS, positions, settings, push

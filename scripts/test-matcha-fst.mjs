@@ -14,12 +14,16 @@
 // reader. Both expected values below were produced by kaldifst itself.
 //
 // The second half replays a golden corpus through the real 212 KB tables, and
-// runs only when MATCHA_FST_DIR points at a directory holding phone.fst,
-// date.fst and number.fst. The goldens are kaldifst's own output, so the test
-// stays network-free while still being a differential test against upstream.
+// runs only when MATCHA_FST_DIR points at a directory holding phone-zh.fst,
+// date-zh.fst and number-zh.fst — the release's own names. Fetch them from
+// the pinned upstream into a private cache (the fetch block lives in
+// .claude/skills/e2e/SKILL.md); never point this at a live wasmtts checkout,
+// whose working folders mutate and vanish under experiments. The goldens are
+// kaldifst's own output, so the test stays network-free while still being a
+// differential test against upstream.
 //
 //   node scripts/test-matcha-fst.mjs
-//   MATCHA_FST_DIR=~/workspace/wasmtts/benchmarks/models/vits-melo-tts-zh_en \
+//   MATCHA_FST_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en \
 //     node scripts/test-matcha-fst.mjs
 
 import { readFileSync } from "node:fs";
@@ -211,7 +215,7 @@ if (!dir) {
   out.golden = `skipped (${GOLDEN.length} cases; set MATCHA_FST_DIR to the sherpa table directory)`;
 } else {
   const normalize = createNormalizer(
-    ["phone", "date", "number"].map((name) => readFileSync(join(dir, `${name}.fst`))));
+    ["phone", "date", "number"].map((name) => readFileSync(join(dir, `${name}-zh.fst`))));
   const drift = GOLDEN.filter(([input, want]) => normalize(input) !== want)
     .map(([input, want]) => `${JSON.stringify(input)}: ${JSON.stringify(normalize(input))} ≠ ${JSON.stringify(want)}`);
   out.golden = drift.length === 0
