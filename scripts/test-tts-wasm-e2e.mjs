@@ -9,9 +9,13 @@
 // it runs on demand. It serves them from MATCHA_MODEL_DIR rather than the
 // GitHub release, which keeps it runnable before a release is cut and keeps CI
 // off the network — the release proxy itself is a one-line allowlist in
-// src/worker.js, covered by reading it.
+// src/worker.js, covered by reading it. Fetch the weights from the pinned
+// upstream (node_modules/wasmtts/platform/upstreams.yaml) into a private
+// cache — the fetch block lives in .claude/skills/e2e/SKILL.md. Never point
+// this at a live wasmtts checkout: that working folder mutates and vanishes
+// under experiments.
 //
-//   MATCHA_MODEL_DIR=~/workspace/wasmtts/platform/models \
+//   MATCHA_MODEL_DIR=~/.cache/bookworm-matcha \
 //     node scripts/test-tts-wasm-e2e.mjs
 //
 // Chromium has no ManagedMediaSource, so the page aliases plain MediaSource the
@@ -60,9 +64,9 @@ for (const [name, file] of Object.entries(RELEASE))
 // the JS number rules. With it set, the run asserts the chain loaded.
 const FSTS = process.env.MATCHA_FST_DIR;
 if (FSTS) Object.assign(RELEASE, {
-  "phone-zh.fst": join(FSTS, "phone.fst"),
-  "date-zh.fst": join(FSTS, "date.fst"),
-  "number-zh.fst": join(FSTS, "number.fst"),
+  "phone-zh.fst": join(FSTS, "phone-zh.fst"),
+  "date-zh.fst": join(FSTS, "date-zh.fst"),
+  "number-zh.fst": join(FSTS, "number-zh.fst"),
 });
 
 const TYPES = { ".js": "text/javascript", ".mjs": "text/javascript", ".html": "text/html; charset=utf-8", ".css": "text/css", ".wasm": "application/wasm", ".txt": "text/plain", ".onnx": "application/octet-stream", ".json": "application/json" };

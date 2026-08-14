@@ -7,10 +7,14 @@
 // The cases that need the real 1.4 MB lexicon run only when MATCHA_MODEL_DIR
 // points at a directory holding matcha-icefall-zh-en's lexicon.txt and
 // tokens.txt. That is where golden token-id vectors live, and where the
-// traditional-reading table is pinned — see the note above it.
+// traditional-reading table is pinned — see the note above it. Fetch the
+// files from the pinned upstream (node_modules/wasmtts/platform/
+// upstreams.yaml) into a private cache — the fetch block lives in
+// .claude/skills/e2e/SKILL.md. Never point this at a live wasmtts checkout:
+// that working folder mutates and vanishes under experiments.
 //
 //   node scripts/test-wasm-frontend.mjs
-//   MATCHA_MODEL_DIR=~/workspace/wasmtts/platform/models/matcha-icefall-zh-en \
+//   MATCHA_MODEL_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en \
 //     node scripts/test-wasm-frontend.mjs
 
 import { readFileSync } from "node:fs";
