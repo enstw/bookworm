@@ -161,6 +161,12 @@ out.pageStartDiscriminates = pageStart > staleOff + 20
 await evalJs(`document.getElementById("audioBtn").click()`);
 out.playing = (await waitFor(`bwPlayer.player.playing === true`, (v) => v)) ? "ok" : "FAIL: never played";
 
+// this fresh profile holds no voice pack: the pill must OFFER the download,
+// with the button naming the megabytes (the pack is a reader feature, not
+// /wasmtest lore — and the no-silent-download rule is the number on the button)
+const offer = await waitFor(`document.getElementById("packGoBtn")?.textContent ?? ""`, (s) => /MB/.test(s), 20);
+out.packOffered = /\d+\s*MB/.test(offer) ? `ok (${offer})` : `FAIL: ${JSON.stringify(offer)}`;
+
 // the first spoken offset lands at the page start (the floor holds back the
 // snapped-sentence pre-roll), never at the stale tracked offset or chunk 0
 // — poll for a MOVE off the stale value: state.off is nonzero before the
