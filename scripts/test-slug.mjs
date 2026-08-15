@@ -6,7 +6,7 @@
 //
 //   node scripts/test-slug.mjs
 
-import { deriveSlug, shortSlug, uniqueSlug, newBookId } from "../public/split-core.mjs";
+import { deriveSlug, shortSlug, uniqueSlug, newBookId, RESERVED_SLUGS } from "../public/split-core.mjs";
 
 const out = {};
 const fails = [];
@@ -57,7 +57,13 @@ check("collision", shortSlug("牧神記", ["msj"]), "msj2");
 check("collision run", shortSlug("牧神記", ["msj", "msj2"]), "msj3");
 check("uniqueSlug", uniqueSlug("jl", ["jl", "jl2"]), "jl3");
 check("uniqueSlug free", uniqueSlug("jl", ["ab"]), "jl");
-out.collisions = fails.some((f) => /collision|uniqueSlug/.test(f)) ? "FAIL" : "ok";
+// reserved names postfix like any collision — a book may never claim a URL
+// the app itself routes (the app wins and the book goes dark; see split-core)
+check("reserved", uniqueSlug("admin"), "admin2");
+check("reserved+taken", uniqueSlug("api", ["api2"]), "api3");
+for (const r of RESERVED_SLUGS)
+  check(`reserved list: ${r}`, uniqueSlug(r) !== r, true);
+out.collisions = fails.some((f) => /collision|uniqueSlug|reserved/.test(f)) ? "FAIL" : "ok";
 
 // deriveSlug is the tidy-up for a slug someone typed: it must never widen the
 // alphabet a URL path segment and an R2 key prefix can take
