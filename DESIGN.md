@@ -210,11 +210,11 @@ repo because session memory does not cross machines:
   delete the old form instead of shimming it; the owner re-enrolls their
   own devices. (The retired `/<book>/<uid>` route is the precedent.)
 - **Test inputs come from pins, never working trees.** A harness fetches
-  its inputs from the pinned upstream (release tag, `upstreams.yaml`
-  revision) into its own copy and verifies the SHA-256 — it never reads
-  the owner's local checkouts (`~/workspace/wasmtts/platform/models/` is
-  mutable working state and has changed mid-experiment). Saving a
-  download is not a reason.
+  its inputs from the pinned upstream (release tag, manifest revision)
+  into its own copy and verifies the SHA-256 — it never reads a live
+  checkout's model folder, which is mutable working state and has changed
+  mid-experiment. Saving a download is not a reason.
+  `scripts/fetch-matcha-weights.mjs` is that fetch for the voice pack.
 
 ## The phone is the product
 
@@ -418,7 +418,7 @@ the pre-publication history, which lives in the owner's private archive.
   `/api/testlog?page=player`. COOP/COEP is gone (`public/_headers`
   deleted): nothing needs `crossOriginIsolated` now that the threaded
   experiments are, and the engine was verified running with it false. The
-  ~138 MB voice pack (five model files plus the three rule tables) is
+  ~145 MB voice pack (five model files plus the three rule tables) is
   downloaded ONLY by the `/wasmtest` diagnostic
   (never by ▶ — cellular) into the `bw-wasmtts` cache both pages share;
   `packReady()` flips the reader to this engine, eviction falls back to
@@ -466,7 +466,20 @@ the pre-publication history, which lives in the owner's private archive.
   `wasmtts-assets-v2` if absent, refuses a same-name-different-bytes
   replace, and then deletes stale ort versions (sole install, no
   backward-compat window). So an ort bump is: upstream repins → gated tag →
-  bookworm repins one line → CI re-cuts and deploys. A same-name asset can
+  bookworm repins one line → CI re-cuts and deploys. **Since 2026-08-15 the
+  whole voice pack rides the same rail**: upstream's `matcha-assets.json`
+  (schemaVersion 3) is the pack's canonical definition — per-asset
+  packName/bytes/SHA-256, under the invariant that changed bytes change the
+  packName — and `vendor.mjs` bakes it into `pack-manifest.mjs`, which
+  `wasm-tts.mjs`, the worker allowlist and the tts-wasm e2e all read;
+  `sync-wasmtts-assets.mjs` fetches any asset the pin names that the
+  release lacks from its pinned source (SHA-verified) and sweeps names the
+  pin dropped. No model filename exists in this repo's code — the steps-3
+  pack outliving the v1.1.0 engine bump was exactly the drift this closes.
+  A pack change reaches a phone as `packReady()` false: the reader falls
+  back to STREAM and `player.mjs` offers the re-download as a one-tap pill
+  (`player.packStale`), because a silent engine downgrade reads as the app
+  losing a feature it used to have. A same-name asset can
   still never change bytes, and a sync failure 404s loudly on device. Note
   `env.versions.common` reports *onnxruntime-common*, not the web package,
   so the drift guard checks the wasm's byte length instead. **A transcript

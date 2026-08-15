@@ -166,6 +166,8 @@ const BW_STRINGS = {
     "player.generating": "語音產生中…",
     "player.error": "語音失敗 — 按 ▶ 重試",
     "player.chunk": (i, n) => `語音 ${i}/${n}`,
+    "player.packStale": "離線語音包需要更新，暫時改用線上語音。",
+    "player.packGo": "重新下載",
 
     // --- 暫時的裝置診斷頁 ---
     "diag.vh": "vh 測試",
@@ -453,6 +455,8 @@ const BW_STRINGS = {
     "player.generating": "Generating audio…",
     "player.error": "Audio failed — ▶ retries",
     "player.chunk": (i, n) => `audio ${i}/${n}`,
+    "player.packStale": "The offline voice pack needs an update; using the online voice for now.",
+    "player.packGo": "Re-download",
 
     // --- temporary on-device diagnostics ---
     "diag.vh": "vh test",

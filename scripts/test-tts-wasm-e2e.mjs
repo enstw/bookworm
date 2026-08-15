@@ -24,7 +24,7 @@
 
 import { createServer } from "node:http";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { extname, join, normalize } from "node:path";
+import { basename, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { launch } from "./cdp-client.mjs";
@@ -34,25 +34,26 @@ const MODELS = process.env.MATCHA_MODEL_DIR;
 const PORT = 9355;
 
 if (!MODELS) {
-  console.error("MATCHA_MODEL_DIR is unset — point it at the directory holding\n" +
-    "  matcha-icefall-zh-en/{model-steps-3.onnx,lexicon.txt,tokens.txt} and vocos-16khz-univ.onnx");
+  console.error("MATCHA_MODEL_DIR is unset — run `node scripts/fetch-matcha-weights.mjs`\n" +
+    "  and point it at the directory that fills (default ~/.cache/bookworm-matcha)");
   process.exit(2);
 }
 
 // The release names the worker allowlists, mapped to where the weights sit
-// locally. Keep the model names in step with WASMTTS_FILES in src/worker.js
-// and PACK_FILES in public/wasm-tts.mjs — a rename that misses one is exactly
-// the failure this suite should catch. ort's name and location are derived,
-// not stated: the version comes through the wasmtts tree (the page will ask
-// for whatever vendor.mjs put in ort-manifest.mjs, which derives it the same
-// way), so an ort repin needs no edit here.
-const ortDir = join(realpathSync(join(root, "node_modules", "wasmtts")), "..", "onnxruntime-web");
+// locally — every name on both sides derived from the wasmtts pin
+// (matcha-assets.json for the pack, the ort package for the runtime), the
+// same derivation vendor.mjs bakes into pack-manifest.mjs / ort-manifest.mjs.
+// A model bump upstream therefore moves this suite by itself, and a consumer
+// that missed the rename is exactly the failure it should catch.
+const wasmttsDir = realpathSync(join(root, "node_modules", "wasmtts"));
+const pack = JSON.parse(readFileSync(join(wasmttsDir, "platform/matcha-assets.json"), "utf8"));
+const ortDir = join(wasmttsDir, "..", "onnxruntime-web");
 const ortVersion = JSON.parse(readFileSync(join(ortDir, "package.json"), "utf8")).version;
 const RELEASE = {
-  "matcha-acoustic-steps3.onnx": join(MODELS, "matcha-icefall-zh-en/model-steps-3.onnx"),
-  "matcha-vocos-16khz-univ.onnx": join(MODELS, "vocos-16khz-univ.onnx"),
-  "matcha-lexicon.txt": join(MODELS, "matcha-icefall-zh-en/lexicon.txt"),
-  "matcha-tokens.txt": join(MODELS, "matcha-icefall-zh-en/tokens.txt"),
+  [pack.acoustic.packName]: join(MODELS, "matcha-icefall-zh-en", pack.acoustic.file),
+  [pack.vocos.packName]: join(MODELS, basename(new URL(pack.vocos.url).pathname)),
+  [pack.matcha.files["lexicon.txt"].packName]: join(MODELS, "matcha-icefall-zh-en/lexicon.txt"),
+  [pack.matcha.files["tokens.txt"].packName]: join(MODELS, "matcha-icefall-zh-en/tokens.txt"),
   [`ort-${ortVersion}-wasm-simd-threaded.wasm`]: join(ortDir, "dist/ort-wasm-simd-threaded.wasm"),
 };
 for (const [name, file] of Object.entries(RELEASE))
@@ -63,11 +64,9 @@ for (const [name, file] of Object.entries(RELEASE))
 // of the contract — that a pack cut before the tables existed still speaks, on
 // the JS number rules. With it set, the run asserts the chain loaded.
 const FSTS = process.env.MATCHA_FST_DIR;
-if (FSTS) Object.assign(RELEASE, {
-  "phone-zh.fst": join(FSTS, "phone-zh.fst"),
-  "date-zh.fst": join(FSTS, "date-zh.fst"),
-  "number-zh.fst": join(FSTS, "number-zh.fst"),
-});
+if (FSTS) Object.assign(RELEASE, Object.fromEntries(
+  Object.entries(pack.matcha.files).filter(([f]) => f.endsWith(".fst"))
+    .map(([f, meta]) => [meta.packName, join(FSTS, f)])));
 
 const TYPES = { ".js": "text/javascript", ".mjs": "text/javascript", ".html": "text/html; charset=utf-8", ".css": "text/css", ".wasm": "application/wasm", ".txt": "text/plain", ".onnx": "application/octet-stream", ".json": "application/json" };
 
