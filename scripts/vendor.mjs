@@ -107,8 +107,15 @@ writeFileSync(join(outDir, "wasmtts", "ort-manifest.mjs"),
 const pack = JSON.parse(readFileSync(join(wasmttsDir, "platform", "matcha-assets.json"), "utf8"));
 if (pack.schemaVersion !== 3)
   throw new Error(`wasmtts matcha-assets.json schemaVersion ${pack.schemaVersion} — this vendor step understands 3`);
+// The synthesis block is the pack's playback recipe (noise/length/silence,
+// ear-verified on device, graduated upstream 2026-08-15). The engine reads it
+// from the manifest; a pin without it would silently fall back to the code
+// defaults — a voice nobody signed off — so its absence fails the build here.
+if (!pack.synthesis)
+  throw new Error("wasmtts matcha-assets.json has no synthesis block — the playback recipe rides the pin, not this repo");
 const packFile = ({ packName, bytes }) => ({ name: packName, bytes });
 const packManifest = {
+  synthesis: pack.synthesis,
   acoustic: packFile(pack.acoustic),
   vocos: packFile(pack.vocos),
   lexicon: packFile(pack.matcha.files["lexicon.txt"]),
