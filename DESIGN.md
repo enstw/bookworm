@@ -44,16 +44,32 @@ decision in that subsystem.
   `renovate/weekly-roll-up` PR (`.github/renovate.json5`), and the
   workflow merges it and dispatches this gated deploy. Major updates get
   their own PR and wait for review; there is no Renovate App — the CLI
-  runs in Actions, or by hand via the command in the config header. Two
-  Renovate failure modes are known (2026-08-11): the Actions run can end
-  green yet create no roll-up while the dependency dashboard lists every
-  update as pending — run the CLI by hand, then dispatch the `renovate`
-  workflow so its merge step picks the PR up; and an orphaned
-  `renovate/weekly-roll-up` branch (a branch with no PR) makes every later
-  run abort with "Repository has changed during renovation" — delete the
-  branch first. Validate any config edit with `pnpm dlx --package renovate
-  renovate-config-validator`, and keep the one config file: a stray root
-  `renovate.json` silently shadows `.github/renovate.json5`. A
+  runs in Actions, or by hand via the command in the config header. An
+  **off-schedule roll-up** (proven 2026-08-15, shipping wasmtts v1.1.0 on
+  a Friday) is three steps, each with a known pit. (1) Dispatch the
+  `renovate` workflow. (2) When that run ends green yet opens nothing
+  while the dependency dashboard lists the roll-up under "Other
+  Branches: pending" — a recurring CI-token mystery (2026-08-11, again
+  2026-08-15); forcing the dashboard checkbox does not help either — run
+  the CLI by hand with the PAT, the standalone node 24, and the
+  workflow's own pinned renovate version:
+  `PATH="$HOME/.cache/node-v24.19.0-darwin-arm64/bin:$PATH"
+  RENOVATE_TOKEN=$(gh auth token) pnpm dlx renovate@<workflow's version>
+  --platform=github enstw/bookworm` — same config, first try, PR up in
+  ~30 s. (3) WAIT for the roll-up PR's green `candidate-gate`
+  (`gh pr checks <n> --watch`) before dispatching the workflow again to
+  merge and deploy. The wait exists because of who opened the PR:
+  GITHUB_TOKEN's candidate run is created held and the merge step
+  approves-then-waits on it, but a PAT-opened PR's run starts
+  immediately, and `verify-renovate-pr` fails closed on any check not
+  COMPLETED/SUCCESS — a too-early dispatch dies with "candidate-gate is
+  IN_PROGRESS" and costs only a rerun. Separately, an orphaned
+  `renovate/weekly-roll-up` branch (a branch with no PR) makes every
+  later run abort with "Repository has changed during renovation" —
+  delete the branch first. Validate any config edit with `pnpm dlx
+  --package renovate renovate-config-validator`, and keep the one config
+  file: a stray root `renovate.json` silently shadows
+  `.github/renovate.json5`. A
   third-party release must be **30 days old** before it can join a roll-up,
   so a yanked or compromised publish has time to surface somewhere else
   first; expect the pins to sit a release or two behind npm on purpose. Our
