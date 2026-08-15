@@ -83,10 +83,31 @@ function ttsUrl(file, idx) {
   return `/api/tts/${encodeURIComponent(state.id)}/${encodeURIComponent(file)}/${idx}?v=${encodeURIComponent(v)}`;
 }
 
+let packNoticed = false; // the stale-pack pill, at most once per session
+
+// A reading that lands on an online engine because the offline pack went
+// stale (a model bump renames a file, so packReady turns false on a phone
+// that did nothing wrong) says so once, with the re-download one tap away —
+// a silent fallback reads as the app losing a feature it used to have. A
+// fresh device stays quiet: it never had a pack to lose.
+function noticeStalePack() {
+  if (packNoticed || useWasm() || localStorage.getItem("bw_tts") === "stream") return;
+  wasmTts.packStale().then((stale) => {
+    if (!stale || packNoticed) return;
+    packNoticed = true;
+    const note = el("div", { class: "jumpnote" },
+      el("span", { class: "jumpnote-text" }, t("player.packStale")),
+      el("button", { class: "linklike", onclick: () => { location.href = "/wasmtest"; } }, t("player.packGo")),
+      el("button", { class: "iconbtn", title: t("ui.close"), onclick: () => note.remove() }, "✕"));
+    document.body.append(note);
+  });
+}
+
 export function togglePlayer() {
   if (player.on) return closePlayer();
   player.on = true;
   $("#audioBtn")?.classList.add("active");
+  noticeStalePack();
   // bless the element(s) inside this tap: iOS only lets an element play()
   // outside a gesture (chunk swaps happen on `ended`) after it has played
   // within one — a beat of silence counts

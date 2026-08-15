@@ -51,17 +51,13 @@ append together.
 **Never point `MATCHA_MODEL_DIR`/`MATCHA_FST_DIR` at a live wasmtts
 checkout** — that is the owner's working folder; its contents mutate and
 vanish mid-experiment (a batch died exactly this way, 2026-08-15). The
-assets are pinned through the wasmtts dependency, the same way the ort pin
-is resolved; fetch a private copy once:
+assets are pinned through the wasmtts dependency (`matcha-assets.json`, the
+pack's canonical definition); fetch a SHA-256-verified private copy once —
+re-runs skip files that still verify, and a model bump upstream changes what
+this fetches with no edit here:
 
 ```sh
-REV=$(awk '/depName=matcha-frontend/{getline; print $3}' node_modules/wasmtts/platform/upstreams.yaml)
-D=~/.cache/bookworm-matcha/matcha-icefall-zh-en && mkdir -p "$D"
-for f in model-steps-3.onnx lexicon.txt tokens.txt phone-zh.fst date-zh.fst number-zh.fst; do
-  curl -sL -o "$D/$f" "https://huggingface.co/csukuangfj/matcha-icefall-zh-en/resolve/$REV/$f"
-done
-curl -sL -o ~/.cache/bookworm-matcha/vocos-16khz-univ.onnx \
-  https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-16khz-univ.onnx
+node scripts/fetch-matcha-weights.mjs   # fills ~/.cache/bookworm-matcha
 ```
 
 Then:

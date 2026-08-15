@@ -36,6 +36,7 @@ import { ENDERS, CLOSERS } from "./tts-core.mjs";
 // version itself. Same relative-specifier rule as above; in node it means
 // vendor must have run first (every test entry point runs it).
 import { ORT_WASM } from "./vendor/wasmtts/ort-manifest.mjs";
+import { PACK } from "./vendor/wasmtts/pack-manifest.mjs";
 
 export const RATE = 16000; // the model's own rate; lame encodes at it directly
 
@@ -114,23 +115,24 @@ const CACHE = "bw-wasmtts"; // shared with /wasmtest — one download, two pages
 // The pack /wasmtest downloads. ort's wasm is 12.9 MB and belongs in the gate:
 // unlike the piper era's small glue files, losing it means a 13 MB cellular
 // re-download, not a rounding error. Sizes are what the progress bar counts.
+// Names and bytes come from the wasmtts pin via pack-manifest.mjs (generated
+// by vendor.mjs from upstream's matcha-assets.json) — this file names no
+// model, so the pack can never sit on an older model than the engine the
+// same pin shipped, which is exactly how steps-3 outlived the v1.1.0 bump.
 const MODEL_FILES = [
-  { name: "matcha-acoustic-steps3.onnx", bytes: 75717082, label: "聲學模型" },
-  { name: "matcha-vocos-16khz-univ.onnx", bytes: 53882848, label: "聲碼器" },
-  { name: "matcha-lexicon.txt", bytes: 1400278, label: "詞典" },
-  { name: "matcha-tokens.txt", bytes: 21146, label: "音素表" },
+  { ...PACK.acoustic, label: "聲學模型" },
+  { ...PACK.vocos, label: "聲碼器" },
+  { ...PACK.lexicon, label: "詞典" },
+  { ...PACK.tokens, label: "音素表" },
   { name: ORT_WASM.name, bytes: ORT_WASM.bytes, label: "推論引擎" },
 ];
 
 // sherpa's zh text-normalization tables, in the order they are applied — the
-// order is load-bearing and matches sherpa's own config. The real kaldifst
-// (1.8.0 + OpenFST, built to a 338 KB wasm upstream in wasmtts) applies them;
-// the JS applier that used to is now the node tests' oracle only.
-const RULE_FILES = [
-  { name: "phone-zh.fst", bytes: 88630, label: "號碼規則" },
-  { name: "date-zh.fst", bytes: 59154, label: "日期規則" },
-  { name: "number-zh.fst", bytes: 64482, label: "數字規則" },
-];
+// order is load-bearing, matches sherpa's own config, and arrives as the
+// manifest's key order. The real kaldifst (built to a 338 KB wasm upstream
+// in wasmtts) applies them; the JS applier is now the node tests' oracle only.
+const RULE_LABELS = ["號碼規則", "日期規則", "數字規則"];
+const RULE_FILES = PACK.rules.map((f, i) => ({ ...f, label: RULE_LABELS[i] ?? "規則表" }));
 
 export const PACK_FILES = [...MODEL_FILES, ...RULE_FILES];
 
@@ -154,6 +156,18 @@ export async function packReady() {
       if (!(await cache.match("/api/wasmtts/" + f.name))) return false;
     return true;
   } catch { return false; } // private mode: no cache, no pack
+}
+
+// Not ready, but not empty either: a device that HAD the offline voice and
+// lost it to a pack change (a model bump renames a file, so packReady goes
+// false on a phone that did nothing wrong) or a half-finished download. The
+// caller can tell that reader why the offline voice went missing — a fresh
+// device stays quiet, because it never had anything to lose.
+export async function packStale() {
+  try {
+    const cache = await caches.open(CACHE);
+    return (await cache.keys()).length > 0 && !(await packReady());
+  } catch { return false; }
 }
 
 // Cache-first is correct ONLY for the release binaries: their filename
