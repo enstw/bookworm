@@ -92,28 +92,35 @@ function ttsUrl(file, idx) {
   return `/api/tts/${encodeURIComponent(state.id)}/${encodeURIComponent(file)}/${idx}?v=${encodeURIComponent(v)}`;
 }
 
-let packNoticed = false; // the stale-pack pill, at most once per session
+let packNoticed = false; // the voice-pack pill, at most once per session
 
-// A reading that lands on an online engine because the offline pack went
-// stale (a model bump renames a file, so packReady turns false on a phone
-// that did nothing wrong) says so once, with the re-download one tap away —
-// a silent fallback reads as the app losing a feature it used to have. A
-// fresh device stays quiet: it never had a pack to lose.
+// A reading that lands on an online engine says why, once, with the fix one
+// tap away — the voice pack is a reader feature, not diagnostic-page lore
+// (owner, 2026-08-15). Two flavors of one pill: a device that HAD the pack
+// and lost it to a model bump (packReady turns false on a phone that did
+// nothing wrong) gets 「需要更新」, because a silent fallback reads as the
+// app losing a feature it used to have; a device that never held the pack
+// gets the plain offer, because the only other way it would ever learn the
+// offline voice exists is finding /wasmtest by hand.
 //
 // The tap downloads in place (the same downloadPack /wasmtest runs) instead
-// of leaving the book: the pill only ever shows on a device that already
-// accepted the pack once, and the button names the missing megabytes, so
-// the cellular guarantee — no silent ~145 MB — still holds. Narration keeps
-// playing on the online engine meanwhile; the offline one takes over at the
-// next ▶ (closePlayer re-picks).
-function noticeStalePack() {
+// of leaving the book, and the button names the megabytes, so the cellular
+// guarantee — no silent ~145 MB — still holds. Narration keeps playing on
+// the online engine meanwhile; the offline one takes over at the next ▶
+// (closePlayer re-picks).
+function noticePack() {
   if (packNoticed || useWasm() || localStorage.getItem("bw_tts") === "stream") return;
-  wasmTts.packStale().then(async (stale) => {
-    if (!stale || packNoticed) return;
+  (async () => {
+    const stale = await wasmTts.packStale();
+    const missing = await wasmTts.packMissingBytes();
+    // a complete pack here means pickEngine has not caught up yet — not news
+    if (packNoticed || !missing) return;
     packNoticed = true;
-    const label = el("span", { class: "jumpnote-text" }, t("player.packStale"));
+    const goKey = stale ? "player.packGo" : "player.packGet";
+    const label = el("span", { class: "jumpnote-text" },
+      t(stale ? "player.packStale" : "player.packOffer"));
     const go = el("button", { class: "linklike", id: "packGoBtn", onclick: download },
-      t("player.packGo", Math.round(await wasmTts.packMissingBytes() / 1048576)));
+      t(goKey, Math.round(missing / 1048576)));
     const note = el("div", { class: "jumpnote" }, label, go,
       el("button", { class: "iconbtn", title: t("ui.close"), onclick: () => note.remove() }, "✕"));
     document.body.append(note);
@@ -129,18 +136,18 @@ function noticeStalePack() {
       } catch {
         // half a pack is fine: a retry skips what already landed
         label.textContent = t("player.packFail");
-        go.textContent = t("player.packGo", Math.round(await wasmTts.packMissingBytes() / 1048576));
+        go.textContent = t(goKey, Math.round(await wasmTts.packMissingBytes() / 1048576));
         go.disabled = false;
       }
     }
-  });
+  })();
 }
 
 export function togglePlayer() {
   if (player.on) return closePlayer();
   player.on = true;
   $("#audioBtn")?.classList.add("active");
-  noticeStalePack();
+  noticePack();
   // bless the element(s) inside this tap: iOS only lets an element play()
   // outside a gesture (chunk swaps happen on `ended`) after it has played
   // within one — a beat of silence counts

@@ -1,8 +1,9 @@
 <!doctype html>
-<!-- Diagnostic page (linked from /admin diagnostics), and the ONLY thing that
-     downloads the offline voice pack: the reader must never pull 138 MB from a
-     tap on ▶, so /wasmtest fills the bw-wasmtts cache and packReady() in
-     wasm-tts.mjs is what then flips the reader to the offline engine.
+<!-- Diagnostic page (linked from /admin diagnostics). The voice pack download
+     is wasm-tts.mjs's downloadPack, which the reader's pill runs too — the
+     reader still never pulls 138 MB from a bare tap on ▶; every entry is an
+     explicit tap that names the size. packReady() in wasm-tts.mjs is what
+     flips the reader to the offline engine.
      The binaries come from the wasmtts-assets GitHub release through the
      /api/wasmtts/ same-origin proxy (the release host sends no CORS headers)
      and are cached in the Cache API, so the pack costs its download once —
