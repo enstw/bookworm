@@ -9,6 +9,21 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-16 — `76dbcf381ed8`
+
+> 修正 app 圖示的未讀數字：打開 app 即歸零，清掉的舊通知不再被重複計入。
+> 書櫃載入變快 — 伺服器一趟往返就取回書單與閱讀進度。
+> 書櫃底部新增「版本紀錄」，隨時可回看每次更新說了什麼。
+> 書櫃不再在網路正常時被誤標成「離線 — 顯示上次看到的書目」。
+
+- docs: branch first — main only takes work through a pr (`76dbcf3`)
+- push: opening the app closes the notifications it was told about (`94466b6`)
+- books: the shelf list answers in one D1 round trip (`0e15282`)
+- shelf: the footer keeps a door to the release notes (`b8d746c`)
+- shelf: allow the books fetch 2.5 s before painting the list stale (`a0cbb4e`)
+- docs: the agent reads the live testlog with a reader key, not the owner's browser (`afc6b95`)
+- docs: record how to read the production testlog and why the badge count lies (`c4cd962`)
+
 ## 2026-08-15 — `b9a0c5475077`
 
 > wasmtts v1.2.0 → v1.2.2;修正離線快取缺漏,朗讀參數改隨語音包供給(聽感不變)。
