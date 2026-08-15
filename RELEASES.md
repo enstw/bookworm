@@ -9,6 +9,14 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-15 — `c1caa9463c54`
+
+> 離線語音升級為 steps-6 聲學模型;開始朗讀時會提示重新下載語音包。
+> wasmtts v1.1.0 → v1.2.0
+
+- tts: the voice pack's file list now lives upstream, and the pin moves to v1.2.0 (`c1caa94`)
+- docs: write down the off-schedule roll-up runbook (`a85b1bb`)
+
 ## 2026-08-15 — `69d852d118c4`
 
 > wasmtts v1.0.2 → v1.1.0
