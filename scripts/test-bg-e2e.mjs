@@ -217,15 +217,27 @@ out.libraryBg = (await bodyBg()) === "rgb(250, 224, 253)" ? "ok" : `FAIL: ${awai
 // the temporary diagnostics links follow it in the same paragraph
 const buildLine = await evalJs(
   `[...document.querySelectorAll(".library p")].map((p) => p.textContent.trim().replace(/\\s+/g, " ")).find((t) => t.startsWith("版本 "))`);
-out.buildStamp = buildLine?.startsWith("版本 dev · 重新整理") ? "ok" : `FAIL: ${buildLine}`; // git checkout is unstamped
+out.buildStamp = buildLine?.startsWith("版本 dev · 版本紀錄 · 重新整理") ? "ok" : `FAIL: ${buildLine}`; // git checkout is unstamped
 out.refreshBtn = (await evalJs(`!!document.getElementById("refreshBtn")`))
   ? "ok" : "FAIL: no refresh button";
+// 版本紀錄 opens on demand. This checkout ships no releases.json (a build
+// product), so the empty line IS the correct answer here — asserting it also
+// pins the dev-run behavior the comment in app.js promises.
+await evalJs(`document.getElementById("relnotesBtn").click()`);
+await sleep(400);
+const relnotes = await evalJs(
+  `(() => { const p = document.getElementById("relnotesPanel"); return p.hidden ? "hidden" : p.textContent.trim(); })()`);
+out.relnotesPanel = /沒有可顯示的版本紀錄|No release notes/.test(relnotes ?? "")
+  ? "ok" : `FAIL: ${relnotes}`;
+await evalJs(`document.getElementById("relnotesBtn").click()`);
+out.relnotesToggle = (await evalJs(`document.getElementById("relnotesPanel").hidden`))
+  ? "ok" : "FAIL: panel still shown";
 // the language switch flips the whole shell and is remembered per device
 await evalJs(`document.getElementById("langBtn").click()`);
 await sleep(300);
 const enLine = await evalJs(
   `[...document.querySelectorAll(".library p")].map((p) => p.textContent.trim().replace(/\\s+/g, " ")).find((t) => t.startsWith("build "))`);
-out.langSwitch = enLine?.startsWith("build dev · refresh")
+out.langSwitch = enLine?.startsWith("build dev · release notes · refresh")
   && (await evalJs(`document.documentElement.lang`)) === "en"
   ? "ok" : `FAIL: ${enLine} lang=${await evalJs(`document.documentElement.lang`)}`;
 await evalJs(`document.getElementById("langBtn").click()`); // back to 中文

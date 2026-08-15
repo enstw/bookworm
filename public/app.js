@@ -375,6 +375,31 @@ addEventListener("visibilitychange", () => document.hidden || checkVersion());
 applyI18n();
 
 $("#staleRetry").onclick = () => renderLibrary();
+// 版本紀錄: the update pill's notes vanish once the reload lands (a reader is
+// never told about what they are already running), so the shelf keeps a door
+// to the same ledger. Refetched on every open — the tap IS the refresh.
+$("#relnotesBtn").onclick = () => {
+  const panel = $("#relnotesPanel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) paintRelnotes(panel);
+};
+async function paintRelnotes(panel) {
+  panel.replaceChildren(el("p", {}, t("lib.loading")));
+  let releases = [];
+  try {
+    const res = await fetch("/releases.json", {
+      cache: "no-store", signal: AbortSignal.timeout(4000),
+    });
+    if (res.ok) releases = (await res.json()).releases ?? [];
+  } catch { /* offline or slow: the empty line below is the honest answer */ }
+  // releases.json already holds only note-bearing releases, newest first —
+  // one line per note, the (repeating) date kept quiet at the front
+  panel.replaceChildren(releases.length
+    ? el("ul", { class: "notelist" }, releases.flatMap((r) =>
+        (r.notes ?? []).map((n) => el("li", {},
+          el("span", { class: "muted" }, `${r.date ?? ""} `), n))))
+    : el("p", {}, t("lib.relnotesNone")));
+}
 $("#changeKeyBtn").onclick = async () => {
   // switching identities means presenting a different KEY — an id is no
   // longer taken at a device's word. adoptKey does the settings-timestamp

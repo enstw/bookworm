@@ -84,6 +84,7 @@
       </p>
       <p class="muted small">
         <span id="buildLine"></span> ·
+        <button id="relnotesBtn" class="linklike" data-i18n="lib.relnotes" data-i18n-title="lib.relnotesTitle">版本紀錄</button> ·
         <button id="refreshBtn" class="linklike" data-i18n="lib.refresh" data-i18n-title="lib.refreshTitle">重新整理</button> ·
         <button id="langBtn" class="linklike" data-i18n="lib.langSwitch" data-i18n-title="lib.langTitle">English</button>
         <span id="installWrap"> ·
@@ -91,6 +92,8 @@
         </span> ·
         <a id="adminLink" class="linklike" href="/admin" data-i18n="lib.admin" data-i18n-title="lib.adminTitle">管理</a>
       </p>
+      <!-- 版本紀錄 (paintRelnotes): /releases.json 的 reader-facing 行 -->
+      <div id="relnotesPanel" class="muted small" hidden></div>
     </section>
 
     <!-- the install guide (renderInstallGuide) -->
