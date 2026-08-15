@@ -714,6 +714,19 @@ the pre-publication history, which lives in the owner's private archive.
   chain — worker send, push-service status, SW receipt, badge — logs to
   `testlog` page=push, and the 測試 button pushes the phone itself so each
   outcome names a different fix.
+- **The badge number is iOS's delivered-list, and that list lies after a
+  clear (2026-08-16).** The SW sets the app-icon badge to
+  `registration.getNotifications().length` when a push lands, so the number
+  is tray accumulation, never "how many pushes this release sent": three
+  version announcements in a row logged 系統列出 10、11、12 則, one more
+  each. Worse, after the owner swiped the notification center clean, two
+  測試 pushes 30 s apart still logged 9 then 6 — iOS purges cleared
+  notifications from the SW-visible list lazily, so `getNotifications()`
+  keeps returning notifications the user already dismissed and the badge
+  inherits the stale count. Diagnosed entirely from testlog page=push:
+  every send was delivered exactly once; nothing was pushed twice. If the
+  number ever needs to be honest, keep our own counter (IndexedDB, ++ per
+  push, reset on open) instead of trusting the platform list.
 - **Release notes are written at ship time, never summarised (2026-08-12).**
   A reader who came here for a novel must not be shown "ci: pin every action
   to a commit digest", so RELEASES.md's commit subjects are the ledger and
@@ -769,6 +782,20 @@ the pre-publication history, which lives in the owner's private archive.
   tenant. **Reads are gated**: the rows quote the book (dropped glyphs,
   synthesis prompts), and that is content. Read them with
   `curl -H "authorization: Bearer $ADMIN_TOKEN" '<origin>/api/testlog?page=…&limit=5'`.
+  **Against production that curl 401s from a dev machine every time**
+  (re-learned 2026-08-16, after several sessions tripped on it): the
+  `ADMIN_TOKEN` in `.dev.vars` is the local dev token, and the production
+  token lives only in `wrangler secret`, which cannot be read back. The
+  route that needs no new credential: the testlog GET gate also accepts a
+  reader key, and the owner's signed-in browser already carries one as a
+  cookie — so drive the owner's Chrome (claude-in-chrome tools) to
+  `<origin>/api/testlog?page=…&limit=15` and read the JSON off the page.
+  When reading `page=push`, one push involves up to three writers per
+  event: `device:page` (the 測試 button's preflight), `device:worker` (one
+  line per send, with per-endpoint push-service status), `device:sw` (one
+  line per push the phone actually received, ending `系統列出 N 則；badge
+  N`). "How many pushes really landed" is the count of sw lines — the badge
+  number is read off the sw line, never inferred.
 - **Writing the testlog needs a cookie, because the writers cannot send a
   header (2026-08-12).** `POST /api/testlog` was open until now, on the
   argument that the writer that matters most cannot authenticate. The half of
