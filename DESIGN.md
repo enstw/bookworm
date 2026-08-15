@@ -16,7 +16,14 @@ decision in that subsystem.
   (`no such table`), and without the token every admin route 401s.
   Re-applying the schema is always safe, and also empties the local feedback
   queue — the local rehearsal of the deploy-sweep.
-- `pnpm run dev` — wrangler dev on <http://localhost:8787>. Use pnpm, not npm.
+- `pnpm run dev` — wrangler dev on <http://localhost:8787>. Use pnpm, not
+  npm — npm is disabled outright on the owner's machines (`npx` → `pnpm dlx`).
+  The machines also set `strictDepBuilds`: a new dependency that carries a
+  build script installs with only a warning, then fails the dependency check
+  inside `pnpm test` — the fix is an explicit true/false under `allowBuilds:`
+  in `pnpm-workspace.yaml` (false whenever only committed dist files are
+  vendored; the entries there show the pattern), and
+  `pnpm.ignoredBuiltDependencies` in package.json does NOT satisfy it.
 - `ADMIN_TOKEN=<value from .dev.vars> pnpm test` — the suite, against a
   running dev server. Before running or writing e2e tests, read the runbook
   in `.claude/skills/e2e/SKILL.md`: it has the suite matrix and the two-stage
@@ -37,7 +44,16 @@ decision in that subsystem.
   `renovate/weekly-roll-up` PR (`.github/renovate.json5`), and the
   workflow merges it and dispatches this gated deploy. Major updates get
   their own PR and wait for review; there is no Renovate App — the CLI
-  runs in Actions, or by hand via the command in the config header. A
+  runs in Actions, or by hand via the command in the config header. Two
+  Renovate failure modes are known (2026-08-11): the Actions run can end
+  green yet create no roll-up while the dependency dashboard lists every
+  update as pending — run the CLI by hand, then dispatch the `renovate`
+  workflow so its merge step picks the PR up; and an orphaned
+  `renovate/weekly-roll-up` branch (a branch with no PR) makes every later
+  run abort with "Repository has changed during renovation" — delete the
+  branch first. Validate any config edit with `pnpm dlx --package renovate
+  renovate-config-validator`, and keep the one config file: a stray root
+  `renovate.json` silently shadows `.github/renovate.json5`. A
   third-party release must be **30 days old** before it can join a roll-up,
   so a yanked or compromised publish has time to surface somewhere else
   first; expect the pins to sit a release or two behind npm on purpose. Our
@@ -95,7 +111,15 @@ decision in that subsystem.
   to `main` or a merge over a red gate is rejected server-side (a rebase that
   rewrites any other pushed branch is still fine — the ruleset only guards
   `main`). Merge-commit merges are disabled repo-wide, merged branches
-  auto-delete, and the update-branch button is on. Also on: **Actions must
+  auto-delete, and the update-branch button is on. In practice: `gh pr
+  merge` needs `--rebase` or `--squash` and fails a stale head with "head
+  branch is not up to date"; every non-md merge deploys and the deploy
+  lands a release-ledger commit on `main` afterwards, so back-to-back PRs
+  always start with `git fetch && git rebase origin/main && git push
+  --force-with-lease` (which re-runs the gate). Watch a PR's gate with
+  `gh pr checks <n> --watch` — the workflow's display name is `candidate`
+  and the check's is `candidate-gate`, so `gh run list --workflow
+  candidate-gate` finds nothing. Also on: **Actions must
   be pinned to a full 40-character commit
   digest** (`sha_pinning_required`, repo → Settings → Actions). `uses:
   actions/checkout@v7` no longer runs — write the digest and keep the
@@ -114,7 +138,9 @@ decision in that subsystem.
 
 Start a session by reading `/api/feedback` on the owner's live instance
 (plain GET, no key; the origin is deliberately not written into this public
-repo — agents keep it in local memory, humans ask the owner). Each note is
+repo — on an owner machine read it from the untracked `.dev.vars`
+(`BOOKWORM_ORIGIN=`), in workflows it is the `BOOKWORM_URL` secret, and
+humans ask the owner). Each note is
 an improvement request the owner wrote from the phone on
 `/admin` — treat it as a ticket. Deploying clears the queue (`schema.sql`
 empties the table on every apply), so whatever is still readable is still
@@ -150,6 +176,29 @@ cleared.
   `/api/feedback`, push vapid/unsubscribe. `/api/testlog` needs a credential
   both ways — a reader key to read, the `bw_tlog` admin cookie to write. e2e
   suites mint their own key — the e2e runbook has the rules.
+
+## Working agreements
+
+How the owner wants agents to work here — stated preferences, kept in the
+repo because session memory does not cross machines:
+
+- **Explain before editing.** For anything beyond a typo: state the
+  diagnosis, the evidence for it, the planned change and how it will be
+  verified — then wait for the go-ahead. Keep the diagnosis separate from
+  the fix so a wrong premise can be challenged on its own, and measure
+  instead of inferring whenever measuring is cheap. Verification must
+  *gate* the push (`cmd && git push`), never narrate beside it — a
+  `pnpm test | grep -i error; git push` once let a parse error deploy.
+- **One user, one install.** The owner is the sole reader and the only
+  installed PWA. When a contract changes (URLs, storage keys, routes),
+  delete the old form instead of shimming it; the owner re-enrolls their
+  own devices. (The retired `/<book>/<uid>` route is the precedent.)
+- **Test inputs come from pins, never working trees.** A harness fetches
+  its inputs from the pinned upstream (release tag, `upstreams.yaml`
+  revision) into its own copy and verifies the SHA-256 — it never reads
+  the owner's local checkouts (`~/workspace/wasmtts/platform/models/` is
+  mutable working state and has changed mid-experiment). Saving a
+  download is not a reason.
 
 ## The phone is the product
 
@@ -445,7 +494,23 @@ the pre-publication history, which lives in the owner's private archive.
   ~2–4 s per 2 s clip on desktop CPU. The harnesses (chain e2e with PCM
   tap, junction cross-correlation audit, dual-ASR consensus report) lived
   in a session scratchpad and are NOT checked in — rebuild from this
-  description if needed.
+  description if needed. **The mitigation sweep came back negative
+  (2026-08-15)**: ODE steps 2/3/4/6 (upstream ModelScope
+  `dengcunqin/matcha_tts_zh_en_20251010` ships the full export set) ×
+  `noise_scale` 0.3/0.5/0.667/1.0 all leave the mis-articulation rate
+  unmoved — 2–5 consensus flags per 50 renders in every cell, statistical
+  noise. The error mode is a neighbouring-syllable intrusion (老前輩 →
+  「前」侵入 老, 再來找 → 再再找): alignment slippage inherent to the
+  checkpoint, not noise amplitude, so more solver steps cannot buy it
+  back. And the consensus detector itself is calibrated per carrier
+  sentence: on the calibrated probe it is human-confirmed, but on a new
+  carrier both whisper models share the same LM preference and it
+  false-positives wholesale (21/50 on a sentence a human hears as fine),
+  while long carriers trigger whisper's temperature fallback (~3 h for
+  200 clips) — compare rates only on calibrated short sentences.
+  Remaining routes: a different acoustic model or checkpoint, or accept
+  the rate and promote the calibrated-sentence consensus rate to a
+  release-gate metric.
 - **iOS lock-screen ground truth (2026-08-08, measured on iOS 18.7 with a
   LAN probe replaying real per-sentence mp3 units through the reader's exact
   MediaSource + Media Session discipline).** Four facts, three of them
@@ -781,6 +846,18 @@ the pre-publication history, which lives in the owner's private archive.
   last with fresh chars/bytes/generatedAt so `?v=` caches bust and the shelf
   index stays honest; the log prints removed codepoints and 1-based chapter
   numbers, never titles).
+- **CI flake ledger (2026-08-10).** One red so far judged infrastructure,
+  not code: `push-api-e2e` failed once with undici `SocketError: other
+  side closed` against wrangler dev (nine suites green in the same run,
+  adjacent runs on the same tree green) — a workerd connection drop. One
+  occurrence does not buy a retry mechanism; if the same shape recurs
+  (UND_ERR_SOCKET / "other side closed" against the dev server), give the
+  server-backed suites one automatic re-run in `scripts/run-ci-tests.mjs`
+  recording an `attempts` field — the wasmtts gate-runner pattern — and
+  do not start by suspecting the push code. The other red in the ledger
+  was ours: `admin-e2e`'s author assertion raced enrichment (fixed in
+  PR #37 by waiting on `metaPreview`), so a new `admin-e2e` red is a new
+  problem.
 - **Deploy & ops.** The custom domain is added in the Cloudflare dashboard
   only — the deploy token has no zone permissions, so putting the domain in
   `wrangler.jsonc` `routes` breaks `deploy.sh`. `deploy.sh` captures
@@ -788,7 +865,16 @@ the pre-publication history, which lives in the owner's private archive.
   account's email, and a public repo's Actions logs are world-readable.
   README screenshots are staged on an isolated `wrangler dev --persist-to`
   scratch instance with public-domain books from 維基文庫, captured over
-  CDP at 390×844 @2× — never against the live shelf.
+  CDP at 390×844 @2× — never against the live shelf. The owner's contact
+  address and the live origin were scrubbed from the tracked tree before
+  publication and are never reintroduced: the contact exists only in the
+  `VAPID_SUBJECT` repo secret, the origin only in the `BOOKWORM_URL`
+  secret and each owner machine's untracked `.dev.vars`
+  (`BOOKWORM_ORIGIN=`). Actions masks secrets in logs but NOT in step
+  summaries, so a workflow must never echo the origin into
+  `$GITHUB_STEP_SUMMARY`. The pre-publication history lives only in the
+  owner's private archive repo and its local clone
+  (`~/workspace/bookworm-archive`); never push any of it here.
 
 ## Backlog
 
@@ -800,9 +886,12 @@ the pre-publication history, which lives in the owner's private archive.
   today); font stack and break rules per language; offer 直排 only for CJK
   books; chapter-title detection beyond 第…回／章.
 - R2 `_tts/` eviction (lifecycle rule or admin sweep) if storage grows.
-- 吃字 mitigation (see 吃字調查 2026-08-14): evaluate a higher-step Matcha
-  export or another acoustic model in wasmtts, gated by the dual-ASR
-  consensus rate over real chapters and an on-phone RTF check.
+- 吃字 mitigation (see 吃字調查 2026-08-14/15): higher ODE steps and
+  noise_scale are measured dead ends; what is left is a different acoustic
+  model or checkpoint — candidates are hunted in the owner's separate
+  `mytts` lab repo (an own zh_TW-accented voice inside the huayan CPU
+  budget) — or promoting the calibrated-sentence consensus rate to a
+  wasmtts release gate.
 - Playback speed control (`audio.playbackRate`) in the player bar.
 - File the iOS scrollBy-doubles bug at bugs.webkit.org (evidence is in the
   archive's 2026-07-28 commits; low priority).
