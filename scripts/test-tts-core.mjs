@@ -43,6 +43,22 @@ for (const i of [0, 3, 5, 8, 12, 13, 15]) {
     fail(`sentence span empty at ${i}`);
 }
 
+// ---- ttsPrompt: pinned cases ----------------------------------------------
+// Layout whitespace collapses to one space; between Han characters that
+// space then becomes 「，」 so every engine pauses there (the offline
+// frontend skips bare whitespace — a heading's 第N章␣名字 break was
+// otherwise inaudible on it), while a zh-en boundary keeps the word break
+// English needs.
+for (const [raw, want] of [
+  ["　　第三章 風起雲湧", "第三章，風起雲湧"],
+  ["第1章 串流測試", "第1章，串流測試"],
+  ["用 iPhone 讀書", "用 iPhone 讀書"],
+  ["甲說。\n　　乙曰。", "甲說。 乙曰。"],
+]) {
+  const got = ttsPrompt(raw);
+  if (got !== want) fail(`ttsPrompt(${JSON.stringify(raw)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+}
+
 const dir = process.argv[2] ?? "out/jianlai";
 const files = readdirSync(dir).filter((f) => f.endsWith(".txt"));
 if (!files.length) {
