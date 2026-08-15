@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-15 — `073009919771`
+
+- feat: 接上 wasmtts 台灣讀音 profile — 覆審讀音層進產品聲音 (`0730099`)
+
 ## 2026-08-15 — `b99eba055fc6`
 
 - slug: reserve the URL names the app itself routes (`b99eba0`)
