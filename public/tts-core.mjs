@@ -149,7 +149,14 @@ export function chunkIndexFor(chunks, off) {
 }
 
 // Raw chunk slice → text sent to the model: collapse newlines and full-width
-// indent spaces (paragraph layout, not speech) into single spaces.
+// indent spaces (paragraph layout, not speech) into single spaces, then turn
+// the ones between Han characters into 「，」. A heading's 「第幾章 名字」 gap
+// marks a break the owner wants HEARD (2026-08-15), and the offline
+// frontend skips whitespace before tokenizing — a bare space was a pause
+// only the online voices happened to honor. A comma is the one break mark
+// every engine reads, and reads alike. Only between Han: a zh-en boundary
+// keeps its space, which is a word break, not a pause.
 export function ttsPrompt(chunkText) {
-  return chunkText.replace(/[\s　]+/g, " ").trim();
+  return chunkText.replace(/[\s　]+/g, " ").trim()
+    .replace(/(?<=\p{Script=Han}) (?=\p{Script=Han})/gu, "，");
 }
