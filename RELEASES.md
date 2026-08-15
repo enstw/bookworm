@@ -9,6 +9,13 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-15 — `69d852d118c4`
+
+> wasmtts v1.0.2 → v1.1.0
+
+- chore(deps): update weekly upstream roll-up (`69d852d`)
+- docs: move session-memory facts into DESIGN.md — memory does not cross machines (`3842c0d`)
+
 ## 2026-08-15 — `3266aa5ab2dd`
 
 - test: fetch matcha assets from the pin, never the owner's wasmtts checkout (`3266aa5`)
