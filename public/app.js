@@ -357,9 +357,24 @@ healPush();
 // to an app that was already open, which is how iOS multitasking usually
 // goes; checkVersion re-asserts its dot right after this clear for as long
 // as the update is still pending.
+//
+// Marking read takes CLOSING the notifications, not just clearing the
+// badge. iOS keeps every shown notification in the SW registration's store
+// even after the user sweeps the notification center clean (measured on
+// the owner's phone: a swept tray still answered getNotifications with 6,
+// unchanged ten minutes later), and setBadge in sw.js counts that store on
+// the next push — uncounted ghosts would re-inflate the badge forever.
+// close() is the one removal WebKit honors from us.
 const clearBadge = () => navigator.clearAppBadge?.().catch(() => {});
-clearBadge();
-addEventListener("visibilitychange", () => document.hidden || clearBadge());
+const clearNews = async () => {
+  clearBadge();
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    for (const n of (await reg?.getNotifications()) ?? []) n.close();
+  } catch { /* no SW or no permission: nothing was ever shown to close */ }
+};
+clearNews();
+addEventListener("visibilitychange", () => document.hidden || clearNews());
 // a deploy while the app sits open on a phone: the shell is network-first,
 // so the update is one reload away — this only makes its ARRIVAL visible.
 // Checked on open and whenever the app comes back to the foreground (how

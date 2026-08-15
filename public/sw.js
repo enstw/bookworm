@@ -187,10 +187,13 @@ self.addEventListener("push", (e) => {
 // The red dot on the app icon is NOT a side effect of showing a notification —
 // on iOS the app has to ask for it, through the Badging API, and only an
 // installed (Home Screen) app with notification permission gets one. The count
-// is however many of our notifications iOS still has in the tray; when it
-// won't say (getNotifications unsupported), one push means at least one unread.
-// Reported into the push log because a phone is the only place this can be
-// observed and there is no console on it.
+// is however many of our notifications the registration still HOLDS — not the
+// tray: iOS keeps user-swept notifications in this list, and only close()
+// removes them, which is why the page closes every notification when the app
+// opens (clearNews in app.js). When iOS won't say (getNotifications
+// unsupported), one push means at least one unread. Reported into the push
+// log because a phone is the only place this can be observed and there is no
+// console on it.
 async function setBadge(listed) {
   const n = listed > 0 ? listed : 1;
   if (!self.navigator?.setAppBadge) return "無 badge API";
