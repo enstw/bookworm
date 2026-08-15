@@ -9,6 +9,15 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-15 — `b99eba055fc6`
+
+- slug: reserve the URL names the app itself routes (`b99eba0`)
+- sw: never hand the shell to a navigation the reader cannot route (`d42e8fb`)
+- player: offer the voice pack to devices that never held it (`6271507`)
+- player: a report button files the sentence under the voice (`acd592a`)
+- player: the stale-pack pill re-downloads in place (`a308d77`)
+- tts: read the heading's space as a comma, on every engine (`43b7db7`)
+
 ## 2026-08-15 — `c1caa9463c54`
 
 > 離線語音升級為 steps-6 聲學模型;開始朗讀時會提示重新下載語音包。
