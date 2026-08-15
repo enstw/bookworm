@@ -730,19 +730,23 @@ the pre-publication history, which lives in the owner's private archive.
   chain — worker send, push-service status, SW receipt, badge — logs to
   `testlog` page=push, and the 測試 button pushes the phone itself so each
   outcome names a different fix.
-- **The badge number is iOS's delivered-list, and that list lies after a
-  clear (2026-08-16).** The SW sets the app-icon badge to
+- **Marking pushes read means close(), because iOS never unlists what the
+  user swept away (2026-08-16).** The SW sets the app-icon badge to
   `registration.getNotifications().length` when a push lands, so the number
-  is tray accumulation, never "how many pushes this release sent": three
-  version announcements in a row logged 系統列出 10、11、12 則, one more
-  each. Worse, after the owner swiped the notification center clean, two
-  測試 pushes 30 s apart still logged 9 then 6 — iOS purges cleared
-  notifications from the SW-visible list lazily, so `getNotifications()`
-  keeps returning notifications the user already dismissed and the badge
-  inherits the stale count. Diagnosed entirely from testlog page=push:
-  every send was delivered exactly once; nothing was pushed twice. If the
-  number ever needs to be honest, keep our own counter (IndexedDB, ++ per
-  push, reset on open) instead of trusting the platform list.
+  is accumulation, never "how many pushes this release sent": three version
+  announcements in a row logged 系統列出 10、11、12 則, one more each. The
+  sharp edge: that list is the registration's own store, NOT the
+  notification center — the owner swept the center clean, waited ten
+  minutes, and a 測試 push still logged 系統列出 6 則 (a first reading of
+  "iOS purges cleared entries lazily" did not survive that measurement).
+  The only removal the app controls is `notification.close()`, and the only
+  close anywhere was the tapped notification — every untapped one lived on
+  as a ghost the badge re-counted forever. So opening the app now closes
+  every shown notification (clearNews in app.js, the same moment the badge
+  clears): "opening the app is what marks the news read" finally does what
+  it says. Every send in that log was delivered exactly once — nothing was
+  ever pushed twice. Verify on the phone after a deploy: sweep the tray,
+  open the app once, 測試 — the push log should read 系統列出 1 則；badge 1.
 - **Release notes are written at ship time, never summarised (2026-08-12).**
   A reader who came here for a novel must not be shown "ci: pin every action
   to a commit digest", so RELEASES.md's commit subjects are the ledger and
