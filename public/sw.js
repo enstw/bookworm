@@ -107,12 +107,21 @@ async function assetFetch(req) {
 // installed phone makes on every reopen. Only "/" may refresh the cached
 // copy: /admin is a DIFFERENT document served by the worker and must never
 // be stored as the shell.
+// Navigations the reader cannot route must never fall back to the cached
+// shell: /wasmtest on a slow link came back as the SPA, which read the path
+// as a book slug — 「沒有名為《wasmtest》的書」 (owner report, 2026-08-15).
+// These documents wait for the real network instead: slow stays slow,
+// offline fails as itself. The slug half of this list is RESERVED_SLUGS in
+// split-core.mjs.
+const OWN_DOCS = ["/admin", "/wasmtest", "/speechtest", "/vhtest", "/pgtest", "/scrolltest", "/pagedtest"];
+
 async function navFetch(e) {
   const path = new URL(e.request.url).pathname;
   const { res, net } = await timedNetwork(e, path === "/"
     ? (copy) => caches.open(SHELL).then((c) => c.put("/", copy))
     : null);
-  return res ?? (await caches.match("/")) ?? net;
+  if (res) return res;
+  return OWN_DOCS.includes(path) ? net : (await caches.match("/")) ?? net;
 }
 
 async function shellFetch(e) {
