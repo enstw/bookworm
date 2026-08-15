@@ -371,10 +371,18 @@ the pre-publication history, which lives in the owner's private archive.
   unknown: 70.5% of the lexicon's 47,113 multi-char entries are
   unreachable from traditional input, 19.3% of those get ≥1 syllable wrong
   via per-char fallback, and real traditional prose comes out ~16% wrong —
-  銀行 as yín xíng, 看著 as kàn zhù, 會計 as huì jì. Corrections accrue in
-  `OVERRIDES` one line at a time from listening tests, each with a pinned
-  case in `scripts/test-wasm-frontend.mjs`; a flat table cannot disambiguate
-  著, and guessing entries up front just moves the error. **Numbers are read
+  銀行 as yín xíng, 會計 as huì jì. **Corrections arrive as upstream's
+  taiwan profile (adopted 2026-08-15 by owner ruling: the reviewed reading
+  layer is part of the product voice, not an optional extra):**
+  `matcha-taiwan-profile.js` and its `matcha-g2p-review.json` ledger ride
+  the pin through vendor.mjs and the sw shell, and compile to ~120 phrase
+  overrides plus 16 contextual rules (得/著/長/還/乾…, dictionary- and
+  corpus-reviewed upstream) applied in the synth worker — which is what
+  fixed 看著 to kàn zhe. `OVERRIDES` in wasm-tts.mjs is local staging on
+  top: an entry lands there when a listening test here catches a reading
+  the review has not reached, wins over the profile, and leaves once
+  upstream absorbs it (垃圾→lè sè made that trip). Every reading change
+  gets a pinned case in `scripts/test-wasm-frontend.mjs`. **Numbers are read
   by sherpa's own zh rule FSTs, applied by the real kaldifst (2026-08-10,
   previously in JS from 2026-08-08).** The applier is wasmtts's standalone
   kaldifst 1.8.0 + OpenFST wasm (338 KB, its own 16 MiB linear memory,

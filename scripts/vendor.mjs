@@ -48,6 +48,12 @@ const BUNDLES = [
   // tests use as their FST oracle; the product worker runs the real kaldifst
   // wasm (matcha-kaldifst-normalizer.*, built and committed upstream).
   { pkg: "wasmtts", src: "platform/matcha-frontend.js", dst: "wasmtts/matcha-frontend.js" },
+  // The taiwan reading layer: upstream's dictionary-and-ear-reviewed phrase
+  // overrides and contextual rules (得/著/長/還…), plus the review ledger they
+  // are compiled from. The engine loads both — the profile is part of the
+  // product voice, not a diagnostic extra (owner ruling 2026-08-15).
+  { pkg: "wasmtts", src: "platform/matcha-taiwan-profile.js", dst: "wasmtts/matcha-taiwan-profile.js" },
+  { pkg: "wasmtts", src: "platform/matcha-g2p-review.json", dst: "wasmtts/matcha-g2p-review.json" },
   { pkg: "wasmtts", src: "platform/matcha-synthesis.js", dst: "wasmtts/matcha-synthesis.js" },
   { pkg: "wasmtts", src: "platform/matcha-fst.js", dst: "wasmtts/matcha-fst.js" },
   { pkg: "wasmtts", src: "platform/kaldifst-normalizer.js", dst: "wasmtts/kaldifst-normalizer.js" },

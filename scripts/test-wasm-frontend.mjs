@@ -21,9 +21,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { segments, mkWav, RATE, OVERRIDES, PACK_FILES } from "../public/wasm-tts.mjs";
 import "../public/vendor/wasmtts/matcha-frontend.js";
+import "../public/vendor/wasmtts/matcha-taiwan-profile.js";
 
 const { createFrontend, normalizeFullWidth, normalizeLocalForms, normalizeNumbers, normalizePunctuation,
         parseLexicon, parseTokens } = globalThis.MatchaFrontend;
+
+// the reviewed reading layer, compiled exactly the way the synth worker does
+const review = JSON.parse(readFileSync(new URL("../public/vendor/wasmtts/matcha-g2p-review.json", import.meta.url), "utf8"));
+const profileCfg = globalThis.MatchaTaiwanProfile.createConfig(review);
 
 const out = {};
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -177,8 +182,20 @@ out.unknown = threw && lenient.unknown.length === 1 && eq(lenient.ids, [10, 11])
 
 // every shipped override must be a real phone list, or it fails at synthesis
 out.overrides = Object.entries(OVERRIDES).every(([w, p]) => w.length && /^[a-z]+[1-5]( [a-z]+[1-5])*$/.test(p))
-  ? `ok (${Object.keys(OVERRIDES).length} entr${Object.keys(OVERRIDES).length === 1 ? "y" : "ies"})`
+  ? `ok (${Object.keys(OVERRIDES).length} local entr${Object.keys(OVERRIDES).length === 1 ? "y" : "ies"} — the reviewed layer is the profile)`
   : `FAIL ${JSON.stringify(OVERRIDES)}`;
+
+// the taiwan profile the worker applies: its shape is pinned here so a review
+// ledger that compiles to nothing (a schema drift, a renamed profile) fails in
+// node instead of shipping a silently un-reviewed voice. 垃圾 → le4 se4 is the
+// profile's own base entry — the first local override to graduate upstream.
+out.profile = Object.keys(profileCfg.pronunciationOverrides).length >= 100
+  && profileCfg.contextualRules.length >= 10
+  && eq(profileCfg.pronunciationOverrides["覺得"], ["jue2", "de5"])
+  && eq(profileCfg.pronunciationOverrides["垃圾"], ["le4", "se4"])
+  && profileCfg.contextualRules.some((r) => r.pattern === "著")
+  ? `ok (${Object.keys(profileCfg.pronunciationOverrides).length} words, ${profileCfg.contextualRules.length} contextual rules)`
+  : `FAIL words=${Object.keys(profileCfg.pronunciationOverrides).length} rules=${profileCfg.contextualRules.length}`;
 
 // ---- with the real lexicon ------------------------------------------------
 const dir = process.env.MATCHA_MODEL_DIR;
@@ -186,10 +203,12 @@ if (!dir) {
   out.golden = "skipped (set MATCHA_MODEL_DIR to run)";
   out.traditional = "skipped (set MATCHA_MODEL_DIR to run)";
 } else {
+  // the worker's exact recipe: profile under local OVERRIDES, rules alongside
   const real = createFrontend({
     lexiconText: readFileSync(join(dir, "lexicon.txt"), "utf8"),
     tokensText: readFileSync(join(dir, "tokens.txt"), "utf8"),
-    pronunciationOverrides: OVERRIDES,
+    pronunciationOverrides: { ...profileCfg.pronunciationOverrides, ...OVERRIDES },
+    contextualRules: profileCfg.contextualRules,
   });
 
   // Byte-identical to sherpa-onnx 1.13.4's ids for the same text. Simplified
@@ -203,25 +222,32 @@ if (!dir) {
     ? "ok (no unknown from digits)" : "FAIL";
 
   out.packOverride = eq(real.tokensFor("垃圾。").phones, ["le4", "se4", "."])
-    ? "ok (垃圾 → le4 se4)" : `FAIL ${JSON.stringify(real.tokensFor("垃圾。").phones)}`;
+    ? "ok (垃圾 → le4 se4, via the profile's base entry)"
+    : `FAIL ${JSON.stringify(real.tokensFor("垃圾。").phones)}`;
 
   // 簡繁直輸 has a known, accepted cost: the multi-char entries are
   // overwhelmingly simplified, so traditional prose falls through to per-char
-  // readings. This table PINS THE CURRENT WRONG ANSWERS on purpose — when a
-  // listening test justifies an OVERRIDES entry, the matching line here flips
-  // to the right reading and this test is what proves the fix landed.
+  // readings. This table PINS THE CURRENT ANSWERS on purpose — the 2026-08-15
+  // taiwan-profile adoption flipped 著/乾/得 to the reviewed readings, and the
+  // lines still marked "want" are the accepted defects the review has not
+  // reached yet. When it does, flip the line; this test proves the fix landed.
   const TRADITIONAL = [
-    ["他看著窗外", ["ta1", "kan4", "zhu4", "chuang1", "wai4"]],   // 著: want zhe5
+    ["他看著窗外", ["ta1", "kan4", "zhe5", "chuang1", "wai4"]],    // profile contextual rule
     ["銀行", ["yin2", "xing2"]],                                   // want yin2 hang2
     ["會計", ["hui4", "ji4"]],                                     // want kuai4 ji4
-    ["乾淨", ["qian2", "jing4"]],                                  // want gan1 jing4
-    ["顯得", ["xian3", "de2"]],                                    // want xian3 de5
+    ["乾淨", ["gan1", "jing4"]],                                   // profile contextual rule
+    ["顯得", ["xian3", "de5"]],                                    // profile phrase override
+    // and a spread of the profile's own corrections, one per rule family
+    ["覺得", ["jue2", "de5"]],                                     // 得 neutral tone
+    ["睡著了", ["shui4", "zhao2", "le5"]],                         // 著 zhao2 after 睡
+    ["長劍", ["chang2", "jian4"]],                                 // 長 chang2 before 劍
+    ["還給他", ["huan2", "gei3", "ta1"]],                          // 還 huan2 before 給
   ];
   const drift = TRADITIONAL.filter(([t, want]) => !eq(real.tokensFor(t).phones, want))
     .map(([t, want]) => `${t}: ${JSON.stringify(real.tokensFor(t).phones)} ≠ ${JSON.stringify(want)}`);
   out.traditional = drift.length === 0
-    ? `ok (${TRADITIONAL.length} readings pinned — see the note, these are the accepted defects)`
-    : `FAIL — reading changed, update OVERRIDES and this table together:\n    ${drift.join("\n    ")}`;
+    ? `ok (${TRADITIONAL.length} readings pinned — profile fixes in, 銀行/會計 stay the accepted defects)`
+    : `FAIL — reading changed, update the profile/OVERRIDES and this table together:\n    ${drift.join("\n    ")}`;
 }
 
 console.log(JSON.stringify(out, null, 2));
