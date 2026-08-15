@@ -306,16 +306,12 @@ onmessage = async (e) => {
         contextualRules: profile.contextualRules,
         ruleNormalizer,
       });
-      // noise 1 and length 1 are the defaults the phone was verified with, and
-      // deliberately not sherpa's 0.667 noise. The silence is NOT left at its
-      // ported default: scaleSilence is a pause CUTTER, not a pause generator —
-      // it finds every stretch of quiet over 0.2 s and shortens it to that
-      // fraction, and at sentence length the only silences that qualify are the
-      // own 。 and ， pauses. Measured on one paragraph: at 0.2 a comma is
-      // 55 ms and a full stop 147 ms; at 1 (the pass short-circuits, waveform
-      // untouched) they are 280 ms and 740 ms. The phone heard the first as no
-      // punctuation at all, which it effectively is.
-      engine = self.MatchaSynthesis.createEngine({ ORT: rt, silenceScale: 1 });
+      // The playback recipe (noise/length/silence) is the voice pack's own:
+      // matcha-assets.json's synthesis block, ear-verified on device and
+      // graduated upstream 2026-08-15 — rationale in wasmtts platform/README.
+      // Hardcoding a knob here is the fork the pack manifest exists to
+      // prevent; vendor.mjs fails the build if the pin ships without it.
+      engine = self.MatchaSynthesis.createEngine({ ORT: rt, ...m.synth });
       const info = await engine.init({
         acousticModel: new Uint8Array(m.acoustic),
         vocoderModel: new Uint8Array(m.vocoder),
@@ -412,7 +408,7 @@ export function ensureEngine() {
       pending.set(undefined, r);
       worker.postMessage(
         { type: "init", ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, taiwanJs, review, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens,
-          ruleFsts: rules, overrides: OVERRIDES,
+          ruleFsts: rules, overrides: OVERRIDES, synth: PACK.synthesis,
           glueUrl: new URL("/vendor/wasmtts/ort-wasm-simd-threaded.mjs", location.origin).href },
         [ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, taiwanJs, review, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens, ...(rules ?? [])],
       );

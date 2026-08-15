@@ -411,13 +411,18 @@ the pre-publication history, which lives in the owner's private archive.
   tables still do the reading, and the JS rules stay behind the chain as the
   whole reading for a device whose pack predates the tables. Verified inert on
   all 11,078 prose sentences. **Pauses are the
-  model's own, unedited: `silenceScale: 1`** (2026-08-08), overriding the
-  ported default of 0.2 — `scaleSilence` is not a pause generator but a pause
-  *cutter*, a hand-written pass that finds every silence over 0.2 s and
-  shortens it to a fifth, and at 1 it returns the waveform untouched.
-  Measured on one paragraph, silent runs at 0.2 vs 1: **， 55 ms → 280 ms,
-  。 147 ms → 740 ms.** wasmtts ships the same 0.2 default, so the bench it
-  came from is no counter-example: it suppresses commas there too. The
+  model's own, unedited: `silenceScale: 1`** (2026-08-08) — `scaleSilence` is
+  not a pause generator but a pause *cutter*, a hand-written pass that finds
+  every silence over 0.2 s and shortens it to a fifth, and at 1 it returns
+  the waveform untouched. Measured on one paragraph, silent runs at 0.2 vs 1:
+  **， 55 ms → 280 ms, 。 147 ms → 740 ms.** wasmtts keeps 0.2 as its
+  *benchmark* config, so its bench is no counter-example: it suppresses
+  commas there too. Since 2026-08-15 (owner ruling) the whole playback
+  recipe — silence 1, with the equally deliberate noise 1 (not sherpa's
+  0.667) and length 1 — rides in from the pin: the pack manifest's
+  `synthesis` block (upstream matcha-assets.json) is the recipe, the worker
+  spreads it into `createEngine` verbatim, and `vendor.mjs` fails the build
+  if a pin ships without it — this repo hardcodes no knob. The
   piper-era `PAUSE_MS` splicing existed only because espeak ate the commas
   and is not coming back. One caveat measured at the same time: an isolated
   sentence carries ~590 ms of trailing and ~140 ms of leading silence, so a
