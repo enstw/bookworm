@@ -4,6 +4,7 @@
 // this worker only runs for /api/* and /books/* (see run_worker_first).
 
 import { chunkChapter, ttsPrompt } from "../public/tts-core.mjs";
+import { RESERVED_SLUGS } from "../public/split-core.mjs";
 import { PACK_NAMES } from "../public/vendor/wasmtts/pack-manifest.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
 import { vapidPublicKey, sendPush, b64u } from "./push.js";
@@ -1044,6 +1045,7 @@ async function sidecarAuthor(env, id) {
 async function registerBook(env, id, m, author = "", indexedAt = Date.now()) {
   const slug = String(m.slug ?? id);
   if (!SLUG_RE.test(slug)) return { ok: false, slug, reason: "bad slug" };
+  if (RESERVED_SLUGS.includes(slug)) return { ok: false, slug, reason: "reserved" };
   const owner = await env.DB.prepare("SELECT book FROM book_slugs WHERE slug = ?")
     .bind(slug).first();
   if (owner && owner.book !== id) return { ok: false, slug, reason: "taken" };
@@ -1488,7 +1490,8 @@ async function handleAdminBook(request, env, id) {
     const title = body.title === undefined ? undefined : String(body.title).trim();
     const slug = body.slug === undefined ? undefined : String(body.slug).trim();
     if (title !== undefined && !title) return json({ error: "title required" }, 400);
-    if (slug !== undefined && !SLUG_RE.test(slug)) return json({ error: "bad slug" }, 400);
+    if (slug !== undefined && (!SLUG_RE.test(slug) || RESERVED_SLUGS.includes(slug)))
+      return json({ error: "bad slug" }, 400);
 
     const obj = await env.BOOKS.get(manifestKey);
     if (!obj) return json({ error: "not found" }, 404);

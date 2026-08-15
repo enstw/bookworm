@@ -491,10 +491,19 @@ the pre-publication history, which lives in the owner's private archive.
   back to STREAM and `player.mjs` offers the re-download as a one-tap pill
   (`player.packStale`), because a silent engine downgrade reads as the app
   losing a feature it used to have. The pill downloads in place (owner
-  request 2026-08-15: leaving the book for `/wasmtest` felt like a detour)
-  with its button naming the missing MB; narration keeps playing online and
-  the offline engine returns at the next ▶ — never mid-session, because
-  `useWasm()` is consulted live throughout playback. A same-name asset can
+  ruling 2026-08-15: the voice pack is a reader feature, not
+  diagnostic-page lore) with its button naming the missing MB; narration
+  keeps playing online and the offline engine returns at the next ▶ —
+  never mid-session, because `useWasm()` is consulted live throughout
+  playback. A device that never held the pack gets the same pill as a
+  plain offer (`player.packOffer`) — first download and re-download are
+  the one flow, and `/wasmtest` keeps only the per-file diagnostic
+  timeline. Related pins from the same ruling: the service worker never
+  falls back to the cached shell for documents the SPA cannot route
+  (`OWN_DOCS` in `sw.js` — a slow-network `/wasmtest` used to come back as
+  「沒有名為《wasmtest》的書」), and those URL names are refused as book
+  slugs (`RESERVED_SLUGS` in `split-core.mjs`, enforced in `registerBook`
+  and the slug PATCH, skipped by `uniqueSlug` like any collision). A same-name asset can
   still never change bytes, and a sync failure 404s loudly on device. Note
   `env.versions.common` reports *onnxruntime-common*, not the web package,
   so the drift guard checks the wasm's byte length instead. **A transcript

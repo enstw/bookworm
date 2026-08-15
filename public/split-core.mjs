@@ -44,10 +44,22 @@ export function shortSlug(name, taken = []) {
   return uniqueSlug(base.slice(0, 16) || "bk", taken);
 }
 
+// URL names the app itself owns. A book slug shadowing one of these loses,
+// not wins — the worker matches its own routes first, so /admin still opens
+// the console and the BOOK becomes unreachable after any reload (and before
+// the service worker learned better, a slow link served the shell for
+// /admin and rendered the book instead — the worst of both). Refused at
+// every slug write (registerBook, the PATCH edit) and skipped by uniqueSlug
+// like any collision. sw.js keeps the document half of this list as OWN_DOCS.
+export const RESERVED_SLUGS = [
+  "admin", "wasmtest", "speechtest", "vhtest", "pgtest", "scrolltest", "pagedtest",
+  "api", "books", "fonts", "icons", "vendor",
+];
+
 // Append the smallest numeric postfix that clears `taken` — "jl" → "jl2".
 export function uniqueSlug(base, taken = []) {
   let cand = base;
-  for (let n = 2; taken.includes(cand); n++) cand = base + n;
+  for (let n = 2; taken.includes(cand) || RESERVED_SLUGS.includes(cand); n++) cand = base + n;
   return cand;
 }
 
