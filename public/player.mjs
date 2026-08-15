@@ -42,10 +42,19 @@ const LocalMS = MMS ?? globalThis.MediaSource;
 const wasmStreamOk = !!LocalMS?.isTypeSupported?.("audio/mpeg");
 let wasmOn = false;
 const useWasm = () => wasmOn;
-wasmTts.packReady().then((r) => {
-  wasmOn = r && localStorage.getItem("bw_tts") !== "stream";
-  console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline matcha)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
-});
+// Re-run whenever the pack may have changed (module load, pill re-download,
+// session close) — but never under a live session: useWasm() is consulted
+// throughout playback, and an engine that swaps mid-stream strands the
+// timeline the other one owns. closePlayer re-picks, so a pack downloaded
+// while listening takes effect at the next ▶.
+function pickEngine() {
+  wasmTts.packReady().then((r) => {
+    if (player.on) return;
+    wasmOn = r && localStorage.getItem("bw_tts") !== "stream";
+    console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline matcha)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
+  });
+}
+pickEngine();
 
 // reader internals, injected once by app.js
 let $, el, state, fetchChapter, openChapter, savePos, flush, updateProgress,
@@ -90,16 +99,40 @@ let packNoticed = false; // the stale-pack pill, at most once per session
 // that did nothing wrong) says so once, with the re-download one tap away —
 // a silent fallback reads as the app losing a feature it used to have. A
 // fresh device stays quiet: it never had a pack to lose.
+//
+// The tap downloads in place (the same downloadPack /wasmtest runs) instead
+// of leaving the book: the pill only ever shows on a device that already
+// accepted the pack once, and the button names the missing megabytes, so
+// the cellular guarantee — no silent ~145 MB — still holds. Narration keeps
+// playing on the online engine meanwhile; the offline one takes over at the
+// next ▶ (closePlayer re-picks).
 function noticeStalePack() {
   if (packNoticed || useWasm() || localStorage.getItem("bw_tts") === "stream") return;
-  wasmTts.packStale().then((stale) => {
+  wasmTts.packStale().then(async (stale) => {
     if (!stale || packNoticed) return;
     packNoticed = true;
-    const note = el("div", { class: "jumpnote" },
-      el("span", { class: "jumpnote-text" }, t("player.packStale")),
-      el("button", { class: "linklike", onclick: () => { location.href = "/wasmtest"; } }, t("player.packGo")),
+    const label = el("span", { class: "jumpnote-text" }, t("player.packStale"));
+    const go = el("button", { class: "linklike", id: "packGoBtn", onclick: download },
+      t("player.packGo", Math.round(await wasmTts.packMissingBytes() / 1048576)));
+    const note = el("div", { class: "jumpnote" }, label, go,
       el("button", { class: "iconbtn", title: t("ui.close"), onclick: () => note.remove() }, "✕"));
     document.body.append(note);
+    async function download() {
+      go.disabled = true;
+      try {
+        await wasmTts.downloadPack(({ gotBytes, totalBytes }) => {
+          go.textContent = t("player.packBusy", Math.round((gotBytes / totalBytes) * 100));
+        });
+        label.textContent = t("player.packDone");
+        go.remove();
+        pickEngine(); // no-op while listening; closePlayer runs it again
+      } catch {
+        // half a pack is fine: a retry skips what already landed
+        label.textContent = t("player.packFail");
+        go.textContent = t("player.packGo", Math.round(await wasmTts.packMissingBytes() / 1048576));
+        go.disabled = false;
+      }
+    }
   });
 }
 
@@ -359,6 +392,7 @@ export function closePlayer() {
   $("#playerbar")?.remove();
   $("#audioBtn")?.classList.remove("active");
   flush();
+  pickEngine(); // a pack the pill downloaded mid-session takes effect now
 }
 
 // ---------- STREAM engine (ManagedMediaSource, Safari/iOS 17.1+) ----------

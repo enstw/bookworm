@@ -89,7 +89,7 @@
 <script type="module">
 "use strict";
 import * as ttsCore from "/tts-core.mjs";
-import { ensureEngine, packReady, engineInfo, mkWav, PACK_FILES, RATE } from "/wasm-tts.mjs";
+import { ensureEngine, packReady, engineInfo, mkWav, PACK_FILES, RATE, downloadPack, clearPack } from "/wasm-tts.mjs";
 
 const $ = (id) => document.getElementById(id);
 
@@ -149,24 +149,15 @@ packReady().then((r) => log(`語音包 ${r ? "已就緒" : "未下載"}（${PACK
 // ---- the pack -----------------------------------------------------------
 // The engine fetches these too, but silently and only when it starts; this
 // page is where a 138 MB download is a visible, per-file, interruptible act.
-// Same cache, same /api/wasmtts/ keys, so either path primes the other.
-const CACHE = "bw-wasmtts";
+// The download itself is wasm-tts.mjs's downloadPack — the same one the
+// reader's stale-pack pill runs — so either path primes the other; this page
+// only owns the per-file timeline lines.
 async function fetchPack() {
-  let cache = null;
-  try { cache = await caches.open(CACHE); } catch { /* private mode: no cache */ }
-  let got = 0;
-  for (const f of PACK_FILES) {
-    const url = "/api/wasmtts/" + f.name;
-    if (await cache?.match(url)) { got += f.bytes; log(`${f.label} ${f.name} 快取`); continue; }
-    const t = performance.now();
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`${f.name} HTTP ${res.status}`);
-    if (cache) await cache.put(url, res.clone());
-    const mb = (await res.arrayBuffer()).byteLength / 1048576;
-    const s = (performance.now() - t) / 1000;
-    got += f.bytes;
-    log(`${f.label} ${f.name} ${mb.toFixed(1)}MB 網路 ${s.toFixed(1)}s ${(mb / s).toFixed(1)}MB/s — 累計 ${(got / 1048576).toFixed(0)}/${PACK_MB.toFixed(0)}MB`);
-  }
+  await downloadPack((f) => {
+    if (f.cached) return log(`${f.label} ${f.name} 快取`);
+    const mb = f.bytes / 1048576;
+    log(`${f.label} ${f.name} ${mb.toFixed(1)}MB 網路 ${f.secs.toFixed(1)}s ${(mb / f.secs).toFixed(1)}MB/s — 累計 ${(f.gotBytes / 1048576).toFixed(0)}/${PACK_MB.toFixed(0)}MB`);
+  });
   const est = await navigator.storage?.estimate?.().catch(() => null);
   if (est) log(`儲存 ${(est.usage / 1048576).toFixed(0)}MB / 配額 ${(est.quota / 1048576).toFixed(0)}MB`);
 }
@@ -295,7 +286,7 @@ $("bStop").onclick = () => { stopAll(); log("停止"); };
 $("bClear").onclick = async () => {
   stopAll();
   engine = null;
-  log(`快取清除 ${await caches.delete(CACHE).catch(() => false)}（重新整理後才會重新載入引擎）`);
+  log(`快取清除 ${await clearPack()}（重新整理後才會重新載入引擎）`);
 };
 </script>
 </body>

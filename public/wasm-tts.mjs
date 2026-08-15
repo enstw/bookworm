@@ -110,7 +110,7 @@ export const OVERRIDES = {
 };
 
 // ---- assets ---------------------------------------------------------------
-const CACHE = "bw-wasmtts"; // shared with /wasmtest — one download, two pages
+const CACHE = "bw-wasmtts"; // the name lives only here; pages go through downloadPack/clearPack
 
 // The pack /wasmtest downloads. ort's wasm is 12.9 MB and belongs in the gate:
 // unlike the piper era's small glue files, losing it means a 13 MB cellular
@@ -168,6 +168,52 @@ export async function packStale() {
     const cache = await caches.open(CACHE);
     return (await cache.keys()).length > 0 && !(await packReady());
   } catch { return false; }
+}
+
+// /wasmtest's 清除快取 button; here because the module owns the cache name.
+export async function clearPack() {
+  try { return await caches.delete(CACHE); } catch { return false; }
+}
+
+// What tapping the pill's 重新下載 would actually pull over the network — a
+// stale pack usually keeps most of its files (a model bump renames one), so
+// this is how the button can be honest about the bytes before it is tapped.
+export async function packMissingBytes() {
+  try {
+    const cache = await caches.open(CACHE);
+    let missing = 0;
+    for (const f of PACK_FILES)
+      if (!(await cache.match("/api/wasmtts/" + f.name))) missing += f.bytes;
+    return missing;
+  } catch { return PACK_FILES.reduce((s, f) => s + f.bytes, 0); }
+}
+
+// The whole pack, one file at a time, into the shared cache — /wasmtest and
+// the reader's stale-pack pill both call this, so either path primes the
+// other. onFile fires after every file (cached ones too) with cumulative
+// bytes, which is all a progress line or a percentage needs. Every caller
+// sits behind an explicit tap that names the size: ▶ itself must never
+// quietly pull ~145 MB over cellular.
+export async function downloadPack(onFile) {
+  let cache = null;
+  try { cache = await caches.open(CACHE); } catch { /* private mode: no cache */ }
+  const totalBytes = PACK_FILES.reduce((s, f) => s + f.bytes, 0);
+  let gotBytes = 0;
+  for (const f of PACK_FILES) {
+    const url = "/api/wasmtts/" + f.name;
+    const cached = !!(await cache?.match(url));
+    let secs = 0;
+    if (!cached) {
+      const t = performance.now();
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${f.name} HTTP ${res.status}`);
+      if (cache) await cache.put(url, res.clone());
+      await res.arrayBuffer(); // time the full body, not just the headers
+      secs = (performance.now() - t) / 1000;
+    }
+    gotBytes += f.bytes;
+    onFile?.({ ...f, cached, secs, gotBytes, totalBytes });
+  }
 }
 
 // Cache-first is correct ONLY for the release binaries: their filename

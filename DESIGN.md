@@ -419,8 +419,10 @@ the pre-publication history, which lives in the owner's private archive.
   deleted): nothing needs `crossOriginIsolated` now that the threaded
   experiments are, and the engine was verified running with it false. The
   ~145 MB voice pack (five model files plus the three rule tables) is
-  downloaded ONLY by the `/wasmtest` diagnostic
-  (never by ▶ — cellular) into the `bw-wasmtts` cache both pages share;
+  downloaded only through `downloadPack` in `wasm-tts.mjs` — the `/wasmtest`
+  diagnostic and the stale-pack pill share it, and every entry is an explicit
+  tap that names the megabytes (never ▶ itself — cellular) — into the
+  `bw-wasmtts` cache;
   `packReady()` flips the reader to this engine, eviction falls back to
   STREAM, `localStorage bw_tts="stream"` forces the online engines. The
   cache sweep is a keep-set, not a name list, so it reclaims the whole
@@ -479,7 +481,11 @@ the pre-publication history, which lives in the owner's private archive.
   A pack change reaches a phone as `packReady()` false: the reader falls
   back to STREAM and `player.mjs` offers the re-download as a one-tap pill
   (`player.packStale`), because a silent engine downgrade reads as the app
-  losing a feature it used to have. A same-name asset can
+  losing a feature it used to have. The pill downloads in place (owner
+  request 2026-08-15: leaving the book for `/wasmtest` felt like a detour)
+  with its button naming the missing MB; narration keeps playing online and
+  the offline engine returns at the next ▶ — never mid-session, because
+  `useWasm()` is consulted live throughout playback. A same-name asset can
   still never change bytes, and a sync failure 404s loudly on device. Note
   `env.versions.common` reports *onnxruntime-common*, not the web package,
   so the drift guard checks the wasm's byte length instead. **A transcript
