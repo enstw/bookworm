@@ -703,6 +703,22 @@ the pre-publication history, which lives in the owner's private archive.
   public copy served no one; it is `no-store` for every identity now.
   Offline loses nothing — the shelf's offline path is the app's own
   `bw_books` copy, never the HTTP cache.
+- **The shelf list is one D1 round trip, and it authenticates itself
+  (2026-08-16).** `/api/books` answered in a flat ~1.1 s from Taiwan —
+  measured, not load: authenticate, the list, the reader's positions were
+  three *sequential* D1 round trips, then an R2 manifest read per
+  in-progress book for the chars-before-bookmark sum. The fix is
+  structural, twice over. Per-chapter char counts now ride the index row
+  (`books.chapter_chars`, JSON, written by `registerBook` — rows from
+  before the column fall back to the manifest until a republish or reindex
+  backfills them). And listBooks left the shared gate: it runs its own
+  single `env.DB.batch` — key lookup, shelf, positions joined by the same
+  key subquery — with identical credentials and 401s, which is the one
+  deliberate exception to "the gate authenticates every content route"
+  (documented at the gate). The client keeps a safety margin on top:
+  the shelf's capped fetch allows 2.5 s before painting the cached list
+  as stale, because at the old 1 s cap a well-connected shelf sat
+  permanently — and wrongly — marked 離線.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:

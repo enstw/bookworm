@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS books (
   author      TEXT    NOT NULL DEFAULT '',
   chapters    INTEGER NOT NULL DEFAULT 0,
   total_chars INTEGER NOT NULL DEFAULT 0,
+  -- JSON array of per-chapter char counts, so listBooks can sum a reader's
+  -- progress without an R2 manifest read per book. '' on rows from before
+  -- the column: listBooks falls back to the manifest, a republish or
+  -- reindex fills it in.
+  chapter_chars TEXT  NOT NULL DEFAULT '',
   updated_at  INTEGER NOT NULL DEFAULT 0,
   indexed_at  INTEGER NOT NULL DEFAULT 0
 );
