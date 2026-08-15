@@ -610,6 +610,11 @@ const TESTLOG_PAGES = {
   // and background-suspension bugs show up as a GAP, so the tail is the part
   // worth keeping
   player: 200,
+  // 🚩 taps from the player bar — the owner's listening tickets. Tiny volume,
+  // but each row is a position plus the sentence being spoken, unreproducible
+  // once the session moves on, so it gets its own bucket instead of riding
+  // the recorder's and being evicted by an evening of heartbeats
+  report: 40,
   wasmtest: 30, speechtest: 30, vhtest: 30, pgtest: 30, scrolltest: 30, pagedtest: 30,
 };
 // keys are literals in the object above, never anything a request supplies

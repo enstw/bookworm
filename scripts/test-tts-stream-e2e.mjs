@@ -46,6 +46,7 @@ if (!existsSync(MP3)) {
   ], { stdio: "ignore" });
 }
 const MP3_BYTES = readFileSync(MP3);
+const testlogPosted = []; // every body the reader sent to /api/testlog
 
 // --- synthetic book: 3 short chapters ≈ 4 chunks ≈ 8 s of audio each ---
 const MIME = {
@@ -77,6 +78,18 @@ const server = createServer((req, res) => {
   // settings:null = server never overrides the test's local state
   if (path === "/api/settings")
     return out(200, req.method === "POST" ? '{"ok":true}' : '{"settings":null}', MIME[".json"]);
+  // the wire truth for the 🚩 assertion: everything the reader posts to the
+  // testlog (the flight recorder's page=player lines land here too — the
+  // assertion filters). ok:true, so the button shows its ack path.
+  if (path === "/api/testlog" && req.method === "POST") {
+    let raw = "";
+    req.on("data", (d) => (raw += d));
+    req.on("end", () => {
+      try { testlogPosted.push(JSON.parse(raw)); } catch { testlogPosted.push({ page: "unparseable" }); }
+      out(200, '{"ok":true}', MIME[".json"]);
+    });
+    return;
+  }
   if (path.startsWith("/api/")) return out(404, "{}", MIME[".json"]);
   if (path === "/books/ts/manifest.json") return out(200, JSON.stringify(manifest), MIME[".json"]);
   const ch = path.match(/^\/books\/ts\/ch(\d)\.txt$/);
@@ -185,6 +198,21 @@ out.sentenceMarked = hl?.len > 0 && hl.len <= 300 && hl.painted
     && "。！？；」』”’）)】".includes(hl.last)
   ? `ok (${hl.rects} rect(s), ${hl.len} chars, ends ${JSON.stringify(hl.last)})`
   : `FAIL: ${JSON.stringify(hl)}`;
+
+// --- 🚩 files the sentence under the voice to page=report ------------------
+// asserted on the wire, not via a spy: the row must carry the book, an
+// engine tag and a non-empty 句=「…」 — the parts that make the ticket
+// reproducible after the session is gone
+await evalJs(`document.getElementById("reportBtn").click()`);
+let report = null;
+for (let i = 0; i < 20 && !report; i++) {
+  report = testlogPosted.find((b) => b.page === "report") ?? null;
+  if (!report) await sleep(250);
+}
+out.reportFiled = report && report.data.includes("串流測試")
+    && /引擎=(wasm|stream|chain)/.test(report.data) && /句=「.+」/u.test(report.data)
+  ? `ok (${report.data.slice(0, 60)}…)`
+  : `FAIL: ${JSON.stringify(report ?? [...new Set(testlogPosted.map((b) => b.page))])}`;
 
 // the page turns WITHIN the one-paragraph chapter as narration advances —
 // paragraph-grained following could never turn it before the chapter ended

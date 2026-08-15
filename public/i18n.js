@@ -171,6 +171,9 @@ const BW_STRINGS = {
     "player.packBusy": (pct) => `下載中 ${pct}%`,
     "player.packDone": "語音包已更新，下次播放改用離線語音。",
     "player.packFail": "下載失敗，可重試；已完成的部分不會重抓。",
+    "player.report": "回報這一句",
+    "player.reported": "已回報",
+    "player.reportFail": "回報失敗（此裝置未開測試上傳）",
 
     // --- 暫時的裝置診斷頁 ---
     "diag.vh": "vh 測試",
@@ -463,6 +466,9 @@ const BW_STRINGS = {
     "player.packBusy": (pct) => `Downloading ${pct}%`,
     "player.packDone": "Voice pack updated; the next playback uses the offline voice.",
     "player.packFail": "Download failed — a retry keeps what already landed.",
+    "player.report": "Report this sentence",
+    "player.reported": "Reported",
+    "player.reportFail": "Report failed (test uploads are off on this device)",
 
     // --- temporary on-device diagnostics ---
     "diag.vh": "vh test",
