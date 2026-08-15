@@ -14,14 +14,16 @@
 //
 // 簡繁直輸: traditional and simplified text both go straight into the lexicon,
 // with no OpenCC anywhere. That is a decision with a known cost — see the
-// header of matcha-frontend.js — and corrections arrive as override entries
-// backed by listening tests, not as a conversion layer.
+// header of matcha-frontend.js — and corrections arrive as reviewed readings
+// (upstream's taiwan profile, plus local OVERRIDES for what it misses),
+// never as a conversion layer.
 //
 // The big binaries ride the same "bw-wasmtts" Cache API bucket as /wasmtest
 // (same /api/wasmtts/ keys), so a phone that ran the diagnostic already holds
-// the pack — packReady() is what flips the reader to this engine. The pack is
-// only ever downloaded by /wasmtest, never here: a tap on ▶ must not quietly
-// pull 138 MB over cellular.
+// the pack — packReady() is what flips the reader to this engine. The pack
+// moves only through downloadPack() below (/wasmtest and the player's pill
+// share it), always behind an explicit tap that names the MB: a tap on ▶
+// must not quietly pull ~139 MB over cellular.
 //
 // Pure text helpers live up top with no browser APIs so node tests can
 // import them (see scripts/test-wasm-frontend.mjs).
@@ -98,16 +100,16 @@ export function mkWav(f32, rate) {
 }
 
 // ---- pronunciation overrides ----------------------------------------------
-// Grown one line at a time from listening tests, never designed up front.
-// Keys are the literal text as it appears in a book — there is no conversion
-// step — and a single-char key is shadowed wherever a longer lexicon match
-// wins, so prefer whole words. Every entry that lands here gets a case in the
-// MATCHA_MODEL_DIR-gated block of scripts/test-wasm-frontend.mjs.
-export const OVERRIDES = {
-  // Absent from the lexicon in both spellings, so per-char fallback says
-  // la1 ji1 — the mainland reading. Confirmed by ear in the wasmtts iPhone run.
-  "垃圾": "le4 se4",
-};
+// Local staging only. The reviewed reading layer is upstream's taiwan profile
+// (vendored with the pin, applied in the worker below); an entry lands HERE
+// when a listening test on this app catches a reading the profile does not
+// cover yet, wins over the profile until upstream absorbs it, and then leaves
+// (垃圾 → le4 se4 made exactly that trip). Keys are the literal text as it
+// appears in a book — there is no conversion step — and a single-char key is
+// shadowed wherever a longer lexicon match wins, so prefer whole words. Every
+// entry that lands here gets a case in the MATCHA_MODEL_DIR-gated block of
+// scripts/test-wasm-frontend.mjs.
+export const OVERRIDES = {};
 
 // ---- assets ---------------------------------------------------------------
 const CACHE = "bw-wasmtts"; // the name lives only here; pages go through downloadPack/clearPack
@@ -265,7 +267,7 @@ onmessage = async (e) => {
   try {
     if (m.type === "init") {
       const js = (buf) => URL.createObjectURL(new Blob([buf], { type: "text/javascript" }));
-      importScripts(js(m.ortJs), js(m.lameJs), js(m.kaldifstGlueJs), js(m.kaldifstJs), js(m.frontendJs), js(m.synthesisJs));
+      importScripts(js(m.ortJs), js(m.lameJs), js(m.kaldifstGlueJs), js(m.kaldifstJs), js(m.frontendJs), js(m.taiwanJs), js(m.synthesisJs));
       rt = self.ort;
       rt.env.wasm.numThreads = 1;
       rt.env.wasm.proxy = false;
@@ -292,10 +294,16 @@ onmessage = async (e) => {
           rulesErr = String(err.message ?? err); // reported with ready, not as an init failure
         }
       }
+      // The taiwan profile compiles upstream's reviewed reading decisions
+      // (phrase overrides plus contextual rules for 得/著/長/還…) out of the
+      // review ledger; the local OVERRIDES stack on top, because a reading
+      // verified by ear on this app outranks the ledger until it graduates.
+      const profile = self.MatchaTaiwanProfile.createConfig(JSON.parse(new TextDecoder().decode(m.review)));
       frontend = self.MatchaFrontend.createFrontend({
         lexiconText: new TextDecoder().decode(m.lexicon),
         tokensText: new TextDecoder().decode(m.tokens),
-        pronunciationOverrides: m.overrides,
+        pronunciationOverrides: { ...profile.pronunciationOverrides, ...m.overrides },
+        contextualRules: profile.contextualRules,
         ruleNormalizer,
       });
       // noise 1 and length 1 are the defaults the phone was verified with, and
@@ -312,7 +320,8 @@ onmessage = async (e) => {
         acousticModel: new Uint8Array(m.acoustic),
         vocoderModel: new Uint8Array(m.vocoder),
       });
-      postMessage({ type: "ready", initMs: info.wallMs, lexiconSize: frontend.lexiconSize, rules, rulesErr });
+      postMessage({ type: "ready", initMs: info.wallMs, lexiconSize: frontend.lexiconSize, rules, rulesErr,
+        profileWords: Object.keys(profile.pronunciationOverrides).length, profileRules: profile.contextualRules.length });
     } else if (m.type === "speak") {
       const t = performance.now();
       // one unknown glyph must never stop a book: drop it and count it
@@ -350,7 +359,7 @@ onmessage = async (e) => {
 };`;
 
 // what init actually decided — the player's flight recorder reads this
-export const engineInfo = { threads: 0, rules: 0 };
+export const engineInfo = { threads: 0, rules: 0, profileWords: 0, profileRules: 0 };
 
 let engine = null; // singleton promise — models stay loaded across sessions
 
@@ -358,7 +367,7 @@ let engine = null; // singleton promise — models stay loaded across sessions
 export function ensureEngine() {
   return engine ??= (async () => {
     navigator.storage?.persist?.().catch(() => {});
-    const [acoustic, vocoder, lexicon, tokens, ortWasm, ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, synthesisJs, ...ruleFsts] =
+    const [acoustic, vocoder, lexicon, tokens, ortWasm, ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, taiwanJs, review, synthesisJs, ...ruleFsts] =
       await Promise.all([
         ...MODEL_FILES.map((f) => cachedBuf("/api/wasmtts/" + f.name)),
         cachedBuf("/vendor/wasmtts/ort-wasm.min.js", true),
@@ -367,6 +376,12 @@ export function ensureEngine() {
         cachedBuf("/vendor/wasmtts/kaldifst-normalizer.js", true),
         cachedBuf("/vendor/wasmtts/matcha-kaldifst-normalizer.wasm", true),
         cachedBuf("/vendor/wasmtts/matcha-frontend.js", true),
+        // hard requirements like the frontend itself, not soft like the rule
+        // tables: both ride the deploy (and the sw shell), so a device running
+        // this module version has them a fetch away — and a frontend without
+        // the reviewed readings is a voice nobody signed off
+        cachedBuf("/vendor/wasmtts/matcha-taiwan-profile.js", true),
+        cachedBuf("/vendor/wasmtts/matcha-g2p-review.json", true),
         cachedBuf("/vendor/wasmtts/matcha-synthesis.js", true),
         // Soft, unlike everything above it: a device holding a pack cut before
         // the tables existed has all 138 MB of what it needs to speak, and must
@@ -396,17 +411,19 @@ export function ensureEngine() {
     const up = await new Promise((r) => {
       pending.set(undefined, r);
       worker.postMessage(
-        { type: "init", ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens,
+        { type: "init", ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, taiwanJs, review, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens,
           ruleFsts: rules, overrides: OVERRIDES,
           glueUrl: new URL("/vendor/wasmtts/ort-wasm-simd-threaded.mjs", location.origin).href },
-        [ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens, ...(rules ?? [])],
+        [ortJs, lameJs, kaldifstGlueJs, kaldifstJs, kaldifstWasm, frontendJs, taiwanJs, review, synthesisJs, ortWasm, acoustic, vocoder, lexicon, tokens, ...(rules ?? [])],
       );
     });
     if (up === null) { worker.terminate(); throw new Error("wasm-tts init failed"); }
     engineInfo.threads = 1;
     engineInfo.rules = up.rules ?? 0;
+    engineInfo.profileWords = up.profileWords ?? 0;
+    engineInfo.profileRules = up.profileRules ?? 0;
     if (up.rulesErr) console.warn("wasm-tts: kaldifst normalizer unusable, JS number rules only —", up.rulesErr);
-    console.log(`wasm-tts ready: matcha zh-en ${RATE}Hz, 1 thread, ${up.lexiconSize} lexicon entries, ${up.rules ? `${up.rules} rule tables (kaldifst wasm)` : "JS number rules"}, init ${Math.round(up.initMs)}ms`);
+    console.log(`wasm-tts ready: matcha zh-en ${RATE}Hz, 1 thread, ${up.lexiconSize} lexicon entries, ${up.rules ? `${up.rules} rule tables (kaldifst wasm)` : "JS number rules"}, taiwan profile ${up.profileWords}w+${up.profileRules}r, init ${Math.round(up.initMs)}ms`);
 
     // Everything this engine does not use is dead weight in a cache iOS evicts
     // under pressure — and the piper/melo/fanchen era left several hundred MB
@@ -421,6 +438,7 @@ export function ensureEngine() {
         "/vendor/wasmtts/matcha-kaldifst-normalizer.js", "/vendor/wasmtts/kaldifst-normalizer.js",
         "/vendor/wasmtts/matcha-kaldifst-normalizer.wasm",
         "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-synthesis.js",
+        "/vendor/wasmtts/matcha-taiwan-profile.js", "/vendor/wasmtts/matcha-g2p-review.json",
       ]);
       for (const req of await c.keys()) {
         const p = new URL(req.url).pathname;
