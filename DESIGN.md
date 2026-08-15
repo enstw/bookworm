@@ -786,10 +786,14 @@ the pre-publication history, which lives in the owner's private archive.
   (re-learned 2026-08-16, after several sessions tripped on it): the
   `ADMIN_TOKEN` in `.dev.vars` is the local dev token, and the production
   token lives only in `wrangler secret`, which cannot be read back. The
-  route that needs no new credential: the testlog GET gate also accepts a
-  reader key, and the owner's signed-in browser already carries one as a
-  cookie — so drive the owner's Chrome (claude-in-chrome tools) to
-  `<origin>/api/testlog?page=…&limit=15` and read the JSON off the page.
+  testlog GET gate also accepts a reader key, so agents use one: a
+  production reader key lives untracked in `.dev.vars` as
+  `BOOKWORM_READER_KEY` (minted by the owner in /admin) —
+  `curl -H "x-reader-key: $BOOKWORM_READER_KEY" "$BOOKWORM_ORIGIN/api/testlog?page=…&limit=15"`.
+  If the slot is empty on this machine, the fallback that needs no new
+  credential: the owner's signed-in browser carries the same kind of key as
+  a cookie — drive Chrome (claude-in-chrome tools) to the URL and read the
+  JSON off the page.
   When reading `page=push`, one push involves up to three writers per
   event: `device:page` (the 測試 button's preflight), `device:worker` (one
   line per send, with per-endpoint push-service status), `device:sw` (one
