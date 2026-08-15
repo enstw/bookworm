@@ -224,6 +224,17 @@ repo because session memory does not cross machines:
   checkout's model folder, which is mutable working state and has changed
   mid-experiment. Saving a download is not a reason.
   `scripts/fetch-matcha-weights.mjs` is that fetch for the voice pack.
+- **Branch before the first commit — work only lands through a PR.** The
+  `main` ruleset (see Commands) rejects direct pushes server-side, but the
+  rejection surfaces only at push time: committing on local `main` feels
+  fine right up until the push dies with `push declined due to repository
+  rule violations` (stepped in this pit again 2026-08-16, six commits
+  deep). A batch of related work is ONE PR, not one per commit: branch,
+  commit there, `gh pr create`, watch `gh pr checks <n> --watch` until
+  `candidate-gate` is green, `gh pr merge --rebase`. Rebase, not squash —
+  squash would melt the per-commit `Release-Note:` trailers the ledger
+  reads. Already committed on `main` by mistake? `git branch <name>`,
+  `git reset --hard origin/main`, then PR the branch as usual.
 
 ## The phone is the product
 
