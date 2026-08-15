@@ -44,8 +44,14 @@ export default {
       // quote the book. POST is NOT listed — it checks its own cookie inside
       // handleTestlog, because it wants ADMIN rights from writers that cannot
       // carry a header at all (see testlogSessionOk).
+      //
+      // /api/books (the shelf list, not /api/books/<slug>) is gated too, but
+      // NOT through this authenticate: it answers every open of the app, and
+      // the D1 round trips here add up from the far side of the Pacific — so
+      // listBooks folds the key lookup into its own single batch. Same
+      // credentials, same 401, one round trip.
       const gated =
-        path === "/api/books" || path.startsWith("/api/books/") ||
+        path.startsWith("/api/books/") ||
         path === "/api/position" || path === "/api/settings" ||
         path.startsWith("/api/tts/") || path.startsWith("/books/") ||
         path === "/api/push/subscribe" || path === "/api/push/test" ||
@@ -60,7 +66,7 @@ export default {
         return json({ build: BUILD }, 200, { "cache-control": "no-store" });
 
       if (path === "/api/auth") return await handleAuth(request, env, url, who);
-      if (path === "/api/books") return await listBooks(request, env, who);
+      if (path === "/api/books") return await listBooks(request, env, url);
       if (path.startsWith("/api/books/")) return await resolveBook(request, env, path);
       if (path === "/api/position") return await handlePosition(request, env, url, who);
       if (path === "/api/settings") return await handleSettings(request, env, url, who);
@@ -220,19 +226,43 @@ async function handleAuth(request, env, url, who) {
   });
 }
 
-// GET /api/books — the library list, straight out of the D1 index: one
-// query, no R2 at all (it used to be one manifest read per book, which
-// meant one open connection per book — see mapPool). For a reader key, each
-// book that reader has actually opened also carries progress {chapter,
-// pct}; that number is a chars-before-bookmark sum, which only the manifest
-// knows, so those books — and only those — cost one read each. The admin
-// Bearer gets the bare list: it has no reading identity.
-async function listBooks(request, env, who) {
+// GET /api/books — the library list. This answers every open of the app, and
+// it used to answer in ~1.1 s flat: authenticate, the list, the reader's
+// positions — three sequential D1 round trips — then an R2 manifest read per
+// in-progress book for the chars-before-bookmark sum behind progress.pct.
+// None of that was load; it was distance, paid serially. So this route does
+// its own authentication (see the gate comment in fetch) and asks D1 for
+// everything in ONE batch: the key's user, the shelf, and that user's
+// positions (joined by the same key subquery, so no statement waits on
+// another). The chars sum now rides the index row (books.chapter_chars,
+// written by registerBook); only a row from before that column — '' until a
+// republish or reindex backfills it — still pays the old R2 read, via
+// mapPool. The admin Bearer gets the bare list: it has no reading identity.
+async function listBooks(request, env, url) {
   if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
-  const user = who.user;
-  const rows = (await env.DB.prepare(
-    "SELECT id, slug, title, author, chapters, total_chars FROM books",
-  ).all()).results ?? [];
+  const auth = request.headers.get("authorization") ?? "";
+  const admin = env.ADMIN_TOKEN && auth === `Bearer ${env.ADMIN_TOKEN}`;
+  const key = readerKey(request, url) ?? "";
+  if (!admin && !key) return json({ error: "unauthorized" }, 401);
+  const [keyRes, bookRes, posRes] = await env.DB.batch([
+    env.DB.prepare("SELECT user FROM readers WHERE key = ?").bind(key),
+    env.DB.prepare(
+      "SELECT id, slug, title, author, chapters, total_chars, chapter_chars FROM books"),
+    env.DB.prepare(
+      "SELECT book, chapter, char_off FROM positions WHERE user = (SELECT user FROM readers WHERE key = ?)",
+    ).bind(key),
+  ]);
+  const keyRow = keyRes.results?.[0];
+  if (!admin && !keyRow) return json({ error: "unauthorized" }, 401);
+  const user = admin ? null : keyRow.user;
+  const rows = bookRes.results ?? [];
+  const charsById = new Map();
+  for (const r of rows) {
+    try {
+      const a = JSON.parse(r.chapter_chars);
+      if (Array.isArray(a)) charsById.set(r.id, a);
+    } catch { /* pre-column row: the R2 fallback below */ }
+  }
   const books = rows.map((r) => ({
     id: r.id,
     slug: r.slug,
@@ -244,19 +274,21 @@ async function listBooks(request, env, who) {
   }));
 
   if (user) {
-    const posRows = (await env.DB.prepare(
-      "SELECT book, chapter, char_off FROM positions WHERE user = ?",
-    ).bind(user).all()).results ?? [];
-    const posMap = new Map(posRows.map((r) => [r.book, r]));
+    const posMap = new Map((posRes.results ?? []).map((r) => [r.book, r]));
     await mapPool(books.filter((b) => posMap.has(b.id)), 4, async (b) => {
       const pos = posMap.get(b.id);
-      const obj = await env.BOOKS.get(`${b.id}/manifest.json`);
-      if (!obj) return;
-      const m = await obj.json();
-      if (!Array.isArray(m.chapters) || !(b.totalChars > 0)) return;
+      let chaps = charsById.get(b.id);
+      if (!chaps) {
+        const obj = await env.BOOKS.get(`${b.id}/manifest.json`);
+        if (!obj) return;
+        const m = await obj.json();
+        if (!Array.isArray(m.chapters)) return;
+        chaps = m.chapters.map((c) => c.chars ?? 0);
+      }
+      if (!(b.totalChars > 0)) return;
       let before = 0;
-      for (let i = 0; i < Math.min(pos.chapter, m.chapters.length); i++)
-        before += m.chapters[i].chars ?? 0;
+      for (let i = 0; i < Math.min(pos.chapter, chaps.length); i++)
+        before += chaps[i] ?? 0;
       b.progress = {
         chapter: pos.chapter,
         pct: Number(Math.min(100, ((before + pos.char_off) / b.totalChars) * 100).toFixed(1)),
@@ -1050,16 +1082,22 @@ async function registerBook(env, id, m, author = "", indexedAt = Date.now()) {
     .bind(slug).first();
   if (owner && owner.book !== id) return { ok: false, slug, reason: "taken" };
   const now = Date.now();
+  // per-chapter chars ride the index row so listBooks can sum a reader's
+  // progress without opening the manifest — the manifest stays the source
+  // of truth, this is the same derived-copy bargain as every column here
+  const chapterChars = JSON.stringify(
+    Array.isArray(m.chapters) ? m.chapters.map((c) => c.chars ?? 0) : []);
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO books (id, slug, title, author, chapters, total_chars, updated_at, indexed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO books (id, slug, title, author, chapters, total_chars, chapter_chars, updated_at, indexed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
          slug = excluded.slug, title = excluded.title, author = excluded.author,
          chapters = excluded.chapters, total_chars = excluded.total_chars,
+         chapter_chars = excluded.chapter_chars,
          updated_at = excluded.updated_at, indexed_at = excluded.indexed_at`,
     ).bind(id, slug, String(m.title ?? slug), author, m.chapters?.length ?? 0,
-      Number(m.totalChars) || 0, now, indexedAt),
+      Number(m.totalChars) || 0, chapterChars, now, indexedAt),
     env.DB.prepare(
       `INSERT INTO book_slugs (slug, book, created_at) VALUES (?, ?, ?)
        ON CONFLICT (slug) DO UPDATE SET book = excluded.book`,

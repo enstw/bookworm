@@ -74,6 +74,15 @@ else
   echo "    added"
 fi
 
+echo "==> ensuring books.chapter_chars column"
+if grep -q '"chapter_chars"' <<<"$COLS"; then
+  echo "    (already present)"
+else
+  $W d1 execute bookworm --remote --command \
+    "ALTER TABLE books ADD COLUMN chapter_chars TEXT NOT NULL DEFAULT ''"
+  echo "    added"
+fi
+
 echo "==> vendoring browser bundles (public/vendor/ is gitignored)"
 node scripts/vendor.mjs
 
