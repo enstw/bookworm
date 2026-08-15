@@ -9,6 +9,13 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-15 — `b9a0c5475077`
+
+> wasmtts v1.2.0 → v1.2.2;修正離線快取缺漏,朗讀參數改隨語音包供給(聽感不變)。
+> wasmtts v1.2.0 → v1.2.2
+
+- tts: the playback recipe now lives upstream — synthesis knobs ride the pin (`b9a0c54`)
+
 ## 2026-08-15 — `073009919771`
 
 - feat: 接上 wasmtts 台灣讀音 profile — 覆審讀音層進產品聲音 (`0730099`)
