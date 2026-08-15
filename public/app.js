@@ -732,8 +732,13 @@ async function renderLibrary() {
   let books;
   try {
     // the key cookie says who is asking; the server adds that reader's
-    // per-book progress (the same chars-based pct as the reader's line)
-    const res = await fetch("/api/books", haveCached ? capped() : undefined);
+    // per-book progress (the same chars-based pct as the reader's line).
+    // 2.5 s, not NET_MS: this call costs sequential D1 round trips on the
+    // server, and at the default cap a well-connected shelf lost the race
+    // often enough to sit permanently marked 離線. The cached list is
+    // already painted — the longer leash only delays the (cosmetic) stale
+    // mark, never the shelf.
+    const res = await fetch("/api/books", haveCached ? capped(2500) : undefined);
     if (res.status === 401) {
       if (await reauth()) return renderLibrary();
       return renderKeyGate(renderLibrary, !!getKey());
