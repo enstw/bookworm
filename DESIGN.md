@@ -163,6 +163,15 @@ empties the table on every apply), so whatever is still readable is still
 undone. There is no delete route; shipping the fix is how a note gets
 cleared.
 
+The second inbox is `/api/testlog?page=report` (reader key required): each
+row is one 🚩 tap on the player bar — book, chapter, char offset, engine and
+the exact sentence under the voice at that moment. These are listening
+tickets ("this bit sounded wrong") filed mid-session, when typing a note is
+not an option; the sentence text is in the row precisely because it is
+unreproducible once the session moves on. Rows ride the testlog quota
+instead of being cleared by deploys, so cross-check recent ones against the
+suggestion queue before treating them as open.
+
 ## Non-negotiables
 
 - **No build step, no framework, no bundler.** Files in `public/` are served

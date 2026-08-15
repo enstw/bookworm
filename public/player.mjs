@@ -1121,10 +1121,57 @@ function buildPlayerBar() {
       el("button", { class: "iconbtn", id: "ppBtn", title: t("player.playPause"), onclick: playerPlayPause }, "⏸"),
       el("button", { class: "iconbtn", title: t("player.back"), onclick: () => advanceChunk(-1) }, "⏮"),
       el("button", { class: "iconbtn", title: t("player.forward"), onclick: () => advanceChunk(1) }, "⏭"),
+      el("button", { class: "iconbtn", id: "reportBtn", title: t("player.report"), onclick: reportHere }, "🚩"),
       el("div", { class: "player-status", id: "playerStatus" }, ""),
       el("button", { class: "iconbtn", title: t("player.stop"), onclick: closePlayer }, "✕")),
   );
   updatePlayerBar();
+}
+
+// 🚩 — "this bit sounded wrong", one tap, mid-listening (owner request,
+// 2026-08-15). Files book/chapter/offset/engine AND the sentence under the
+// voice right now — the same walk markSpoken paints, so the ticket names
+// exactly the marked span — to /api/testlog page=report. Once the session
+// moves on that sentence is unrecoverable, which is the whole point of the
+// button. testlog and not the 改進建議 queue because the reader page holds
+// the bw_tlog cookie; the admin Bearer never leaves /admin. A plain fetch,
+// not wlog: the tap deserves an ack, and the flight recorder's batching
+// would eat both the ack and (on the online engines) the line itself.
+async function reportHere() {
+  const c = player.chunks[ttsCore.chunkIndexFor(player.chunks, state.off)];
+  let sentence = "";
+  if (c) {
+    const i = Math.max(0, Math.min(state.off - c.start, c.chars - 1));
+    sentence = c.text
+      .slice(ttsCore.sentenceStartFor(c.text, i), ttsCore.sentenceEndFor(c.text, i))
+      .trim().slice(0, 160);
+  }
+  const engine = useWasm() ? "wasm" : stream.ms ? "stream" : "chain";
+  const title = state.manifest?.chapters?.[player.chapIdx]?.title ?? "";
+  let device = "";
+  try { device = localStorage.getItem("bw_uid") ?? ""; } catch { /* private mode */ }
+  const data = `🚩 ${state.manifest?.title ?? state.id} ch${player.chapIdx}`
+    + `${title ? `〈${title}〉` : ""} off${state.off} 引擎=${engine} 句=「${sentence}」`;
+  try {
+    const res = await fetch("/api/testlog", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ page: "report", device, data }),
+    });
+    flashStatus(res.ok ? t("player.reported") : t("player.reportFail"));
+  } catch {
+    flashStatus(t("player.reportFail"));
+  }
+}
+
+// Park a transient message where the chunk counter sits; the next real
+// repaint (or the timer) takes the bar back.
+let statusFlash = 0;
+function flashStatus(msg) {
+  const s = $("#playerStatus");
+  if (!s) return;
+  s.textContent = msg;
+  clearTimeout(statusFlash);
+  statusFlash = setTimeout(updatePlayerBar, 2500);
 }
 
 function updatePlayerBar() {
