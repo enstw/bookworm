@@ -11,7 +11,7 @@
 //
 //   node scripts/test-auth-e2e.mjs
 
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { launch } from "./cdp-client.mjs";
 
 const PORT = 9343;
@@ -31,21 +31,72 @@ const mint = async (user, label) => (await (await fetch(`${BASE}/api/admin/reade
 const revoke = (key) =>
   fetch(`${BASE}/api/admin/readers/${encodeURIComponent(key)}`, { method: "DELETE", headers: auth });
 
-// 1. the gate: every content route 401s bare; the deliberate holes stay open
-const gated = await Promise.all([
-  fetch(`${BASE}/api/books`),
-  fetch(`${BASE}/api/books/x`),
-  fetch(`${BASE}/books/x/manifest.json`),
-  fetch(`${BASE}/api/position?book=x`),
-  fetch(`${BASE}/api/settings`),
-  fetch(`${BASE}/api/tts/x/0000_x.txt/0`),
+// 1. the gate, both directions, over the whole route surface.
+//
+// DESIGN.md points here rather than carrying its own copy of these lists,
+// so these tables are the readable statement of which door each route is
+// behind — and the structural check below refuses to let a route escape
+// one. Both directions matter and only one of them is obvious: leaving a
+// content route open leaks the book, but gating a deliberately-open route
+// breaks something silently. Gating /api/wasmtts/* would strand every
+// pack-less device (no /wasmtest, no voice-pack download) with a green
+// suite, which is exactly the failure this table is here to catch.
+//
+// Bare = no credential at all. The gate runs before dispatch, so method
+// and body never reach a gated route and a plain GET is enough to probe.
+const READER_401 = [
+  "/api/books", "/api/books/x", "/books/x/manifest.json",
+  "/api/position", "/api/settings", "/api/tts/x/0000_x.txt/0",
+  "/api/push/subscribe", "/api/push/test", "/api/testlog",
+];
+const ADMIN_401 = [
+  "/api/admin/ping", "/api/admin/session", "/api/admin/feedback",
+  "/api/admin/readers", "/api/admin/reindex", "/api/admin/announce-build",
+  "/api/admin/audit", "/api/admin/cleanup",
+];
+// Open, and each for its own reason: the shell is the public repo's
+// contents, feedback is the AI's inbox, the build stamp of a public repo
+// guards nothing, vapid is a public key, unsubscribe must work for a
+// device whose key was revoked, and the wasmtts proxy serves public OSS
+// binaries. Asserted as "not 401" rather than ok: an unknown asset name
+// is allowed to 404, what it must never do is ask for a key.
+const OPEN = [
+  "/admin", "/api/feedback", "/api/version",
+  "/api/push/vapid", "/api/push/unsubscribe", "/api/wasmtts/probe.wasm",
+];
+// /api/auth is the enrollment endpoint, neither gated nor open: it answers
+// 400 bare and 401 to an unknown key, both pinned by authRefusals below.
+const SPECIAL = ["/api/auth"];
+
+const statuses = async (paths) =>
+  Promise.all(paths.map(async (p) => [p, (await fetch(`${BASE}${p}`)).status]));
+const [readerSt, adminSt, openSt] = await Promise.all([
+  statuses(READER_401), statuses(ADMIN_401), statuses(OPEN),
 ]);
-const open = await Promise.all([
-  fetch(`${BASE}/api/feedback`),
-]);
-out.gate = gated.every((r) => r.status === 401) && open.every((r) => r.ok)
-  ? "ok (content 401s; feedback stays open)"
-  : `FAIL gated=${gated.map((r) => r.status).join("/")} open=${open.map((r) => r.status).join("/")}`;
+const wrong = [
+  ...readerSt.filter(([, s]) => s !== 401),
+  ...adminSt.filter(([, s]) => s !== 401),
+  ...openSt.filter(([, s]) => s === 401),
+];
+out.gate = wrong.length === 0
+  ? `ok (${READER_401.length} reader + ${ADMIN_401.length} admin routes 401 bare; ${OPEN.length} stay open)`
+  : `FAIL ${wrong.map(([p, s]) => `${p}=${s}`).join(" ")}`;
+
+// Every route the worker dispatches on must be claimed by one of the
+// tables above. A new route ships with a decision about its door, or this
+// fails — which is the whole reason the doc delegates the list to the code.
+const worker = readFileSync(new URL("../src/worker.js", import.meta.url), "utf8");
+const claimed = [...READER_401, ...ADMIN_401, ...OPEN, ...SPECIAL];
+const routeLit = (re) => [...worker.matchAll(re)].map((m) => m[1]).filter((r) => r.startsWith("/"));
+const exact = [...new Set(routeLit(/path === "([^"]+)"/g))];
+const prefix = [...new Set(routeLit(/path\.startsWith\("([^"]+)"\)/g))];
+const unclaimed = [
+  ...exact.filter((r) => !claimed.includes(r)),
+  ...prefix.filter((r) => !claimed.some((p) => p.startsWith(r))),
+];
+out.routeSurface = unclaimed.length === 0
+  ? `ok (${exact.length} routes + ${prefix.length} prefixes all claimed)`
+  : `FAIL unclaimed in src/worker.js: ${unclaimed.join(", ")}`;
 
 // 1b. testlog is split by verb AND by credential: reads take a reader key
 // (the rows quote the book), writes take the bw_tlog cookie /admin mints from
