@@ -23,7 +23,7 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v20"; // v20: + pack-manifest.mjs (an offline gap: wasm-tts.mjs statically imports it)
+const SHELL = "bw-shell-v21"; // v21: + ort-wasm.min.js, lame.min.js (the same offline gap v20 closed for pack-manifest.mjs)
 // The offline TTS engine's big binaries live in their own bw-wasmtts cache,
 // but its small same-origin files ride the shell, because /wasmtest
 // downloads only the voice pack: without these, the first ensureEngine() on a
@@ -32,7 +32,13 @@ const SHELL = "bw-shell-v20"; // v20: + pack-manifest.mjs (an offline gap: wasm-
 // ort's loader glue additionally *has* to be a real URL — ort import()s it, and
 // a blob cannot satisfy that in a classic worker. All are unversioned like the
 // fonts: bump SHELL when the ort pin or any of the modules moves.
-const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-taiwan-profile.js", "/vendor/wasmtts/matcha-g2p-review.json", "/vendor/wasmtts/matcha-synthesis.js", "/vendor/wasmtts/kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.wasm", "/vendor/wasmtts/ort-wasm-simd-threaded.mjs", "/vendor/wasmtts/ort-manifest.mjs", "/vendor/wasmtts/pack-manifest.mjs", "/manifest.webmanifest"];
+//
+// This list is a hand copy of what wasm-tts.mjs needs, because a classic
+// service worker cannot import the module that knows — so it drifts, and it
+// has drifted twice. scripts/test-shell-policy.mjs is the answer: it reads
+// wasm-tts.mjs's own imports and init loads and fails if one is missing here,
+// and fails again if this list changes without SHELL moving.
+const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-taiwan-profile.js", "/vendor/wasmtts/matcha-g2p-review.json", "/vendor/wasmtts/matcha-synthesis.js", "/vendor/wasmtts/kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.wasm", "/vendor/wasmtts/ort-wasm-simd-threaded.mjs", "/vendor/wasmtts/ort-wasm.min.js", "/vendor/wasmtts/lame.min.js", "/vendor/wasmtts/ort-manifest.mjs", "/vendor/wasmtts/pack-manifest.mjs", "/manifest.webmanifest"];
 const NET_MS = 1000; // mirrors NET_MS in app.js — the same line, drawn twice
 
 self.addEventListener("install", (e) => {
