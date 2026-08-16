@@ -287,6 +287,18 @@ start by suspecting the push code. The other known red was ours:
 `admin-e2e`'s author assertion raced enrichment (fixed by waiting on
 `metaPreview`), so a new `admin-e2e` red is a new problem.
 
+The second shape judged infrastructure is `tts-stream-chain`'s page-turn
+fixture, and its tell is `pageStartDiscriminates` reporting `page start 0`.
+The suite pages forward with `#content.scrollLeft = -GRID.span` and then
+waits a fixed 900 ms for the snap to settle, so a loaded runner can read the
+offset before the scroll has landed; `noBackTurn` reporting `undefinedpx` is
+collateral of the same miss, not a second defect. The evidence for calling
+it infrastructure: the identical commit went green on a plain re-run and
+green locally, with the other nineteen suites green in the failing run. If
+it recurs often enough to be worth fixing, the fix is a `waitFor` on the
+scroll position rather than a retry — a retry would hide a real page-turn
+regression behind the same green.
+
 ### Data migrations
 
 Data migrations are one-off dispatch workflows, not app code. There is
