@@ -4,7 +4,7 @@
 // this worker only runs for /api/* and /books/* (see run_worker_first).
 
 import { chunkChapter, ttsPrompt } from "../public/tts-core.mjs";
-import { RESERVED_SLUGS } from "../public/split-core.mjs";
+import { RESERVED_SLUGS, SLUG_RE } from "../public/split-core.mjs";
 import { PACK_NAMES } from "../public/vendor/wasmtts/pack-manifest.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
 import { vapidPublicKey, sendPush, b64u } from "./push.js";
@@ -1469,11 +1469,9 @@ async function cleanup(request, env) {
 }
 
 // A slug is a URL path segment, and a book id is that plus an R2 key prefix,
-// so both take the alphabet deriveSlug() emits (lowercase latin, digits, CJK,
-// kana, hyphen). Requiring the first character to be one of those keeps
-// `_tts/` — the audio cache namespace — unreachable as a book.
-const SLUG_CHAR = "a-z0-9\\u4e00-\\u9fff\\u3040-\\u30ff";
-const SLUG_RE = new RegExp(`^[${SLUG_CHAR}][${SLUG_CHAR}-]{0,39}$`);
+// so both are validated with SLUG_RE, which lives in split-core.mjs beside
+// the deriveSlug() whose alphabet it describes — /admin checks the same rule
+// before it sends.
 
 // Promise.all with a ceiling on how many run at once. A Worker gets 6
 // simultaneous open connections and every R2 binding call holds one, so
