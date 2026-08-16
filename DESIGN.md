@@ -126,8 +126,8 @@ decision in that subsystem.
   check from the Actions app, strict mode, no bypass actors — a direct push
   to `main` or a merge over a red gate is rejected server-side (a rebase that
   rewrites any other pushed branch is still fine — the ruleset only guards
-  `main`). Merge-commit merges are disabled repo-wide, merged branches
-  auto-delete, and the update-branch button is on. In practice: `gh pr
+  `main`). Merge-commit merges are disabled repo-wide, auto-merge is off,
+  merged branches auto-delete, and the update-branch button is on. In practice: `gh pr
   merge` needs `--rebase` or `--squash` and fails a stale head with "head
   branch is not up to date"; every non-md merge deploys and the deploy
   lands a release-ledger commit on `main` afterwards, so back-to-back PRs
@@ -235,6 +235,22 @@ repo because session memory does not cross machines:
   squash would melt the per-commit `Release-Note:` trailers the ledger
   reads. Already committed on `main` by mistake? `git branch <name>`,
   `git reset --hard origin/main`, then PR the branch as usual.
+  Then expect the merge to be refused ONCE even on a green gate — "head
+  branch is not up to date" or `Required status check "candidate-gate"
+  is expected` — a pit stepped in over and over (twice in one afternoon,
+  2026-08-16). It is the ledger race, not a failure: every non-md merge
+  deploys, the deploy lands a release-ledger commit on `main` minutes
+  later, and a strict required check goes stale the moment the base
+  moves. The recipe: `git fetch && git rebase origin/main && git push
+  --force-with-lease`, then chain the retry in one breath — `gh pr
+  checks <n> --watch --fail-fast && gh pr merge <n> --rebase` — so the
+  merge fires the instant the re-run turns green, inside the window the
+  next ledger commit needs to open. Give a fresh PR (or push) a beat
+  before watching: in the first seconds the check suite does not exist
+  yet and `gh pr checks --watch` dies immediately with `no checks
+  reported` instead of waiting. `gh pr merge --auto` is no shortcut:
+  repo-level auto-merge is off (`enablePullRequestAutoMerge`,
+  2026-08-16).
 
 ## The phone is the product
 
