@@ -6,9 +6,9 @@
 // all 36k glyphs). Conversion runs through uv's fonttools, so the only machine
 // prerequisite is uv itself. Deploys never run this: the woff2 is a committed
 // asset, and fonts are served cache-first from an unversioned URL — which is
-// why this script also bumps SHELL in public/sw.js whenever the bytes change,
-// the half of the font rule that is otherwise forgotten (DESIGN.md
-// non-negotiables).
+// why this script also bumps SHELL in public/sw.js whenever the bytes change:
+// that is the half of the font rule that is otherwise forgotten, so it is
+// enforced here rather than written down somewhere and hoped for.
 //
 // Renovate bumps FONT_RELEASE when enstw/font publishes (see renovate.json);
 // the bump PR does NOT regenerate the woff2 — run this script on the bump

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'wrangler[[:space:]]+deploy|(^|[;&|][[:space:]]*|(bash|sh|zsh)[[:space:]]+)(\\./)?scripts/deploy\\.sh|pnpm([[:space:]]+run)?[[:space:]]+deploy\\b' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Deploys are CI-only in this repo: push to main and GitHub Actions runs scripts/deploy.sh (see DESIGN.md → Commands).\"}}' || true"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'wrangler[[:space:]]+deploy|(^|[;&|][[:space:]]*|(bash|sh|zsh)[[:space:]]+)(\\./)?scripts/deploy\\.sh|pnpm([[:space:]]+run)?[[:space:]]+deploy\\b' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Deploys are CI-only in this repo: push to main and GitHub Actions runs scripts/deploy.sh (see DESIGN.md → Development).\"}}' || true"
           }
         ]
       }
