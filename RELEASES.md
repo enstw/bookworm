@@ -9,6 +9,17 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-17 — `6d3302babe12`
+
+- docs: stop duplicating rules the code already enforces (`6d3302b`)
+- docs: record the chain page-turn flake in the CI ledger (`7fe0754`)
+- docs: restore six diagnostic clauses the reorganisation dropped (`65f2a9e`)
+- docs: reorganise DESIGN.md by subsystem instead of by date (`ecc8417`)
+- docs: state the engine split as code behaviour, not an owner ruling (`0c505ba`)
+- docs: a green gate still loses the ledger race — merge in one breath (`44c7046`)
+- docs: data migrations are one-off dispatch workflows (`809740b`)
+- books: progress reads only the index — the R2 fallback is gone (`fe4967b`)
+
 ## 2026-08-16 — `4ab04d207384`
 
 - ci: one-off workflow backfills chapter_chars over the reindex api (`4ab04d2`)
