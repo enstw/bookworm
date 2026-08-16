@@ -251,6 +251,7 @@
     import {
       deriveSlug, shortSlug, uniqueSlug, newBookId,
       splitTextIntoPieces, piecesToEntries, buildManifest,
+      SLUG_RE, RESERVED_SLUGS,
     } from "/split-core.mjs";
 
     const $ = (id) => document.getElementById(id);
@@ -828,11 +829,13 @@
       }
     }
 
-    const SLUG_OK = /^[a-z0-9一-鿿぀-ヿ][a-z0-9一-鿿぀-ヿ-]*$/;
-
     async function saveBook(b, title, slug, say, btn) {
       if (!title) return say(t("admin.titleRequired"), "err");
-      if (slug !== b.slug && !SLUG_OK.test(slug)) return say(t("admin.badSlugChars"), "err");
+      // SLUG_RE and RESERVED_SLUGS come from split-core.mjs, the same two the
+      // worker refuses on — a check that is merely similar sends the owner a
+      // 400 from a form that said the name was fine.
+      if (slug !== b.slug && !SLUG_RE.test(slug)) return say(t("admin.badSlugChars"), "err");
+      if (slug !== b.slug && RESERVED_SLUGS.includes(slug)) return say(t("admin.reservedSlug"), "err");
       if (title === b.title && slug === b.slug) return say(t("admin.noChange"));
       btn.disabled = true;
       try {

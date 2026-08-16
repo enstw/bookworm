@@ -6,7 +6,7 @@
 //
 //   node scripts/test-slug.mjs
 
-import { deriveSlug, shortSlug, uniqueSlug, newBookId, RESERVED_SLUGS } from "../public/split-core.mjs";
+import { deriveSlug, shortSlug, uniqueSlug, newBookId, RESERVED_SLUGS, SLUG_RE, SLUG_MAX } from "../public/split-core.mjs";
 
 const out = {};
 const fails = [];
@@ -71,6 +71,23 @@ check("deriveSlug case", deriveSlug("My Book!"), "my-book");
 check("deriveSlug edges", deriveSlug("--a--b--"), "a-b");
 check("deriveSlug cjk", deriveSlug("牧神記"), "牧神記");
 out.deriveSlug = fails.some((f) => /deriveSlug/.test(f)) ? "FAIL" : "ok";
+
+// SLUG_RE is the one rule the worker and /admin both validate against. It
+// used to be written twice and the copies disagreed on exactly one thing —
+// the client had no length limit — so a 41-character slug passed the form
+// and came back 400 bad slug. Everything deriveSlug can emit must pass it,
+// and the length must be pinned, not implied.
+check("slugRe accepts derived", SLUG_RE.test(deriveSlug("My Book!")), true);
+check("slugRe accepts cjk", SLUG_RE.test("牧神記"), true);
+check("slugRe rejects leading hyphen", SLUG_RE.test("-jl"), false);
+check("slugRe rejects uppercase", SLUG_RE.test("JL"), false);
+check("slugRe rejects empty", SLUG_RE.test(""), false);
+check("slugRe at the limit", SLUG_RE.test("a".repeat(SLUG_MAX)), true);
+check("slugRe past the limit", SLUG_RE.test("a".repeat(SLUG_MAX + 1)), false);
+// reserved names are the shape of a slug — the second check is what refuses
+// them, on both sides, which is why /admin needs RESERVED_SLUGS too
+check("slugRe alone allows a reserved name", SLUG_RE.test("admin"), true);
+out.slugRule = fails.some((f) => /slugRe/.test(f)) ? "FAIL" : `ok (max ${SLUG_MAX})`;
 
 // ids are opaque, unique, and inside the slug alphabet (they go in URL paths
 // and R2 key prefixes without escaping)

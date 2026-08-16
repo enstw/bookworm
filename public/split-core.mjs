@@ -17,6 +17,18 @@ export function deriveSlug(name) {
     .replace(/^-|-$/g, "");
 }
 
+// What a slug may be, in one place, because the answer is deriveSlug's
+// alphabet and it belongs beside it. The worker validates every slug and
+// book id against this and /admin checks the same rule before it sends —
+// written twice, they disagreed: the client had no length limit at all, so
+// a 41-character slug passed the form and came back 400 bad slug.
+//
+// Requiring the first character to be from the alphabet rather than a
+// hyphen keeps `_tts/` — the audio cache namespace — unreachable as a book.
+export const SLUG_CHAR = "a-z0-9\\u4e00-\\u9fff\\u3040-\\u30ff";
+export const SLUG_MAX = 40;
+export const SLUG_RE = new RegExp(`^[${SLUG_CHAR}][${SLUG_CHAR}-]{0,${SLUG_MAX - 1}}$`);
+
 // House convention: a slug is the title's pinyin initials — 《牧神記》→ "msj",
 // "jianlai" → "jl" — with a numeric postfix on collision. Short enough to
 // type, and it reads back as the book. `taken` is the list of slugs already
