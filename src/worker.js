@@ -234,10 +234,11 @@ async function handleAuth(request, env, url, who) {
 // its own authentication (see the gate comment in fetch) and asks D1 for
 // everything in ONE batch: the key's user, the shelf, and that user's
 // positions (joined by the same key subquery, so no statement waits on
-// another). The chars sum now rides the index row (books.chapter_chars,
-// written by registerBook); only a row from before that column — '' until a
-// republish or reindex backfills it — still pays the old R2 read, via
-// mapPool. The admin Bearer gets the bare list: it has no reading identity.
+// another). The chars sum rides the index row (books.chapter_chars, written
+// by registerBook; rows from before the column were backfilled once by a
+// dispatch workflow on 2026-08-16, and the R2 fallback left with it). A row
+// without a parsable array simply shows no progress — this route no longer
+// touches R2. The admin Bearer gets the bare list: it has no reading identity.
 async function listBooks(request, env, url) {
   if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
   const auth = request.headers.get("authorization") ?? "";
@@ -261,7 +262,7 @@ async function listBooks(request, env, url) {
     try {
       const a = JSON.parse(r.chapter_chars);
       if (Array.isArray(a)) charsById.set(r.id, a);
-    } catch { /* pre-column row: the R2 fallback below */ }
+    } catch { /* no parsable array: the book shows no progress */ }
   }
   const books = rows.map((r) => ({
     id: r.id,
@@ -275,17 +276,10 @@ async function listBooks(request, env, url) {
 
   if (user) {
     const posMap = new Map((posRes.results ?? []).map((r) => [r.book, r]));
-    await mapPool(books.filter((b) => posMap.has(b.id)), 4, async (b) => {
+    for (const b of books) {
       const pos = posMap.get(b.id);
-      let chaps = charsById.get(b.id);
-      if (!chaps) {
-        const obj = await env.BOOKS.get(`${b.id}/manifest.json`);
-        if (!obj) return;
-        const m = await obj.json();
-        if (!Array.isArray(m.chapters)) return;
-        chaps = m.chapters.map((c) => c.chars ?? 0);
-      }
-      if (!(b.totalChars > 0)) return;
+      const chaps = charsById.get(b.id);
+      if (!pos || !chaps || !(b.totalChars > 0)) continue;
       let before = 0;
       for (let i = 0; i < Math.min(pos.chapter, chaps.length); i++)
         before += chaps[i] ?? 0;
@@ -293,7 +287,7 @@ async function listBooks(request, env, url) {
         chapter: pos.chapter,
         pct: Number(Math.min(100, ((before + pos.char_off) / b.totalChars) * 100).toFixed(1)),
       };
-    });
+    }
   }
 
   books.sort((a, b) => a.title.localeCompare(b.title));
