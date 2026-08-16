@@ -321,56 +321,48 @@ is not damage; a healthy shelf makes that route unreachable.
 
 ## Non-negotiables
 
-- **No build step, no framework, no bundler.** Files in `public/` are served
-  byte-for-byte. Browser libraries are vendored into `public/vendor/`
-  (gitignored) by `scripts/vendor.mjs` — never link a CDN, never add a runtime
-  dependency.
-- **Every user-facing string lives in `public/i18n.js`, under both `zh` and
-  `en`.** The chrome is 中文 first (`BW_DEFAULT_LANG = "zh"`). A whole sentence
-  is the unit of translation — never assemble one from a prefix plus a suffix,
-  because the two languages order the pieces differently. A literal in
-  `app.js`, `player.mjs` or `admin.html` is a bug; call `t("key")`.
-- **Bump `SHELL` in `public/sw.js`** whenever a font or icon changes. Those are
-  served cache-first from unversioned URLs, so an installed phone otherwise
-  keeps the old bytes forever. Shell assets (`app.js`, `app.css`, …) need no
-  bump — they are network-first and refresh themselves.
 - **A book's `id` is permanent; its `slug` is a renameable label.** R2 prefixes,
   D1 rows, cache names (`bw-book-<id>`) and localStorage keys all key on the
   id. Only URLs speak slugs, resolved through `book_slugs`.
 - **Position is `(chapter index, character offset)`** — never a page number or
   a scroll offset. Server writes are last-write-wins on a timestamp; a late
   beacon from another device must never clobber a newer position.
-- **Content sits behind a reader key.** `/api/books`, `/books/*`, TTS,
-  positions and settings 401 without one; a position or setting always
-  belongs to the KEY's user — client-asserted ids are ignored. Keys are
-  minted/revoked on `/admin` (`POST /api/admin/readers`); the admin Bearer
-  passes the gate but has no reading identity. Open by design: the shell,
-  `/api/feedback`, push vapid/unsubscribe. `/api/testlog` needs a credential
-  both ways — a reader key to read, the `bw_tlog` admin cookie to write. e2e
-  suites mint their own key — the e2e runbook has the rules.
+- **Content sits behind a reader key, and the gate in `src/worker.js` is the
+  list.** Which routes are gated, which are open by design, and which split
+  by verb is stated there, beside the code that enforces it — a second copy
+  in prose is how the two drift apart. What the gate does not say, and this
+  does: a position or setting always belongs to the KEY's user, so
+  client-asserted ids are ignored; keys are minted and revoked on `/admin`
+  (`POST /api/admin/readers`); the admin Bearer passes the gate but has no
+  reading identity; and e2e suites mint their own key, under the rules in
+  the e2e runbook.
 
 ## Working agreements
 
 How the owner wants agents to work here — stated preferences, kept in the
 repo because session memory does not cross machines:
 
-- **Explain before editing.** For anything beyond a typo: state the
-  diagnosis, the evidence for it, the planned change and how it will be
-  verified — then wait for the go-ahead. Keep the diagnosis separate from
-  the fix so a wrong premise can be challenged on its own, and measure
-  instead of inferring whenever measuring is cheap. Verification must
-  *gate* the push (`cmd && git push`), never narrate beside it — a
-  `pnpm test | grep -i error; git push` once let a parse error deploy.
-- **One user, one install.** The owner is the sole reader and the only
-  installed PWA. When a contract changes (URLs, storage keys, routes),
-  delete the old form instead of shimming it; the owner re-enrolls their
-  own devices. (The retired `/<book>/<uid>` route is the precedent.)
+- **Explain before editing — and know which explanations need an answer.**
+  Always state the diagnosis, the evidence for it, the planned change and
+  how it will be verified, keeping the diagnosis separate from the fix so a
+  wrong premise can be challenged on its own. Then judge what to do with it.
+  Reversible work inside what was asked for gets done and reported, not
+  parked behind a question: agents run here with nobody watching, and a
+  question asked into an empty room is just the work not happening. Wait for
+  a real answer before changing a rule in this document, before anything
+  destructive or outward-facing, and before changing a contract — URLs,
+  storage keys, routes, stored shapes. Measure instead of inferring whenever
+  measuring is cheap. Verification must *gate* the push (`cmd && git push`),
+  never narrate beside it — a `pnpm test | grep -i error; git push` once let
+  a parse error deploy.
 - **Test inputs come from pins, never working trees.** A harness fetches
   its inputs from the pinned upstream (release tag, manifest revision)
   into its own copy and verifies the SHA-256 — it never reads a live
   checkout's model folder, which is mutable working state and has changed
   mid-experiment. Saving a download is not a reason.
-  `scripts/fetch-matcha-weights.mjs` is that fetch for the voice pack.
+  `scripts/fetch-matcha-weights.mjs` is that fetch for the voice pack;
+  `scripts/fetch-font.mjs` takes the typeface the same way, from the
+  `FONT_RELEASE` tag rather than from any local font folder.
 - **Branch before the first commit — work only lands through a PR.** The
   mechanics, including the ledger race every merge should expect, are in
   *Landing a PR* above.
@@ -480,11 +472,10 @@ buffer a copy through `arrayBuffer()` so it holds one connection, not two.
 - **開機的網路上限 — 1 s.** A dying cellular link does not fail fetches, it
   hangs them for 60+ s, so "opening takes forever on bad signal" is never a
   slow answer — it is a question nobody was going to answer. `NET_MS = 1000`
-  caps it, once in `public/app.js` (`capped()`) and once in `public/sw.js`,
-  and the rule for applying it is the same in both: **cap a request only
-  when losing it costs nothing.** Capped, because the device already holds
-  an answer — position, settings, slug→id, the shelf list when `bw_books`
-  exists, the manifest when a cached copy exists. Uncapped, because the
+  caps it, once in `public/app.js` (`capped()`) and once in `public/sw.js`.
+  Capped, because the device already holds an answer — position, settings,
+  slug→id, the shelf list when `bw_books` exists, the manifest when a cached
+  copy exists. Uncapped, because the
   network is the only answer and a cap would turn slow into broken — a
   first-ever shelf, a book never cached, an uncached chapter; the sw.js
   handlers get this for free from `res ?? cached ?? net`. Losing a capped
