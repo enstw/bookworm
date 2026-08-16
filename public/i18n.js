@@ -18,6 +18,16 @@
 
 const BW_DEFAULT_LANG = "zh";
 
+// Which language backfills a key the current one is missing — deliberately
+// NOT the default. The owner reads this chrome in zh, so a zh gap patched
+// from zh shows the raw key and an en gap patched from zh shows Chinese in
+// an English interface nobody here opens: the half that breaks is the half
+// that stays invisible. Backfilling from en instead puts every gap in front
+// of the person who can fix it — an English phrase surfacing mid-Chinese
+// toolbar is impossible to miss — and leaves the en side degrading to the
+// key, which is equally loud.
+const BW_FALLBACK_LANG = "en";
+
 // KB/MB reads the same in both languages, and "0.0 MB" for a stray text file
 // reads as "nothing to see" when the point of showing a size is to say how
 // much a leftover is costing.
@@ -659,10 +669,11 @@ function bwSetLang(v) {
   bwApplyLang();
 }
 
-// Missing key → the zh string → the key itself, so a half-finished
-// translation degrades to something readable instead of blank chrome.
+// Missing key → the en string → the key itself, so a half-finished
+// translation degrades to something readable instead of blank chrome, and
+// stays visible while it does (see BW_FALLBACK_LANG).
 function t(key, ...args) {
-  const v = BW_STRINGS[bwLang()]?.[key] ?? BW_STRINGS[BW_DEFAULT_LANG][key] ?? key;
+  const v = BW_STRINGS[bwLang()]?.[key] ?? BW_STRINGS[BW_FALLBACK_LANG][key] ?? key;
   return typeof v === "function" ? v(...args) : v;
 }
 
