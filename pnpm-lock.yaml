@@ -15,8 +15,8 @@ importers:
         specifier: 1.4.1
         version: 1.4.1
       wasmtts:
-        specifier: github:enstw/wasmtts#v1.2.2
-        version: wasmtts-benchmark@https://codeload.github.com/enstw/wasmtts/tar.gz/e406b6f38211da249ae0fa03e996cb312bd2f82b
+        specifier: github:enstw/wasmtts#v1.2.4
+        version: wasmtts-benchmark@https://codeload.github.com/enstw/wasmtts/tar.gz/51d96207aef049d9a22bccb6e1e508e83e0a3259
       wrangler:
         specifier: 4.120.0
         version: 4.120.0
@@ -545,8 +545,8 @@ packages:
   use-strict@1.0.1:
     resolution: {integrity: sha512-IeiWvvEXfW5ltKVMkxq6FvNf2LojMKvB2OCeja6+ct24S1XOmQw2dGr2JyndwACWAGJva9B7yPHwAmeA9QCqAQ==}
 
-  wasmtts-benchmark@https://codeload.github.com/enstw/wasmtts/tar.gz/e406b6f38211da249ae0fa03e996cb312bd2f82b:
-    resolution: {gitHosted: true, integrity: sha512-W+F1i2uRiIFw3TGAhlhjdBb9r22c05f562SgmCje43uOJej0sqw9vhZiz706QMrJjlCMzpyCxXfZ5BRidtqP8g==, tarball: https://codeload.github.com/enstw/wasmtts/tar.gz/e406b6f38211da249ae0fa03e996cb312bd2f82b}
+  wasmtts-benchmark@https://codeload.github.com/enstw/wasmtts/tar.gz/51d96207aef049d9a22bccb6e1e508e83e0a3259:
+    resolution: {gitHosted: true, integrity: sha512-BcHLlboJgZPgC/R3OF6XqR2kX6k90WTY2xTJ//jqkUeSShn5HFr413fC+7zqKZIiJNykmGMoFDCNeL247H4Myw==, tarball: https://codeload.github.com/enstw/wasmtts/tar.gz/51d96207aef049d9a22bccb6e1e508e83e0a3259}
     version: 0.0.0
 
   workerd@1.20260801.1:
@@ -997,7 +997,7 @@ snapshots:
 
   use-strict@1.0.1: {}
 
-  wasmtts-benchmark@https://codeload.github.com/enstw/wasmtts/tar.gz/e406b6f38211da249ae0fa03e996cb312bd2f82b:
+  wasmtts-benchmark@https://codeload.github.com/enstw/wasmtts/tar.gz/51d96207aef049d9a22bccb6e1e508e83e0a3259:
     dependencies:
       lamejs: 1.2.1
       onnxruntime-web: 1.27.0
