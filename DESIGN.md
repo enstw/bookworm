@@ -137,7 +137,8 @@ covers both ranges.
 Settings that live in GitHub, not in any file:
 
 - Secret scanning with push protection is on.
-- A ruleset on `main` blocks force-push and deletion and requires every
+- The ruleset "main: candidate-gate before merge" (that exact name, in
+  Settings → Rules) blocks force-push and deletion and requires every
   change to arrive by PR (0 approvals, conversation threads resolved,
   rebase/squash only, linear history) with a green `candidate-gate` check
   from the Actions app, strict mode, no bypass actors — a direct push to
@@ -234,8 +235,9 @@ a release where nothing carried one says nothing at all. Upstream bumps need
 no prose because the version numbers *are* the note: they are read out of
 the `package.json` and `FONT_RELEASE` diff across the release, so a roll-up
 week says something true even though renovate writes one commit subject for
-the lot. **No AI summariser is involved and none is wanted.**
-`scripts/release-notes.mjs` is the single computation;
+the lot. **No AI summariser is involved and none is wanted** — and there is
+no free way to host one anyway: GitHub Models, which would have been it, is
+retired. `scripts/release-notes.mjs` is the single computation;
 `gen-release-notes.mjs` writes `public/releases.json` **before** `deploy.sh`
 (the deploy uploads it, so it must exist first) and `update-releases.mjs`
 writes the same notes into RELEASES.md as `> ` lines **after** (a failed
@@ -597,9 +599,11 @@ buffer a copy through `arrayBuffer()` so it holds one connection, not two.
   is accumulation, never "how many pushes this release sent": consecutive
   version announcements log 系統列出 N 則 with N growing by one each time.
   The sharp edge: that list is the registration's own store, NOT the
-  notification center — sweeping the center clean and waiting does not
-  shrink it (measured: a 測試 push after a full sweep still logged 系統列出
-  6 則). The only removal the app controls is `notification.close()`, and
+  notification center — sweeping the center clean and waiting ten minutes
+  does not shrink it (measured: a 測試 push after exactly that still logged
+  系統列出 6 則, which is what killed the first reading, "iOS purges cleared
+  entries lazily"). The only removal the app controls is
+  `notification.close()`, and
   when the only close anywhere was the tapped notification, every untapped
   one lived on as a ghost the badge re-counted forever. So opening the app
   closes every shown notification (clearNews in app.js, the same moment the
@@ -799,7 +803,9 @@ nulled the moment the sessions exist; that is ~124 MiB and load-bearing on a
 phone, not an optimisation. Matcha replaced piper 華言 on quality — 90 vs 60
 in a blind listening test (Kokoro 80), piper marked 外國腔 — at comparable
 cost: measured RTF 0.1317–0.1360 (×7.3–7.6 realtime) single-threaded on
-desktop, verified on the phone before the swap. piper, its espeak phonemizer
+desktop, verified on the phone before the swap and on device after it — pack
+download, MediaSource timeline, lock-screen readout, which is the checklist
+any future voice or engine swap owes. piper, its espeak phonemizer
 and the melo-era 台灣讀音 overlay live in git history.
 
 COOP/COEP is gone (`public/_headers` deleted): nothing needs
@@ -926,7 +932,9 @@ ships measures the wrong thing. **The engine code itself is vendored from
 the wasmtts git dependency** — `matcha-frontend.js`, `matcha-synthesis.js`,
 the kaldifst wasm and its wrapper, plus the `matcha-fst.js` test oracle land
 in `public/vendor/wasmtts/` via `vendor.mjs`, never hand-copied into
-`public/`: hand copies drift both ways, and upstream's release gates (FST
+`public/`: hand copies drift both ways (bookworm held the fromCharCode and
+colon fixes while upstream held the ruleNormalizer interface — each side
+missing the other's), and upstream's release gates (FST
 golden, RTF, 512 MiB, Whisper CER) test what this repo cannot. The pin is a
 release tag Renovate bumps; bookworm's fixes are upstreamed first so the
 vendored files need no local patches.
@@ -1006,9 +1014,12 @@ unmoved — 2–5 consensus flags per 50 renders in every cell, statistical
 noise — so the deliberate noise-1 setting is not the culprit. The error mode
 is a neighbouring-syllable intrusion (老前輩 → 「前」侵入 老, 再來找 →
 再再找): alignment slippage inherent to the checkpoint, not noise amplitude,
-so more solver steps cannot buy it back. Remaining routes: a different
-acoustic model or checkpoint, or accept the rate and promote the
-calibrated-sentence consensus rate to a release-gate metric.
+so more solver steps cannot buy it back. A borderline Whisper-CER result on
+upstream's release gate is very likely this same phenomenon rather than a
+regression in whatever change is being gated — start there before
+suspecting the diff. Remaining routes: a different acoustic model or
+checkpoint, or accept the rate and promote the calibrated-sentence
+consensus rate to a release-gate metric.
 
 **ASR calibration for any listening test**: whisper-small alone is
 untrustworthy (its substitution flags were wrong on human check), and a lone
