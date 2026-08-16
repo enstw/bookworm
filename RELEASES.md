@@ -9,6 +9,14 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-17 — `150ce3de28ad`
+
+> 管理頁改代號時，太長或與系統頁面同名的代號會當場說明原因，不再等伺服器退回。
+> wasmtts v1.2.2 → v1.2.4
+
+- chore(deps): update dependency wasmtts to v1.2.4 (`150ce3d`)
+- slug: one rule for the worker and /admin, not two that disagree (`b4d5a1c`)
+
 ## 2026-08-17 — `b9809db8446d`
 
 > 修正離線朗讀：只下載過語音包、還沒線上播放過的裝置，離線時按 ▶ 會沒有聲音。
