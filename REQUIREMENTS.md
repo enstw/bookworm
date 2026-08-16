@@ -1,7 +1,7 @@
 # Bookworm — Requirements
 
-_v1 spec, agreed 2026-07-13. The scaffold in this repo implements v1; items
-marked **[v2]** are explicitly deferred._
+_The v1 spec. This repo implements v1; items marked **[v2]** are explicitly
+deferred._
 
 ## Vision
 
@@ -16,6 +16,8 @@ expires, and adding a book must not require redeploying the app.
 - Books are plain-text files (novels), possibly 20 MB+ compressed / ~80 MB raw,
   possibly in legacy encodings (GBK, Big5, …).
 - Users are trusted; no accounts, no registration, no PII beyond a reader id.
+- Reference scale the pipeline is verified against: 劍來, 1,182 pre-split
+  chapters / 12.9M chars, plus a 42-chapter sequel via directory mode.
 
 ## Functional requirements
 
@@ -139,19 +141,3 @@ existed have id = their original slug, which is what their prefix already was.
   same manifest + chapter files)
 - Multi-position/furthest-read tracking, annotations, highlights, search
 - Any account system or per-book permissions
-
-## Verification status
-
-- Syntax checks pass on worker, reader app, and both scripts.
-- Splitter verified on a 484 KB synthetic sample (heading detection, preface)
-  and on the real library: 劍來 1,182 pre-split chapters / 12.9M chars and
-  劍來（二） 42 chapters, via directory mode.
-- Local end-to-end verified under `wrangler dev` (2026-07-13): publish of
-  1,224 chapters through the admin API (1.6 s), book list, manifest, CJK
-  chapter fetch with gzip wire compression + ETag, position save/restore,
-  last-write-wins guard (stale write rejected), 401 without admin token,
-  404 for unknown books, SPA routing, and screenshot-verified reader UI
-  resuming mid-chapter at 501/1182 (one bug found and fixed: TOC drawer
-  visibility).
-- Deployed to Cloudflare 2026-07-15; cross-device resume verified on the
-  live instance.

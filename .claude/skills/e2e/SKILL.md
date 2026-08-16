@@ -50,7 +50,7 @@ append together.
 
 **Never point `MATCHA_MODEL_DIR`/`MATCHA_FST_DIR` at a live wasmtts
 checkout** — that is the owner's working folder; its contents mutate and
-vanish mid-experiment (a batch died exactly this way, 2026-08-15). The
+vanish mid-experiment, which has already killed a batch mid-run. The
 assets are pinned through the wasmtts dependency (`matcha-assets.json`, the
 pack's canonical definition); fetch a SHA-256-verified private copy once —
 re-runs skip files that still verify, and a model bump upstream changes what
