@@ -720,9 +720,10 @@ the pre-publication history, which lives in the owner's private archive.
   three *sequential* D1 round trips, then an R2 manifest read per
   in-progress book for the chars-before-bookmark sum. The fix is
   structural, twice over. Per-chapter char counts now ride the index row
-  (`books.chapter_chars`, JSON, written by `registerBook` — rows from
-  before the column fall back to the manifest until a republish or reindex
-  backfills them). And listBooks left the shared gate: it runs its own
+  (`books.chapter_chars`, JSON, written by `registerBook`; the pre-column
+  rows were backfilled once by a dispatch workflow — the data-migration
+  entry below — and the R2 manifest fallback was removed with it, so the
+  route never touches R2). And listBooks left the shared gate: it runs its own
   single `env.DB.batch` — key lookup, shelf, positions joined by the same
   key subquery — with identical credentials and 401s, which is the one
   deliberate exception to "the gate authenticates every content route"
@@ -730,6 +731,25 @@ the pre-publication history, which lives in the owner's private archive.
   the shelf's capped fetch allows 2.5 s before painting the cached list
   as stale, because at the old 1 s cap a well-connected shelf sat
   permanently — and wrongly — marked 離線.
+- **Data migrations are one-off dispatch workflows, not app code
+  (2026-08-16).** There is exactly one instance, so a change in stored
+  shape never needs a compatibility layer living in the app — it needs one
+  migration run, then the simple code. The recipe, proven by backfilling
+  `chapter_chars`: (1) prefer an existing admin API that already writes
+  the target shape over new migration code — reindex's upsert *was* the
+  whole migration; (2) run it from a `workflow_dispatch` workflow, because
+  repo secrets are the only place the production `ADMIN_TOKEN` exists —
+  Actions is how this repo speaks to prod (`renormalize-books.yml` set
+  the pattern); (3) the repo is public, so logs print counts, never
+  titles or slugs; (4) end the job with a read-only `wrangler d1 execute`
+  assertion, so a green run IS the proof the data moved — the fallback
+  comes out on evidence, not on "the migration probably worked"; (5) the
+  PR that removes the fallback deletes the workflow with it, like any
+  other old form. Note the /admin page cannot be the migration path:
+  reindex has no button of its own — it runs as step one of 修復, which
+  stays dark while 健康檢查 finds nothing, and a row that merely predates
+  a column is not damage. A healthy shelf makes that route unreachable,
+  which is how this gap went unnoticed for a day.
 - **Push stays healed, not assumed (2026-07-28).** The VAPID public key is
   derived from the private JWK at runtime, so `applicationServerKey` and the
   JWT can never drift. The phone's 已訂閱 is only its own opinion:
