@@ -149,8 +149,8 @@ agent，人只需要做三件瀏覽器裡的事；沒有 agent，照著同樣的
 - **鑰匙身分模型**：`/admin` 產生的讀者鑰匙對應讀者代號；`/<書籍代稱>` 直接打開
   那本書與這台裝置的位置。
 
-詳細資料合約與 v1 設計見 [REQUIREMENTS.md](REQUIREMENTS.md)，現行工程決策見
-[DESIGN.md](DESIGN.md)。
+詳細資料合約與 v1 設計見 [REQUIREMENTS.md](REQUIREMENTS.md)，現行架構與各子系統
+的設計理由見 [DESIGN.md](DESIGN.md)。
 
 ## 使用與安全邊界
 

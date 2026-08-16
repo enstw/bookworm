@@ -162,7 +162,8 @@ the same commands run fine by hand.
 - **Key identity model:** reader keys minted on `/admin` map to reader ids; `/<book-slug>` opens that book at this device's position.
 
 See [REQUIREMENTS.md](REQUIREMENTS.md) for the data contracts and v1 design,
-and [DESIGN.md](DESIGN.md) for the standing engineering decisions.
+and [DESIGN.md](DESIGN.md) for the current architecture, subsystem by
+subsystem.
 
 ## Access and security boundary
 
