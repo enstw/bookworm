@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-17 — `625a26568dd5`
+
+- i18n: fall back to English so a missing string is visible (`625a265`)
+
 ## 2026-08-17 — `6d3302babe12`
 
 - docs: stop duplicating rules the code already enforces (`6d3302b`)
