@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-16 — `4ab04d207384`
+
+- ci: one-off workflow backfills chapter_chars over the reindex api (`4ab04d2`)
+
 ## 2026-08-16 — `76dbcf381ed8`
 
 > 修正 app 圖示的未讀數字：打開 app 即歸零，清掉的舊通知不再被重複計入。
