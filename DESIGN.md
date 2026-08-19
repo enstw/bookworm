@@ -1132,6 +1132,10 @@ page instead of hiding it.
 - Playback speed control (`audio.playbackRate`) in the player bar.
 - File the iOS scrollBy-doubles bug at bugs.webkit.org (the on-device
   matrix evidence is in the owner's archive; low priority).
+- Pull-mode updates: one repo, many self-hosted instances, each polling
+  upstream's `released` tag and deciding for itself instead of being
+  deployed by a push. Plan and rejected shapes in
+  `docs/pull-mode-updates.md`.
 
 ## Code conventions
 
