@@ -166,6 +166,24 @@ Settings that live in GitHub, not in any file:
   roll-up PR (the branch pushes fine, so the failure looks like Renovate
   silently doing nothing). The default workflow token permission stays
   read-only; jobs that write declare it per job.
+- The **`production` environment** exists so the jobs that touch the live
+  site are a named, listable set rather than a convention. Its deployment
+  branch policy admits `main` alone (custom pattern, not "protected
+  branches" — that setting predates rulesets and does not read one), it has
+  no reviewers and no wait timer: a single maintainer cannot approve their
+  own deploy, and a gate nobody can pass is a broken deploy, not a control.
+  `deploy` and the three hand-run ops jobs name it; a dispatch of
+  publish-book or renormalize-books from a side branch is refused before it
+  runs. The six secrets are still repository-level, so the environment is a
+  branch fence today, not yet a secret fence — closing that needs the values
+  re-entered by hand, which is a human step, not an API call.
+- **Dependabot security updates**, **CodeQL default setup**
+  (`javascript-typescript` + `actions`, default query suite, no workflow
+  file in the tree) and **private vulnerability reporting** are all on.
+  CodeQL adds an unrequired check to every PR: read it, but a red CodeQL
+  does not block a merge the way `candidate-gate` does. Reports arrive
+  through the Security tab, not email — [SECURITY.md](./SECURITY.md) is the
+  public half of that.
 
 ### Dependencies (Renovate)
 
@@ -762,6 +780,12 @@ buffer a copy through `arrayBuffer()` so it holds one connection, not two.
   ship a guarded `ALTER` in `scripts/deploy.sh`.
 
 ## Ops
+
+publish-book, push-test and renormalize-books are hand-dispatched jobs that
+carry `ADMIN_TOKEN` against the live shelf — they exist here because the
+laptop has no production key and should not grow one. They run on `main`
+only (the `production` environment above) and hold a read-only repository
+token: they write to the site, never to the repo.
 
 The custom domain is added in the Cloudflare dashboard only — the deploy
 token has no zone permissions, so putting the domain in `wrangler.jsonc`

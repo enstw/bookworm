@@ -26,6 +26,10 @@ concurrency:
 jobs:
   renormalize:
     runs-on: ubuntu-latest
+    # 密鑰放在 production 環境裡，而且只有 main 分支能取用
+    environment: production
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # script 只 import node 內建模組和 public/split-core.mjs — 不必 pnpm install

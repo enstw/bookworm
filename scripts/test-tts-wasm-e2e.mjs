@@ -147,7 +147,14 @@ const server = createServer((req, res) => {
     try {
       res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream", "content-length": statSync(file).size });
       res.end(readFileSync(file));
-    } catch { res.writeHead(404); res.end("missing " + file); }
+    } catch {
+      // the path stays in this process's log: echoing it back reflects the
+      // request into the page, which is a real shape even on a throwaway
+      // localhost fixture (CodeQL js/reflected-xss)
+      console.error("missing " + file);
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("missing");
+    }
   };
   if (url === "/" || url === "/e2e.html") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

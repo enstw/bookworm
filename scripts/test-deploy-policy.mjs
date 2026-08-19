@@ -1,11 +1,17 @@
 #!/usr/bin/env node
-// Policy gate for .github/workflows/deploy.yml: the test job executes the
-// pushed code, so it must never hold a write token or a persisted credential;
-// write access belongs only to the jobs that run no repository code from the
-// tested commit (failure-report) or run strictly after a green gate (deploy).
-// Line-oriented on purpose — a YAML parser would be a dependency this check
-// exists to distrust. Same self-testing shape as test-renovate-policy.mjs:
-// the real file must pass, and seeded violations must each be caught.
+// Policy gate for every workflow that can reach production: deploy.yml,
+// candidate.yml, and the three hand-run ops workflows.
+//
+// deploy.yml: the test job executes the pushed code, so it must never hold a
+// write token or a persisted credential; write access belongs only to the
+// jobs that run no repository code from the tested commit (failure-report) or
+// run strictly after a green gate (deploy). candidate.yml lives by the test
+// job's rules. The ops workflows hold ADMIN_TOKEN against the live site, so
+// they stay hand-dispatched, read-only, and inside the production
+// environment. Line-oriented on purpose — a YAML parser would be a dependency
+// this check exists to distrust. Same self-testing shape as
+// test-renovate-policy.mjs: the real file must pass, and seeded violations
+// must each be caught.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -66,6 +72,11 @@ export function checkDeployPolicy(text) {
       if (writes.sort().join(",") !== "actions,contents,pull-requests") {
         violations.push(`deploy job must hold exactly actions/contents/pull-requests write, has: ${writes.join(", ") || "none"}`);
       }
+      // M-01: the production secrets live in an environment whose branch
+      // policy admits main alone; the reference is what admits this job
+      if (!/^\s{4}environment: production\s*$/m.test(body)) {
+        violations.push("deploy job does not name the production environment");
+      }
     } else if (writes.length) {
       violations.push(`unexpected job ${name} holds write permissions: ${writes.join(", ")}`);
     }
@@ -96,6 +107,9 @@ export function checkDeployPolicy(text) {
     if (name !== "deploy" && /\$\{\{\s*secrets\./.test(body)) {
       violations.push(`job ${name} references repository secrets`);
     }
+    if (name !== "deploy" && /^\s{4}environment:/m.test(body)) {
+      violations.push(`job ${name} names an environment`);
+    }
   }
 
   return violations;
@@ -109,6 +123,7 @@ export function checkCandidatePolicy(text) {
   const violations = [];
   if (/^\s*pull_request_target:/m.test(text)) violations.push("candidate uses pull_request_target");
   if (/\$\{\{\s*secrets\./.test(text)) violations.push("candidate references repository secrets");
+  if (/^\s+environment:/m.test(text)) violations.push("candidate names an environment");
   const { jobs } = splitJobs(text);
   const gate = jobs["candidate-gate"];
   if (!gate) return [...violations, "job candidate-gate is missing"];
@@ -116,6 +131,44 @@ export function checkCandidatePolicy(text) {
   if (writes.length) violations.push(`candidate-gate holds write permissions: ${writes.join(", ")}`);
   if (!/^\s+contents: read\s*$/m.test(gate)) violations.push("candidate-gate is missing contents: read");
   if (!/persist-credentials: false/.test(gate)) violations.push("candidate-gate checkout persists credentials");
+  return violations;
+}
+
+// The trigger list of a workflow: the keys one level under `on:`.
+export function triggersOf(text) {
+  const lines = text.split("\n");
+  const onAt = lines.findIndex((line) => /^on:\s*$/.test(line));
+  if (onAt === -1) return null;
+  const out = [];
+  for (const line of lines.slice(onAt + 1)) {
+    if (/^[A-Za-z]/.test(line)) break;
+    const key = line.match(/^  ([a-z_]+):/);
+    if (key) out.push(key[1]);
+  }
+  return out;
+}
+
+// M-04: publish-book, push-test and renormalize-books hold ADMIN_TOKEN and
+// BOOKWORM_URL against the live site. Nothing about that was asserted — the
+// jobs were safe by convention alone. They stay hand-run only, read-only,
+// and reachable only through the production environment.
+export function checkOpsPolicy(text) {
+  const violations = [];
+  const triggers = triggersOf(text);
+  if (!triggers) return ["ops workflow has no on: block"];
+  const unexpected = triggers.filter((t) => t !== "workflow_dispatch");
+  if (unexpected.length) violations.push(`ops workflow runs on more than a hand dispatch: ${unexpected.join(", ")}`);
+  const writes = [...text.matchAll(/^\s+(\w[\w-]*): write\s*$/gm)].map((m) => m[1]);
+  if (writes.length) violations.push(`ops workflow grants write permissions: ${writes.join(", ")}`);
+  const { jobs } = splitJobs(text);
+  for (const [name, body] of Object.entries(jobs)) {
+    if (!/^\s{4}permissions:\s*$/m.test(body)) {
+      violations.push(`ops job ${name} has no explicit permissions block`);
+    }
+    if (/\$\{\{\s*secrets\./.test(body) && !/^\s{4}environment: production\s*$/m.test(body)) {
+      violations.push(`ops job ${name} reads secrets outside the production environment`);
+    }
+  }
   return violations;
 }
 
@@ -137,6 +190,8 @@ const mutations = [
   ["secrets outside deploy", (t) => t.replace("      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}", "      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}")],
   ["deploy job gaining an extra grant", (t) => t.replace("      pull-requests: write\n      actions: write", "      pull-requests: write\n      actions: write\n      issues: write")],
   ["deploy job losing a grant", (t) => t.replace("      pull-requests: write\n      actions: write", "      pull-requests: write")],
+  ["deploy job leaving the production environment", (t) => t.replace(/^ {4}environment: production\n/m, "")],
+  ["test job joining the production environment", (t) => t.replace("  test:\n", "  test:\n    environment: production\n")],
 ];
 for (const [label, mutate] of mutations) {
   const mutated = mutate(real);
@@ -148,6 +203,7 @@ const candidateMutations = [
   ["pull_request_target trigger", (t) => t.replace("on:\n  pull_request:", "on:\n  pull_request_target:")],
   ["candidate-gate write grant", (t) => t.replace("    permissions:\n      contents: read", "    permissions:\n      contents: write")],
   ["candidate secrets reference", (t) => t.replace("      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}", "      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}")],
+  ["candidate naming an environment", (t) => t.replace("  candidate-gate:\n", "  candidate-gate:\n    environment: production\n")],
   ["candidate persisted credential", (t) => t.replace("          # this job runs the PR's code; leave no token on disk for it\n          persist-credentials: false\n", "")],
 ];
 for (const [label, mutate] of candidateMutations) {
@@ -156,4 +212,24 @@ for (const [label, mutate] of candidateMutations) {
   assert.notEqual(checkCandidatePolicy(mutated).length, 0, `mutation "${label}" was not caught`);
 }
 
-console.log("✓ deploy.yml + candidate.yml permission policy");
+const OPS = [
+  ".github/workflows/publish-book.yml",
+  ".github/workflows/push-test.yml",
+  ".github/workflows/renormalize-books.yml",
+];
+const opsMutations = [
+  ["ops workflow gaining an automatic trigger", (t) => t.replace("on:\n  workflow_dispatch:", "on:\n  push:\n  workflow_dispatch:")],
+  ["ops workflow gaining a write grant", (t) => t.replace("      contents: read", "      contents: write")],
+  ["ops workflow leaving the production environment", (t) => t.replace(/^ {4}environment: production\n/m, "")],
+];
+for (const path of OPS) {
+  const text = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  assert.deepEqual(checkOpsPolicy(text), [], `${path} violates the ops policy`);
+  for (const [label, mutate] of opsMutations) {
+    const mutated = mutate(text);
+    assert.notEqual(mutated, text, `mutation "${label}" did not apply — fixture drifted from ${path}`);
+    assert.notEqual(checkOpsPolicy(mutated).length, 0, `mutation "${label}" was not caught in ${path}`);
+  }
+}
+
+console.log("✓ deploy.yml + candidate.yml + ops workflow permission policy");

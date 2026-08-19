@@ -121,6 +121,10 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    # the only job that sees the production secrets names the environment
+    # that holds them; its branch policy admits main alone, so a dispatch
+    # from any other ref cannot reach them
+    environment: production
     permissions:
       contents: write
       # the release ledger goes to main through a PR gated on candidate-gate
