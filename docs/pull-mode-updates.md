@@ -13,6 +13,42 @@ An instance is **not a fork**. It is a Cloudflare account and nothing else:
 no GitHub repo, no clone, no CI of its own. That constraint is what shapes
 everything below.
 
+## Status
+
+A ticket's state changes **in the commit that changes it**, never in a
+separate bookkeeping commit — a status table maintained on its own schedule
+is a status table that lies. The ticket id goes in the commit *body*, not
+the subject, which keeps `<area>: <one lowercase sentence>` intact and still
+leaves `git log --grep=PM-05` working. This table is for the glance; git is
+the audit trail.
+
+States: `—` not started · `wip` in progress · `done` landed · `dropped`
+(with the reason, inline).
+
+| Ticket | Phase | State |
+|---|---|---|
+| PM-00 · prove a Worker can install 12 MB of assets | 0 | — |
+| PM-01 · publish the artifact and its manifest | 1 | — |
+| PM-02 · the manifest becomes a stated contract | 1 | — |
+| PM-03 · a release can demand a human | 1 | — |
+| PM-04 · split out `bookworm-updater` | 2 | — |
+| PM-05 · the install path | 2 | — |
+| PM-06 · migrations before the swap, additive-only | 2 | — |
+| PM-07 · health check and automatic rollback | 3 | — |
+| PM-15 · the rules for when an install may happen | 3 | — |
+| PM-08 · the panel and the policy | 3 | — |
+| PM-14 · alarm on a silent updater | 3 | — |
+| PM-09 · the owner's phone, and only the owner's | 3 | — |
+| PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | — |
+| PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md` | 4 | — |
+| PM-12 · DESIGN.md absorbs the decisions; this document goes away | 4 | — |
+| PM-13 · two instances, one real release | 5 | — |
+
+This document is scaffolding: PM-12 distils what is worth keeping into
+DESIGN.md and deletes the rest, this table included. Measurements a spike
+produces (PM-00) are written under their ticket first, because the design
+downstream rests on them, and travel into DESIGN.md with everything else.
+
 ## What an instance looks like
 
 Two Workers on the instance's account, and the split between them is the
