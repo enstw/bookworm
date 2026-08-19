@@ -55,6 +55,10 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # 密鑰放在 production 環境裡，而且只有 main 分支能取用
+    environment: production
+    permissions:
+      contents: read
     steps:
       - name: 公開 repo 的提醒
         if: ${{ !github.event.repository.private }}
