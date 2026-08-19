@@ -1132,9 +1132,9 @@ page instead of hiding it.
 - Playback speed control (`audio.playbackRate`) in the player bar.
 - File the iOS scrollBy-doubles bug at bugs.webkit.org (the on-device
   matrix evidence is in the owner's archive; low priority).
-- Pull-mode updates: one repo, many self-hosted instances, each polling
-  upstream's `released` tag and deciding for itself instead of being
-  deployed by a push. Plan and rejected shapes in
+- Pull-mode updates: one upstream, many self-hosted instances — an instance
+  is a Cloudflare account rather than a fork, and a cron-only second Worker
+  installs the releases it decides to take. Plan, trust model and risks in
   `docs/pull-mode-updates.md`.
 
 ## Code conventions
