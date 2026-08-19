@@ -156,6 +156,66 @@ Where each knob lives:
 | policy: auto / notify-only / pinned / minimum age | D1 | `/admin` (admin token) |
 | update history and status | D1 | read-only display |
 
+## What `/admin` shows, and how it knows
+
+**`/admin` never contacts upstream.** It is served by the reader Worker,
+which holds no credential and has no relationship with upstream at all. The
+updater is the only thing that talks outward; it writes what it found to
+D1, and `/admin` reads that.
+
+This is deliberate rather than lazy. The moment `/admin` fetches upstream
+itself, the reader Worker — the largest attack surface in the system —
+reacquires a trust relationship with upstream. There is exactly one such
+relationship and it lives in the updater.
+
+### Checking and installing run at different rates
+
+A daily cron would leave `/admin` claiming "up to date" twenty hours after
+a release. The fix is to separate the two things the cron does, because
+they have nothing in common but a timer:
+
+| | Frequency | Cost | Why |
+|---|---|---|---|
+| **check** | short interval (~15 min) | one HTTPS GET of a small JSON | read-only, no side effect, too cheap to ration |
+| **install** | per policy (daily + jitter) | full upload | this is the part with risk, policy and blast radius |
+
+`/admin` is then never more than one check interval stale, and needs no
+"check now" button. R9's jitter still applies, because jitter belongs on
+the install, not on the check.
+
+### The panel
+
+```
+running          9a3855f · 2026-08-19 15:53     ← the reader's own BUILD
+upstream         3f21ac0 · 2026-08-21 09:12     ← what the updater last saw
+                 └ update available · what changed
+
+last checked     2026-08-21 09:20 (4 minutes ago)
+policy           install automatically ▾   after 2 days
+last install     2026-08-19 15:55 · ok
+```
+
+Two states have to be visible and are easy to forget: a release upstream
+marked `requiresAttention` (say so, and do not install it whatever the
+policy says), and an install that failed and rolled back (it stays on the
+panel — a push that scrolls away is not a record).
+
+### An install button, without giving the updater a door
+
+Notify-only mode needs an "install now" button, and the reader cannot call
+the updater — no fetch handler, on purpose.
+
+A service binding would work: the updater gains an entrypoint reachable
+only by the bound Worker and never from the internet. If it is ever built
+that way, the red line is that **the entrypoint takes no arguments at
+all** — the moment it accepts a URL, compromising the reader means choosing
+what gets installed, and the whole split was for nothing.
+
+It is not worth it. `/admin` writes a request row into D1 and the updater
+picks it up on its next check; with checks every 15 minutes, "queued" costs
+a quarter of an hour and the updater keeps its property of having no
+callable surface whatsoever.
+
 ## Risks
 
 ### Fatal — the design is not defensible without these
@@ -197,6 +257,20 @@ hard-to-diagnose behaviour — `/admin` served as a static file, for one.
 **R7 · admin-token escalation.** Answered by keeping the trust anchor in a
 Worker secret; recorded here so the reasoning is not lost if someone later
 proposes moving the URL into the admin UI for convenience.
+
+**R10 · the updater dies without a sound.** It is cron-only with no route,
+which is exactly what makes it silent when it stops: an expired token, a
+revoked credential, a changed API, a cron that stopped firing — every one of
+them looks identical from outside, because the only symptom is that a
+timestamp in D1 stops moving. A panel that says "up to date" on stale data
+looks precisely like a panel that says "up to date" on fresh data.
+
+This is the same shape as the GitHub 60-day auto-disable that the fork model
+died of; dropping the fork removed that instance of it, not the class. So
+`/admin` always shows **when the last check happened**, and past a threshold
+(a few times the check interval) that line becomes a warning rather than
+grey text. *How long since it checked* is the more important of the two
+numbers, because when it goes wrong, *what version is upstream* is a lie.
 
 ### To be measured, not assumed
 
@@ -269,12 +343,21 @@ Ticket ids are stable; `needs` is a hard ordering.
 - Why: R3. Spends what the split bought.
 - Needs: PM-05
 
-**PM-08 · policy in D1, surfaced on `/admin`**
-- Why: auto / notify-only / pinned / minimum age, plus cron jitter (R9).
-  It belongs on the admin page beside health check and reader keys, because
-  the owner should never need git to answer "should this site update
-  itself?".
-- The open question below sets its default.
+**PM-08 · the panel and the policy**
+- Why: `/admin` reads the updater's D1 record and never contacts upstream
+  (see *What `/admin` shows*). Carries the running version, what upstream
+  last offered, when it was last checked, the policy, and the last install's
+  outcome — including a rolled-back one, which stays on the panel.
+- Also splits the cron into a short check interval and a policy-driven
+  install, and queues an "install now" request through D1 rather than
+  opening a callable surface on the updater.
+- The open question below sets the policy's default.
+
+**PM-14 · alarm on a silent updater**
+- Why: R10. A cron-only Worker fails invisibly, and stale data on the panel
+  is indistinguishable from fresh data. `/admin` warns past a staleness
+  threshold, and the owner gets told.
+- Needs: PM-08
 
 **PM-09 · both outcomes reach the phone**
 - Why: the owner watches a phone, not a repo. `announceBuild` already
