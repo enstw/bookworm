@@ -49,6 +49,34 @@ DESIGN.md and deletes the rest, this table included. Measurements a spike
 produces (PM-00) are written under their ticket first, because the design
 downstream rests on them, and travel into DESIGN.md with everything else.
 
+## Why an instance is not a fork
+
+The obvious shape is a fork each: an instance would already hold the source,
+its own secrets and a copy of `deploy.yml`, so following upstream would be a
+*trigger* change rather than a pipeline change. It was planned that way
+first and dropped, because a fork inherits the entire upstream pipeline and
+then has to be stopped from using most of it.
+
+- The release ledger step commits `RELEASES.md`, opens a PR and merges it —
+  **on every fork deploy**. The fork re-diverges permanently, so no update is
+  ever a fast-forward again. It also drags each instance through
+  `scripts/wait-candidate-gate.mjs`, fail-closed on every path, waiting on a
+  required check that exists because of *upstream's* ruleset, not the fork's.
+- `sync-wasmtts-assets.mjs` re-cuts a release nothing will read:
+  `WASMTTS_RELEASE` (`src/worker.js:581`) is hard-coded to `enstw/bookworm`,
+  so every instance already pulls the models and ort's wasm from upstream.
+- `INSTALLATION` tells the operator to commit the D1 `database_id` that
+  `deploy.sh` writes into `wrangler.jsonc` — one guaranteed divergent commit
+  per fork, on exactly the line upstream edits.
+- Scheduled workflows are disabled by default in a fork, and a public repo's
+  schedule is auto-disabled after 60 days without activity: an instance that
+  legitimately skips releases for two months stops checking **silently**.
+
+The first three are defects in a fork today, pull mode or not. What a fork
+bought in exchange was source, Node and pnpm on the instance side — the
+ability to *build*. Giving that up is precisely why upstream must start
+publishing a built artifact, and why phase 1 exists at all.
+
 ## What an instance looks like
 
 Two Workers on the instance's account, and the split between them is the
@@ -420,6 +448,9 @@ Ticket ids are stable; `needs` is a hard ordering.
 - Done when: a throwaway Worker has uploaded the real `public/` to a real
   account, with the measured numbers written down. If it cannot, the answer
   is a bootstrap-assisted first install, and the plan below changes shape.
+- Needs from outside the repo, which no clone carries: a Cloudflare account
+  to burn and an API token for it. Everything else this plan needs is in the
+  tree.
 
 ### Phase 1 — upstream starts shipping a product
 
