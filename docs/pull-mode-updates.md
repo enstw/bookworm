@@ -216,6 +216,92 @@ picks it up on its next check; with checks every 15 minutes, "queued" costs
 a quarter of an hour and the updater keeps its property of having no
 callable surface whatsoever.
 
+## Deciding to install
+
+Three modes and one number, not a matrix of knobs:
+
+| Mode | Behaviour |
+|---|---|
+| **automatic** | install a new release once it has been out for N days |
+| **notify me** | push and show it; wait for the button |
+| **pinned** | stay here. Still checks, so the panel can say a newer one exists, but never installs and never nags |
+
+**The default is automatic, after 2 days.** The failure that actually
+befalls a self-hosted site is not taking a bad release — it is nobody
+tending it while it quietly rots. Automatic with a wait, plus the overrides
+below, is a smaller risk than that, and "notify me" is one click away for
+anyone who disagrees.
+
+### The wait is the cheapest safety in this design
+
+`released` only moves onto commits CI called green, so the residual danger
+is a bug the suite did not catch. If every instance installs on sight, R9
+happens: they all break together. If instances wait, and **upstream's own
+instance runs with a wait of zero**, the author is always first to hit it
+and has the window to pull or fix the release before the fleet takes it.
+
+That makes upstream's own site the fleet's canary, and it costs no code at
+all — only setting the default of one number correctly.
+
+### Three overrides that are not the owner's choice
+
+1. **`requiresAttention` downgrades automatic to notify.** Upstream saying a
+   release needs a human is not a preference to weigh.
+2. **A `minUpdaterVersion` newer than this updater refuses the release** and
+   tells the owner. Stopping is always better than installing half of it.
+3. **A version that failed to install is never retried automatically.**
+
+The third is mandatory rather than nice. After a rollback the failed version
+is *still newer than what is running*, so the next check finds it, installs
+it, fails, and rolls back again — an unbounded loop of real installs against
+a live site. The failure is recorded and that exact version is skipped
+until the owner retries it by hand.
+
+The rule has to be precise, though: **only the exact failed version is
+blocked, never everything after it.** When upstream ships the next one it
+gets installed normally — the fix is probably in it.
+
+### Two safeguards on the install itself
+
+- **Measure health before installing, not only after.** A rollback decision
+  compares against the pre-install state; without that baseline, a site that
+  was already broken oscillates install → red → roll back forever, blaming
+  each new release for damage that predates it.
+- **One install at a time**, held by a lock in D1, so an overrunning cron
+  and a queued "install now" cannot interleave.
+
+## Who gets told
+
+The identity model already exists: `push_subs.user` comes from a reader key,
+and `readers` holds one row per key with a label, minted on `/admin`. The
+only missing piece is a flag saying which of those devices is the owner's —
+`readers.is_owner`, a new column, additive, under the same rule as every
+other schema change here (PM-06).
+
+The flag sits on the **key**, not the user: one key per device is the
+existing design, a household can share a `user`, and the owner may carry two
+devices.
+
+| Message | Audience |
+|---|---|
+| 新版本已上線 — installed, reload | **everyone** (unchanged: readers do need to reload) |
+| a release is waiting for your decision | owner only |
+| an install failed and was rolled back | owner only |
+| the updater has not reported in N days (R10) | owner only |
+
+`announceBuild` broadcasts to every row in `push_subs` today, which stays
+right for the first line. The other three select only endpoints whose user
+owns a key flagged `is_owner`.
+
+**With no device flagged, nothing is sent** — deliberately, rather than
+falling back to broadcasting the owner's business to every reader. But
+`/admin` then has to say so in as many words: *no device is marked as the
+owner's, so these notifications are not being sent.* An unset state that
+looks identical to a quiet one is the same defect as R10, one screen over.
+
+One flag serves all three messages, so this is not machinery built for a
+single notification.
+
 ## Risks
 
 ### Fatal — the design is not defensible without these
@@ -341,6 +427,18 @@ Ticket ids are stable; `needs` is a hard ordering.
 
 **PM-07 · health check and automatic rollback**
 - Why: R3. Spends what the split bought.
+- Includes the pre-install baseline: a rollback decision compares against
+  the state before the install, or an already-broken site oscillates.
+- Needs: PM-05
+
+**PM-15 · the rules for when an install may happen**
+- Why: distinct from *how* to install (PM-05) and *did it work* (PM-07) —
+  this is the decision itself. The soak, the three overrides
+  (`requiresAttention` downgrades to notify, a too-new `minUpdaterVersion`
+  refuses, a failed version is never auto-retried), and the D1 install lock.
+- The failed-version rule needs a test proving the exact version is blocked
+  and the *next* one still installs; getting that backwards is either an
+  install loop or a permanently stuck instance.
 - Needs: PM-05
 
 **PM-08 · the panel and the policy**
@@ -351,7 +449,7 @@ Ticket ids are stable; `needs` is a hard ordering.
 - Also splits the cron into a short check interval and a policy-driven
   install, and queues an "install now" request through D1 rather than
   opening a callable surface on the updater.
-- The open question below sets the policy's default.
+- Ships the default: automatic, after 2 days.
 
 **PM-14 · alarm on a silent updater**
 - Why: R10. A cron-only Worker fails invisibly, and stale data on the panel
@@ -359,10 +457,13 @@ Ticket ids are stable; `needs` is a hard ordering.
   threshold, and the owner gets told.
 - Needs: PM-08
 
-**PM-09 · both outcomes reach the phone**
-- Why: the owner watches a phone, not a repo. `announceBuild` already
-  pushes 新版本已上線 down an existing channel; a failed-and-rolled-back
-  update rides the same one.
+**PM-09 · the owner's phone, and only the owner's**
+- Why: the owner watches a phone, not a repo — but three of the four update
+  messages are the owner's business, not every reader's. Adds
+  `readers.is_owner` and routes the waiting-for-you, failed-and-rolled-back
+  and updater-silent pushes to it; 新版本已上線 stays a broadcast.
+- With no device flagged, nothing is sent, and `/admin` says that plainly.
+- Needs: PM-08
 
 ### Phase 4 — bootstrap and docs
 
@@ -389,11 +490,3 @@ Ticket ids are stable; `needs` is a hard ordering.
 - Done when: one instance took an upstream release on its own schedule and
   a pinned instance beside it correctly did nothing — with nobody
   installing either by hand.
-
-## Open question
-
-Pull mode lets upstream change every instance with nobody reading the diff.
-The default policy is the decision: **auto-install**, or **notify and wait**,
-with pinning available either way. Auto is right for the owner's own phone;
-notify is right the moment someone else's reading depends on the instance.
-Undecided — it blocks PM-08 and nothing else.
