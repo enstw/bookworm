@@ -34,7 +34,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-04 · split out `bookworm-updater` | 2 | done — check landed; token+install are PM-05 |
 | PM-05 · the install path | 2 | done — built and proven; armed by PM-07/PM-15 |
 | PM-06 · migrations before the swap, additive-only | 2 | — |
-| PM-07 · health check and automatic rollback | 3 | — |
+| PM-07 · health check and automatic rollback | 3 | done — built and proven; armed by PM-15 |
 | PM-15 · the rules for when an install may happen | 3 | — |
 | PM-08 · the panel and the policy | 3 | — |
 | PM-14 · alarm on a silent updater | 3 | — |
@@ -1026,6 +1026,29 @@ can go in.
   the site is serving the previous version again with the failure on the
   panel — with nobody touching it.
 - Needs: PM-05
+- **Landed, 2026-08-21.** `installWithRollback()` in
+  `src/updater-core.mjs`: health BEFORE (the baseline, or an already-broken
+  site oscillates), install, health AFTER, roll back only if a working site
+  regressed. Health is `/api/version` polled to the new `BUILD` then
+  `/api/books` — the second because `BUILD` is a compiled-in constant a
+  release that unbound D1 answers cheerfully, while `/api/books` touches the
+  worker and its D1 in one request. Reaches the reader through a `READER`
+  service binding (Worker→`workers.dev` is 1042, PM-00), with a reader key
+  the updater mints in `readers` (shows as the reader `updater` on `/admin`,
+  revocable, no admin power). Rollback is one `POST …/deployments` to the
+  pre-install `version_id`; the outcome lands in `updater_status`
+  (`last_install_*`) for the panel.
+- **The Done-when, met live.** A throwaway target running a healthy v0 took
+  a deliberately broken release through the SHIPPED `installWithRollback()` —
+  its `/api/version` answered `pm07-broken` while `/api/books` returned
+  500 — and the updater rolled it back, v0 serving and healthy again, nobody
+  touching it; then a good release installed and stayed. `test-updater.mjs`
+  pins the health verdicts, the deployments API, key minting and the full
+  decision matrix (ok / regressed→rolled-back / install-threw-site-unharmed /
+  already-broken-no-oscillation) against fakes.
+- **Built, not armed.** Same line as PM-05: the cron only checks, no token on
+  the production updater, nothing calls the loop. PM-15's policy is what fires
+  it, now that the net beneath it exists.
 
 **PM-15 · the rules for when an install may happen**
 - Why: distinct from *how* to install (PM-05) and *did it work* (PM-07) —

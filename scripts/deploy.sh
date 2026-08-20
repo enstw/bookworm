@@ -110,6 +110,25 @@ else
   echo "    added"
 fi
 
+# the guarded install's outcome columns (PM-07) — added after updater_status
+# first shipped, so they need the ALTER dance like every other live-table
+# column. The table itself is created by schema.sql above on a fresh install.
+echo "==> ensuring updater_status install columns"
+UCOLS=$($W d1 execute bookworm --remote --json --command "PRAGMA table_info(updater_status)")
+for col in \
+  "last_install_at INTEGER NOT NULL DEFAULT 0" \
+  "last_install_version TEXT NOT NULL DEFAULT ''" \
+  "last_install_result TEXT NOT NULL DEFAULT ''" \
+  "last_install_detail TEXT NOT NULL DEFAULT ''"; do
+  name=${col%% *}
+  if grep -q "\"${name}\"" <<<"$UCOLS"; then
+    echo "    (${name} already present)"
+  else
+    $W d1 execute bookworm --remote --command "ALTER TABLE updater_status ADD COLUMN ${col}"
+    echo "    added ${name}"
+  fi
+done
+
 echo "==> vendoring browser bundles (public/vendor/ is gitignored)"
 node scripts/vendor.mjs
 

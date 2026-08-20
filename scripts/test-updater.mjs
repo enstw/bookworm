@@ -9,7 +9,8 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { zipSync } from "fflate";
-import { checkOnce, d1Store, UPDATER_VERSION, verifyBundle, buildMetadata, install } from "../src/updater-core.mjs";
+import { checkOnce, d1Store, UPDATER_VERSION, verifyBundle, buildMetadata, install,
+  ensureHealthKey, healthCheck, currentVersionId, rollbackTo, installWithRollback } from "../src/updater-core.mjs";
 
 const out = {};
 const eq = (name, actual, expected) => {
@@ -281,6 +282,112 @@ const READER = { bindings: [{ type: "secret_text", name: "ADMIN_TOKEN" }, { type
   const entry = readFileSync(new URL("../src/updater.js", import.meta.url), "utf8");
   out.installNotArmed = /checkOnce\(/.test(entry) && !/\binstall\(/.test(entry)
     ? "ok (cron checks only; install not auto-invoked)" : "FAIL the cron calls install()";
+}
+
+// ---- health check + rollback (PM-07) ------------------------------------
+
+const nap = () => Promise.resolve();
+// a reader that answers /api/version and /api/books off a mutable state, so a
+// rollback can be seen to change what it serves
+const fakeReader = (state) => async (path, init) => {
+  if (path === "/api/version") return { ok: true, status: 200, json: async () => ({ build: state.version }) };
+  if (path === "/api/books") {
+    if (!init?.headers?.["x-reader-key"]) return { ok: false, status: 401, json: async () => ({ error: "unauthorized" }) };
+    const ok = state.books < 400;
+    return { ok, status: state.books, json: async () => (ok ? { books: [] } : { error: "boom" }) };
+  }
+  return { ok: false, status: 404, json: async () => ({}) };
+};
+
+// 15. healthCheck: healthy; version never propagates; books broken; no key
+{
+  const good = await healthCheck({ fetchReader: fakeReader({ version: "v2", books: 200 }), readerKey: "k", expectedVersion: "v2", tries: 3, sleep: nap });
+  const stuck = await healthCheck({ fetchReader: fakeReader({ version: "v1", books: 200 }), readerKey: "k", expectedVersion: "v2", tries: 3, sleep: nap });
+  const broken = await healthCheck({ fetchReader: fakeReader({ version: "v2", books: 500 }), readerKey: "k", expectedVersion: "v2", tries: 3, sleep: nap });
+  const nokey = await healthCheck({ fetchReader: fakeReader({ version: "v2", books: 200 }), readerKey: "", expectedVersion: "v2", tries: 3, sleep: nap });
+  out.healthCheck =
+    good.ok === true && stuck.ok === false && /version stayed/.test(stuck.detail) &&
+    broken.ok === false && /→ 500/.test(broken.detail) && nokey.ok === false && /401/.test(nokey.detail)
+      ? "ok (healthy / version-stuck / books-500 / no-key all judged right)"
+      : `FAIL ${JSON.stringify({ good, stuck, broken, nokey })}`;
+}
+
+// 16. currentVersionId + rollbackTo speak the deployments API
+{
+  let posted = null;
+  const cf = async (path, init) => {
+    if (/\/deployments$/.test(path) && init?.method === "POST") { posted = JSON.parse(init.body); return { id: "dep1" }; }
+    if (/\/deployments$/.test(path)) return { deployments: [{ versions: [{ version_id: "VER-CURRENT" }] }] };
+    throw new Error("unexpected " + path);
+  };
+  const cur = await currentVersionId(cf, "bookworm");
+  await rollbackTo(cf, "bookworm", "VER-PREV", "test rollback");
+  out.rollbackApi = cur === "VER-CURRENT" && posted?.strategy === "percentage" &&
+    posted.versions[0].version_id === "VER-PREV" && posted.versions[0].percentage === 100
+    ? "ok (reads current version, POSTs the previous at 100%)" : `FAIL cur=${cur} ${JSON.stringify(posted)}`;
+}
+
+// 17. ensureHealthKey mints once in readers, then reuses it
+{
+  const rows = [];
+  const env = { DB: { prepare(sql) { return {
+    bind(...a) { return {
+      async first() { return /SELECT key FROM readers/.test(sql) ? (rows.find((r) => r.user === a[0]) ?? null) : null; },
+      async run() { if (/INSERT INTO readers/.test(sql)) rows.push({ key: a[0], user: a[1], label: a[2] }); },
+    }; },
+  }; } } };
+  const k1 = await ensureHealthKey(env, () => "mintedkey00000000000000000000000");
+  const k2 = await ensureHealthKey(env, () => "SHOULD-NOT-BE-USED");
+  out.healthKey = k1 === "mintedkey00000000000000000000000" && k2 === k1 && rows.length === 1 &&
+    rows[0].user === "updater" && /health check/.test(rows[0].label)
+    ? "ok (minted once as reader `updater`, reused)" : `FAIL k1=${k1} k2=${k2} rows=${JSON.stringify(rows)}`;
+}
+
+// 18. installWithRollback — the decision matrix. cf serves deployments and,
+// on a rollback POST, restores what the reader serves.
+function harness({ before, throwInstall, afterVersion, afterBooks }) {
+  const state = { version: before.version, books: before.books };
+  const events = [];
+  const cf = async (path, init) => {
+    if (/\/deployments$/.test(path) && init?.method === "POST") { events.push("rollback"); state.version = before.version; state.books = before.books; return { id: "d" }; }
+    if (/\/deployments$/.test(path)) return { deployments: [{ versions: [{ version_id: "PREV" }] }] };
+    throw new Error("unexpected cf " + path);
+  };
+  const installFn = async () => { if (throwInstall) throw new Error("install boom"); state.version = afterVersion; state.books = afterBooks; return { version: afterVersion }; };
+  return { cf, installFn, fetchReader: fakeReader(state), events, state };
+}
+const runRB = async (opts) => {
+  const h = harness(opts);
+  const rec = [];
+  const r = await installWithRollback({
+    manifest: { version: opts.afterVersion, bundle: {}, assets: [] }, cf: h.cf, script: "bookworm",
+    fetchReader: h.fetchReader, readerKey: "hk", installFn: h.installFn,
+    recordOutcome: async (o) => rec.push(o), sleep: nap,
+  });
+  return { r, events: h.events, rec: rec[0], state: h.state };
+};
+{
+  // (a) success + healthy → ok, no rollback
+  const a = await runRB({ before: { version: "v1", books: 200 }, afterVersion: "v2", afterBooks: 200 });
+  // (b) success but the new version is broken → rollback, previous restored
+  const b = await runRB({ before: { version: "v1", books: 200 }, afterVersion: "v2", afterBooks: 500 });
+  // (c) install threw, site unharmed → failed, no rollback
+  const c = await runRB({ before: { version: "v1", books: 200 }, throwInstall: true, afterVersion: "v2", afterBooks: 200 });
+  // (d) already broken before AND still broken after → failed, NO oscillating rollback
+  const d = await runRB({ before: { version: "v1", books: 500 }, afterVersion: "v2", afterBooks: 500 });
+  out.rollbackOk = a.r.outcome === "ok" && a.events.length === 0 && a.rec.outcome === "ok" ? "ok" : `FAIL ${JSON.stringify(a.r)}`;
+  out.rollbackRegressed = b.r.outcome === "rolled-back" && b.r.rolledBack && b.events[0] === "rollback" &&
+    b.r.restored?.ok === true && b.state.version === "v1" && b.rec.outcome === "rolled-back"
+    ? "ok (broken release rolled back, v1 serving again)" : `FAIL ${JSON.stringify(b.r)} events=${b.events}`;
+  out.rollbackInstallThrew = c.r.outcome === "failed" && c.events.length === 0 && /boom/.test(c.rec.detail) ? "ok (failed, site unharmed, no rollback)" : `FAIL ${JSON.stringify(c.r)}`;
+  out.rollbackNoOscillate = d.r.outcome === "failed" && d.events.length === 0 ? "ok (already broken: no pointless rollback)" : `FAIL ${JSON.stringify(d.r)} events=${d.events}`;
+}
+
+// 19. the service binding the health check reaches the reader through
+{
+  const cfg = JSON.parse(readFileSync(new URL("../wrangler.updater.jsonc", import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, ""));
+  out.readerBinding = cfg.services?.[0]?.binding === "READER" && cfg.services[0].service === "bookworm"
+    ? "ok (READER service binding → bookworm)" : `FAIL ${JSON.stringify(cfg.services)}`;
 }
 
 console.log(JSON.stringify(out, null, 2));
