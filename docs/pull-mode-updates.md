@@ -31,7 +31,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-01 · publish the artifact and its manifest | 1 | done |
 | PM-02 · the manifest becomes a stated contract | 1 | done |
 | PM-03 · a release can demand a human | 1 | wip — publishing half landed, honouring half waits on PM-15 |
-| PM-04 · split out `bookworm-updater` | 2 | — |
+| PM-04 · split out `bookworm-updater` | 2 | done — check landed; token+install are PM-05 |
 | PM-05 · the install path | 2 | — |
 | PM-06 · migrations before the swap, additive-only | 2 | — |
 | PM-07 · health check and automatic rollback | 3 | — |
@@ -901,6 +901,23 @@ can go in.
 - Why: the whole security and recoverability argument above. Cron-only, no
   fetch handler, its own tiny surface.
 - Done when: the reader Worker holds no Cloudflare credential.
+- **Landed, 2026-08-21.** `src/updater.js` (entry, handler only) +
+  `src/updater-core.mjs` (logic, `UPDATER_VERSION`) + `wrangler.updater.jsonc`
+  (cron-only, binds the reader's D1); `scripts/deploy.sh` deploys it beside
+  the reader and rewrites its `database_id`. It carries **no** Cloudflare
+  credential yet — that arrives with the install path it protects (PM-05), so
+  nothing is placed before it is used; its only secret is `UPSTREAM_URL`, and
+  without it the cron records "未設定" and does nothing. The read-only check
+  landed with the split (its natural, side-effect-free cron body): fetch the
+  manifest over enforced-`https://` with `cache: "no-store"`, write
+  `updater_status`, keep the last known-good version on a failed check.
+  `scripts/test-updater.mjs` (17 checks, pure node via a store/fetch seam)
+  pins the URL join, the https refusal, the no-cache fetch, the
+  keep-last-known behaviour, and the structural promises (no fetch handler,
+  same D1, reader holds no CF token). Smoked against the real
+  `releases/latest/download/manifest.json`: it recorded
+  `34606e8 · 2026-08-21 00:21`, the release PM-01 published. The cadence
+  split and the panel that reads this row are PM-08.
 
 **PM-05 · the install path**
 - Why: manifest → verify → upload session → script PUT, sending the binding

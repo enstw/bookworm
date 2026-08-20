@@ -121,6 +121,24 @@ CREATE TABLE IF NOT EXISTS announced_builds (
   created_at INTEGER NOT NULL DEFAULT 0
 );
 
+-- The updater's report to the reader, one row (id = 1). bookworm-updater is
+-- cron-only and holds the one trust relationship with upstream; it writes
+-- here what it last saw, and /admin reads it (never contacting upstream
+-- itself — see docs/pull-mode-updates.md, "What /admin shows"). Both Workers
+-- bind the same D1, which is what carries the report across the split.
+-- last_check_ok distinguishes fresh data from stale: on a failed check only
+-- last_check_at/ok/detail move, so upstream_version keeps the last known-good
+-- rather than being erased by a transient outage. Persistent like readers —
+-- no DELETE here, or every deploy would forget what upstream last offered.
+CREATE TABLE IF NOT EXISTS updater_status (
+  id                   INTEGER PRIMARY KEY CHECK (id = 1),
+  last_check_at        INTEGER NOT NULL DEFAULT 0,
+  last_check_ok        INTEGER NOT NULL DEFAULT 0,
+  upstream_version     TEXT    NOT NULL DEFAULT '',
+  upstream_released_at TEXT    NOT NULL DEFAULT '',
+  detail               TEXT    NOT NULL DEFAULT ''
+);
+
 -- Web Push subscriptions (新書上架、新版本通知), one row per browser push
 -- endpoint, registered from the library footer. Rows are dropped when the
 -- push service reports the endpoint gone (404/410) or the user unsubscribes.

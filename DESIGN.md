@@ -505,6 +505,39 @@ route handler must be `return await`ed: a promise settling outside the `try`
 escapes as a bare platform 1101 with no message. R2 has no server-side copy;
 buffer a copy through `arrayBuffer()` so it holds one connection, not two.
 
+### The second Worker: bookworm-updater
+
+An instance is two Workers on one account (`docs/pull-mode-updates.md`).
+`bookworm` is everything above — public routes, uploads, `/admin`, the
+reader cron. `bookworm-updater` (`src/updater.js`, `wrangler.updater.jsonc`)
+is **cron-only: no fetch handler, no route**, so nothing outside Cloudflare
+can invoke it. It is the one place that talks to upstream, and it is where
+the Cloudflare API token that can rewrite the reader will live (PM-05) —
+never in `bookworm`, the largest attack surface (R1), and separate so a
+release that bricks the reader cannot take the thing that would roll it back
+(R3). Both Workers bind the **same D1**; that shared binding is the only
+channel between them. The entry module exports only the handler — workerd
+rejects any non-handler export from a Worker's entry — so the logic and the
+`UPDATER_VERSION` integer live in `src/updater-core.mjs`, which imports none
+of the reader's code (the updater "barely changes", which is what keeps
+"update the updater" a rare act).
+
+What landed in PM-04 is the split plus the read-only half of the cron: every
+~15 min the updater fetches `UPSTREAM_URL`/`manifest.json` — `https://`
+enforced (TLS is the whole trust anchor), `cache: "no-store"` because
+`latest/download` is a stable URL with changing contents — and writes what it
+saw to the single `updater_status` row, where `/admin` will read it (PM-08)
+without ever contacting upstream itself. A failed check keeps the last
+known-good `upstream_version` and only moves `last_check_at`/`ok`/`detail`, so
+a transient outage reads as "checked N ago, failed" rather than erasing the
+version. It installs nothing — the upload path, the token and the panel are
+PM-05/PM-07/PM-08 — so the Worker deployed to the account today can do no
+more than record a version string, and with no `UPSTREAM_URL` secret set it
+does not even do that. `checkOnce` takes a store and a fetch seam, so
+`scripts/test-updater.mjs` exercises it with no account; `scripts/deploy.sh`
+deploys it beside the reader (`--config wrangler.updater.jsonc`) and rewrites
+its `database_id` the same way.
+
 ## Reader frontend
 
 - **The paged grid.** Both writing modes page on an integer grid:
