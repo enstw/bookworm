@@ -598,6 +598,30 @@ buffer a copy through `arrayBuffer()` so it holds one connection, not two.
   chain — worker send, push-service status, SW receipt, badge — logs to
   `testlog` page=push, and the 測試 button pushes the phone itself so each
   outcome names a different fix.
+- **The owner-only channel rides the key, not the user.** Some messages are
+  the owner's business and nobody else's — an update waiting for a
+  decision, an install rolled back, the updater gone silent (the pull-mode
+  plan, *Who gets told*). `readers.is_owner` marks the owner's devices and
+  `pushOwner()` in the worker is the one sender for all of them; it selects
+  `push_subs` rows by the **key** that registered them (`push_subs.key`,
+  written by subscribe from the authenticated identity, '' for the admin
+  Bearer), because a household may share a `user` and the owner may carry
+  two phones — a user-level join would have rung the family tablet. Rows
+  from before the column fill themselves in: `healPush()` re-upserts at
+  every open, so no migration. **With no key marked, nothing is sent** —
+  never a broadcast fallback — and the silence is said out loud in two
+  places: the push log line and the 讀者鑰匙 fold on /admin, which names the
+  three messages that are currently going nowhere. The fold's 測試管理者通知
+  button (`POST /api/admin/owner-test`, fixed payload, admin-gated) rings the
+  marked devices and only those, and its response tells "no key marked"
+  (`owners: 0`) apart from "marked but that phone never subscribed"
+  (`owners: 1, subs: 0`) — the same two-silences rule the 測試 button
+  follows. A generic "push this text to the owner" admin route was
+  considered and refused: a door that rings the owner's phone with
+  arbitrary text is a door. `test:push` pins the routing with two keys under
+  one user. Schema evolution as everywhere: `schema.sql` gains the columns
+  for fresh installs, `scripts/deploy.sh` carries the guarded `ALTER`s for
+  the live table.
 - **Marking pushes read means close(), because iOS never unlists what the
   user swept away.** The SW sets the app-icon badge to
   `registration.getNotifications().length` when a push lands, so the number

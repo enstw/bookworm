@@ -3,8 +3,9 @@
 // capture server, subscribes that endpoint, publishes a book through the
 // real admin route, then DECRYPTS the notification the worker actually sent
 // and checks the VAPID JWT that carried it. Also covers validation, upsert,
-// unsubscribe, the re-publish (no duplicate announcement) case, and 410
-// pruning.
+// unsubscribe, the re-publish (no duplicate announcement) case, 410
+// pruning, and the owner-only channel (readers.is_owner routes per key:
+// two keys under one user, only the marked one rings).
 //
 // The build announcement needs a STAMPED worker — announceBuild refuses to
 // ring for BUILD "dev" — so this script does deploy.sh's sed itself, on an
@@ -416,6 +417,100 @@ try {
     out.announceLog = alogs.some((l) => l.data.includes(`新版本 ${TEST_BUILD}: 1 訂閱`))
       ? "ok (logged)" : "FAIL not in the push log";
   }
+
+  // 11. the owner-only channel: readers.is_owner routes per KEY, not per
+  // user. Two keys under ONE user — the owner's phone and a household
+  // tablet — each with a subscription of its own; marking the phone must
+  // ring the phone alone, and with nothing marked the channel sends nothing
+  // at all (a broadcast fallback would put the owner's business on every
+  // reader's lock screen). The response tells the two silences apart.
+  const mintKey = async (label) => (await (await post("/api/admin/readers",
+    { user: "pushhouse", label })).json()).key;
+  const kOwner = await mintKey("owner phone");
+  const kOther = await mintKey("family tablet");
+  const keyUrl = (k) => `/api/admin/readers/${encodeURIComponent(k)}`;
+
+  // the real subscribe route remembers which key registered the endpoint —
+  // the header alone, no Bearer, the way the app subscribes
+  const viaKey = await fetch(`${BASE}/api/push/subscribe`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-reader-key": kOwner },
+    body: JSON.stringify({ ...sub, endpoint: "https://push.example.invalid/owner-K" }),
+  });
+  const keyed = JSON.parse(d1(
+    "SELECT user u, key k FROM push_subs WHERE endpoint = 'https://push.example.invalid/owner-K'",
+  ))[0].results[0] ?? {};
+  out.subscribeKeepsKey = viaKey.ok && keyed.u === "pushhouse" && keyed.k === kOwner
+    ? "ok (push_subs.key is the subscribing key, user is the key's user)"
+    : `FAIL ${viaKey.status} ${JSON.stringify(keyed)}`;
+
+  const epOwner = `http://127.0.0.1:${CAP_PORT}/push/owner`;
+  const epOther = `http://127.0.0.1:${CAP_PORT}/push/other`;
+  d1(`DELETE FROM push_subs;
+      INSERT INTO push_subs (endpoint, user, p256dh, auth, created_at, key) VALUES
+        ('${epOwner}', 'pushhouse', '${sub.p256dh}', '${sub.auth}', 0, '${kOwner}'),
+        ('${epOther}', 'pushhouse', '${sub.p256dh}', '${sub.auth}', 0, '${kOther}')`);
+
+  // nothing marked → nothing sent
+  captured.length = 0;
+  const o0 = await (await post("/api/admin/owner-test", {})).json();
+  await sleep(1500);
+  out.ownerUnset = o0.ok === false && o0.owners === 0 && o0.subs === 0 && captured.length === 0
+    ? "ok (no key marked: owners 0, nothing pushed)"
+    : `FAIL ${JSON.stringify(o0)} pushes=${captured.length}`;
+
+  // mark the phone: the list says so, and only the phone rings — the tablet
+  // shares the user and must stay quiet
+  const mark = await post(keyUrl(kOwner), { owner: true });
+  const listed = (await (await fetch(`${BASE}/api/admin/readers`,
+    { headers: { authorization: `Bearer ${TOKEN}` } })).json()).readers ?? [];
+  const flags = Object.fromEntries(
+    listed.filter((r) => r.user === "pushhouse").map((r) => [r.label, r.owner]));
+  captured.length = 0;
+  const o1 = await (await post("/api/admin/owner-test", {})).json();
+  for (let i = 0; i < 40 && !captured.length; i++) await sleep(250);
+  await sleep(1000);
+  const oPayload = captured.length
+    ? await decrypt(captured[0].body).catch((e) => ({ error: String(e) })) : {};
+  out.ownerOnly = mark.ok && flags["owner phone"] === true && flags["family tablet"] === false &&
+    o1.ok === true && o1.owners === 1 && o1.subs === 1 &&
+    captured.length === 1 && captured[0].path === "/push/owner" &&
+    oPayload.title === "管理者通知測試" && oPayload.url === "/admin"
+    ? "ok (one key marked → the phone rings, the tablet on the same user does not)"
+    : `FAIL mark=${mark.status} flags=${JSON.stringify(flags)} ${JSON.stringify(o1)} ` +
+      `paths=${captured.map((c) => c.path).join(",")} ${JSON.stringify(oPayload)}`;
+
+  // a marked key without a subscription is the OTHER silence, named apart
+  d1(`DELETE FROM push_subs WHERE endpoint = '${epOwner}'`);
+  captured.length = 0;
+  const o2 = await (await post("/api/admin/owner-test", {})).json();
+  await sleep(1000);
+  out.ownerNoSub = o2.ok === false && o2.owners === 1 && o2.subs === 0 && captured.length === 0
+    ? "ok (marked but unsubscribed: owners 1, subs 0)"
+    : `FAIL ${JSON.stringify(o2)} pushes=${captured.length}`;
+
+  // unmark → quiet again; a non-boolean body and an unknown key are refused
+  const unmark = await post(keyUrl(kOwner), { owner: false });
+  const badBody = await post(keyUrl(kOwner), { owner: "yes" });
+  const noKey = await post(keyUrl("nosuchkey"), { owner: true });
+  const o3 = await (await post("/api/admin/owner-test", {})).json();
+  out.ownerUnmark = unmark.ok && badBody.status === 400 && noKey.status === 404 && o3.owners === 0
+    ? "ok (unmarked; 400 on a non-boolean, 404 on an unknown key)"
+    : `FAIL ${unmark.status}/${badBody.status}/${noKey.status} ${JSON.stringify(o3)}`;
+
+  await sleep(500);
+  const ologs = (await (await fetch(`${BASE}/api/testlog?page=push&limit=20`,
+    { headers: { authorization: `Bearer ${TOKEN}` } })).json()).logs ?? [];
+  const ojoined = ologs.map((l) => l.data).join("\n");
+  out.ownerLog = /管理者測試: 沒有標記為管理者的裝置，未送出/.test(ojoined) &&
+    /管理者測試: 1 把管理者鑰匙，1 訂閱\n.+→ 201/.test(ojoined)
+    ? "ok (both silences and the send are in the push log)"
+    : "FAIL " + JSON.stringify(ojoined.slice(0, 300));
+
+  d1("DELETE FROM push_subs");
+  for (const k of [kOwner, kOther])
+    await fetch(`${BASE}${keyUrl(k)}`,
+      { method: "DELETE", headers: { authorization: `Bearer ${TOKEN}` } });
 
   // cleanup: drop the books this test published, index rows and all — these
   // were published under prefix == slug, so the prefix is also the book id

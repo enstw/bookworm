@@ -38,7 +38,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-15 · the rules for when an install may happen | 3 | — |
 | PM-08 · the panel and the policy | 3 | — |
 | PM-14 · alarm on a silent updater | 3 | — |
-| PM-09 · the owner's phone, and only the owner's | 3 | — |
+| PM-09 · the owner's phone, and only the owner's | 3 | wip — channel landed, messages pending |
 | PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | — |
 | PM-16 · updating the updater | 4 | — |
 | PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md` | 4 | — |
@@ -399,8 +399,15 @@ devices.
 | the updater has not reported in N days (R10) | owner only |
 
 `announceBuild` broadcasts to every row in `push_subs` today, which stays
-right for the first line. The other three select only endpoints whose user
-owns a key flagged `is_owner`.
+right for the first line. The other three go through one sender,
+`pushOwner()`, which selects only the endpoints **registered by** a key
+flagged `is_owner`. That needs the subscription to remember its key —
+`push_subs` held only the `user` — so `push_subs.key` is added beside the
+flag (additive; `healPush()` re-upserts every phone's row at each open, so
+it fills itself in). Joining on the user instead would have sent the
+owner's business to every device sharing that user, which is exactly the
+household case the flag was put on the key for. *Landed ahead of phase 3 —
+see PM-09.*
 
 **With no device flagged, nothing is sent** — deliberately, rather than
 falling back to broadcasting the owner's business to every reader. But
@@ -959,11 +966,22 @@ can go in.
   wrote (see *The reader sends, the updater only records*). The updater
   holds no VAPID key and never pushes.
 - With no device flagged, nothing is sent, and `/admin` says that plainly.
+- **Landed, 2026-08-20, ahead of its phase:** the channel itself has no
+  dependency on the updater, so it went in first — `readers.is_owner`,
+  `push_subs.key` (the subscription remembers the key that registered it,
+  which is what makes "on the key, not the user" true in the query),
+  `pushOwner()` as the one sender, the 設為管理者 toggle and the
+  no-device-marked notice in the 讀者鑰匙 fold, and a fixed-payload
+  `POST /api/admin/owner-test` so the owner can prove the routing from the
+  phone in hand. `test:push` pins it with two keys under one user: marking
+  the phone rings the phone, the tablet stays quiet, nothing marked sends
+  nothing. The three messages themselves join as PM-07, PM-08 and PM-14
+  create them — each calls `pushOwner()` and nothing else.
 - Done when: an install reaches every subscriber while a rolled-back
   install reaches only the owner's devices; with no device flagged, neither
   the owner-only messages nor a fallback broadcast goes out, and `/admin`
   says why.
-- Needs: PM-08
+- Needs: PM-08 (for the messages; the channel needed nothing)
 
 ### Phase 4 — bootstrap and docs
 
