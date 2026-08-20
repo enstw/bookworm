@@ -13,6 +13,8 @@ import { checkOnce, d1Store, UPDATER_VERSION, verifyBundle, buildMetadata, insta
   ensureHealthKey, healthCheck, currentVersionId, rollbackTo, installWithRollback,
   decide, acquireInstallLock, releaseInstallLock, runInstall } from "../src/updater-core.mjs";
 import { readPanel, setPolicy, queueInstallNow, shouldAlarm, isStale, SILENT_THRESHOLD_MS } from "../src/update-panel.mjs";
+import { runMigrations } from "../src/updater-core.mjs";
+import { parseMigrations, isAdditive } from "../src/migrations.mjs";
 
 const out = {};
 const eq = (name, actual, expected) => {
@@ -626,6 +628,67 @@ function panelDb(state) {
   const pNone = await readPanel({ DB: panelDb({ status: null, policy: null }) }, "b · x");
   out.panelStale = pStale.stale === true && pFresh.stale === false && pNone.stale === false
     ? "ok (old last-check stale; fresh and never-checked not)" : `FAIL ${JSON.stringify({ s: pStale.stale, f: pFresh.stale, n: pNone.stale })}`;
+}
+
+// ---- migrations before the swap (PM-06, R5) -----------------------------
+
+// 27. isAdditive / parseMigrations: only the survivable forms pass
+{
+  const additive = [
+    "CREATE TABLE IF NOT EXISTS t (id INTEGER)",
+    "ALTER TABLE books ADD COLUMN author TEXT NOT NULL DEFAULT ''",
+    "CREATE INDEX IF NOT EXISTS ix ON t (id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux ON t (id)",
+    "INSERT OR IGNORE INTO t (id) VALUES (1)",
+  ];
+  const forbidden = [
+    "DROP TABLE readers", "DELETE FROM books", "UPDATE books SET title = ''",
+    "ALTER TABLE books RENAME COLUMN a TO b", "ALTER TABLE books DROP COLUMN author",
+    "CREATE TABLE t (id INTEGER)", // no IF NOT EXISTS → would fail on an existing table
+  ];
+  const parsed = parseMigrations("-- a comment\nCREATE TABLE IF NOT EXISTS a (x INTEGER);\n\nALTER TABLE a ADD COLUMN y TEXT;\n");
+  out.migAdditive = additive.every(isAdditive) && !forbidden.some(isAdditive) &&
+    parsed.length === 2 && /^CREATE TABLE/.test(parsed[0]) && /^ALTER TABLE/.test(parsed[1])
+    ? "ok (additive forms pass, DROP/DELETE/UPDATE/rename refused; parse splits + strips comments)"
+    : `FAIL additive=${additive.map(isAdditive)} forbidden=${forbidden.map(isAdditive)} parsed=${JSON.stringify(parsed)}`;
+}
+
+// 28. runMigrations: additive-only, idempotent (a duplicate column is a
+// migration already applied), a real error throws, a non-additive refuses
+{
+  const ran = [];
+  const mkDb = (fail) => ({ prepare(sql) { return { async run() { ran.push(sql); if (fail && fail(sql)) throw new Error(fail(sql)); return { meta: { changes: 1 } }; } }; } });
+  ran.length = 0;
+  await runMigrations(mkDb(), ["CREATE TABLE IF NOT EXISTS a (x INTEGER)", "ALTER TABLE a ADD COLUMN y TEXT NOT NULL DEFAULT ''"]);
+  const bothRan = ran.length === 2;
+  // a duplicate-column error is swallowed (already applied on this instance)
+  ran.length = 0;
+  let idem = true;
+  try { await runMigrations(mkDb((s) => /ADD COLUMN/.test(s) ? "duplicate column name: y" : null), ["ALTER TABLE a ADD COLUMN y TEXT"]); } catch { idem = false; }
+  // a real error throws (the swap must not proceed)
+  let realThrew = false;
+  try { await runMigrations(mkDb(() => "no such table: a"), ["ALTER TABLE a ADD COLUMN z TEXT"]); } catch { realThrew = true; }
+  // a non-additive statement is refused before it runs
+  ran.length = 0;
+  let refused = false;
+  try { await runMigrations(mkDb(), ["DROP TABLE readers"]); } catch (e) { refused = /non-additive/.test(e.message); }
+  out.runMigrations = bothRan && idem && realThrew && refused && ran.length === 0
+    ? "ok (runs additive, swallows duplicate-column, throws on real error, refuses non-additive)"
+    : `FAIL both=${bothRan} idem=${idem} real=${realThrew} refused=${refused} ran=${ran.length}`;
+}
+
+// 29. install runs migrations BEFORE the swap (R5)
+{
+  const { manifest, zip } = fixture();
+  manifest.migrations = ["ALTER TABLE demo ADD COLUMN c TEXT NOT NULL DEFAULT ''"];
+  const order = [];
+  const cf = fakeCf({ pre: READER });
+  const cfLogged = async (path, init, bearer) => { if (init?.method === "PUT") order.push("put"); return cf(path, init, bearer); };
+  const db = { prepare(sql) { return { async run() { order.push("migrate"); return { meta: { changes: 1 } }; } }; } };
+  const fetchFn = async () => ({ ok: true, arrayBuffer: async () => zip });
+  await install({ manifest, cf: cfLogged, script: "bookworm", fetchFn, db });
+  out.migBeforeSwap = order.includes("migrate") && order.includes("put") && order.indexOf("migrate") < order.indexOf("put")
+    ? "ok (migration ran before the PUT)" : `FAIL ${JSON.stringify(order)}`;
 }
 
 console.log(JSON.stringify(out, null, 2));

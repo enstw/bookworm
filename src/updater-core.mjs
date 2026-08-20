@@ -6,6 +6,7 @@
 
 import { unzipSync } from "fflate";
 import { Buffer } from "node:buffer";
+import { isAdditive } from "./migrations.mjs";
 
 // The updater's own version, an integer, deliberately separate from the
 // reader's git BUILD stamp. A release's manifest carries minUpdaterVersion
@@ -178,6 +179,25 @@ export function buildMetadata(manifest, assetsJwt, keepBindingTypes) {
   };
 }
 
+// Apply the release's migrations to the shared D1, additive-only and
+// idempotent (PM-06, R5). Runs BEFORE the script swap: new code that needs a
+// column must find it there, and because every change is additive the OLD
+// code — if the swap then fails and rolls back — survives facing it. A
+// non-additive statement is refused before it runs (the swap never happens);
+// an ALTER whose column already exists is a migration already applied on this
+// instance, not a failure.
+export async function runMigrations(db, migrations) {
+  for (const sql of migrations ?? []) {
+    if (!isAdditive(sql)) throw new Error(`refusing non-additive migration: ${sql.slice(0, 60)}`);
+    try {
+      await db.prepare(sql).run();
+    } catch (err) {
+      if (/duplicate column|already exists/i.test(String(err?.message ?? err))) continue;
+      throw err;
+    }
+  }
+}
+
 const listBindings = async (cf, script) =>
   ((await cf(`/workers/scripts/${script}/settings`)).bindings ?? []).map((b) => ({ type: b.type, name: b.name }));
 const listSecrets = async (cf, script) =>
@@ -193,7 +213,7 @@ const listSecrets = async (cf, script) =>
 // every binding and secret that was on the script before the PUT is still
 // there after it. Throws before the PUT on any verify/claim failure, so a bad
 // release never reaches the swap; throws after it if anything was dropped.
-export async function install({ manifest, cf, script, fetchFn = fetch }) {
+export async function install({ manifest, cf, script, fetchFn = fetch, db }) {
   // the R4 baseline: what is bound before the swap
   const [preBindings, preSecrets] = await Promise.all([listBindings(cf, script), listSecrets(cf, script)]);
 
@@ -235,6 +255,12 @@ export async function install({ manifest, cf, script, fetchFn = fetch }) {
     const r = await cf(`/workers/assets/upload?base64=true`, { method: "POST", body: fd }, session.jwt);
     if (r.jwt) completion = r.jwt;
   }
+
+  // migrations BEFORE the swap (R5): the new code needs its columns present,
+  // and additive-only means the old code survives them if the swap rolls back.
+  // Runs against the shared D1 the updater binds; skipped when no db is given
+  // (the CF-API-only unit tests) or the release carries none.
+  if (db && manifest.migrations?.length) await runMigrations(db, manifest.migrations);
 
   // the swap: keep every non-assets binding that is on the script now, by
   // type, and re-declare only ASSETS with the fresh token. Reading the types
@@ -354,13 +380,13 @@ export async function rollbackTo(cf, script, versionId, message = "bookworm-upda
 // forever, blaming each release for damage that predates it. Records the
 // outcome for the panel (PM-08 reads it, including a rolled-back one). This is
 // the loop PM-15's policy will fire; nothing calls it automatically yet.
-export async function installWithRollback({ manifest, cf, script, fetchReader, readerKey, installFn = install, recordOutcome, now = 0, fetchFn = fetch, sleep }) {
+export async function installWithRollback({ manifest, cf, script, fetchReader, readerKey, installFn = install, recordOutcome, now = 0, fetchFn = fetch, sleep, db }) {
   const preVersionId = await currentVersionId(cf, script);
   const before = await healthCheck({ fetchReader, readerKey, sleep });
 
   let installErr = null, report = null;
   try {
-    report = await installFn({ manifest, cf, script, fetchFn });
+    report = await installFn({ manifest, cf, script, fetchFn, db });
   } catch (err) {
     installErr = String(err?.message ?? err);
   }
@@ -545,7 +571,7 @@ export async function runInstall({ env, manifest, now, deps = {} }) {
   try {
     const readerKey = await ensureHealthKey(env);
     const result = await installFn({
-      manifest, cf, script, fetchReader, readerKey, now,
+      manifest, cf, script, fetchReader, readerKey, now, db: env.DB,
       recordOutcome: (o) => recordInstall(env, o),
     });
     // a satisfied install-now must not re-fire every tick

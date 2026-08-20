@@ -33,7 +33,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-03 · a release can demand a human | 1 | wip — publishing half landed, honouring half waits on PM-15 |
 | PM-04 · split out `bookworm-updater` | 2 | done — check landed; token+install are PM-05 |
 | PM-05 · the install path | 2 | done — built and proven; armed by PM-07/PM-15 |
-| PM-06 · migrations before the swap, additive-only | 2 | — |
+| PM-06 · migrations before the swap, additive-only | 2 | done |
 | PM-07 · health check and automatic rollback | 3 | done — built and proven; armed by PM-15 |
 | PM-15 · the rules for when an install may happen | 3 | done — decision + lock; wired by PM-08 |
 | PM-08 · the panel and the policy | 3 | done — panel + cron split; armed by the owner's token |
@@ -985,6 +985,26 @@ can go in.
   test proves the migration ran before the script swap and that the old
   code still serves against the migrated schema.
 - Needs: PM-05
+- **Landed, 2026-08-21.** `migrations.sql` is the canonical list of additive
+  schema changes; `parseMigrations`/`isAdditive` (`src/migrations.mjs`) split
+  and gate it. `package-release.mjs` reads it into `manifest.migrations` and
+  refuses to package a non-additive statement; `test-release-manifest.mjs`
+  gates the manifest the same way (a seeded `DROP TABLE` is caught). The
+  updater's `runMigrations` applies them against the shared D1 **before the
+  swap** — additive-only so a rolled-back swap leaves the old code facing a
+  schema it survives, and idempotent (a duplicate-column error is a migration
+  already applied). `install()` runs them just before the `PUT`.
+  `migrations.sql` is currently empty: the baseline `schema.sql` is current,
+  so a future schema change appends its additive statement there (and its
+  guarded ALTER in `deploy.sh` for upstream's own already-live D1). Proven
+  live: a throwaway carrying a real `ALTER TABLE … ADD COLUMN` migration —
+  the column appeared (`[id]` → `[id, note]`), the new version served after,
+  and a re-install swallowed the duplicate-column error. The
+  DESIGN.md *Data migrations* rewrite the ticket calls for is folded into
+  the updater section rather than left dangling. `test-updater.mjs` pins
+  `isAdditive`/`parseMigrations`, `runMigrations` (additive, idempotent,
+  throws real errors, refuses non-additive), and that `install` migrates
+  before the `PUT`.
 
 ### Phase 3 — safe to leave alone
 

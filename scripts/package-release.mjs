@@ -57,6 +57,7 @@ import { zipSync } from "fflate";
 import { hash as blake3 } from "blake3-wasm";
 import { buildId, root } from "./build-id.mjs";
 import { attentionHistory, pendingRelease, renderEntry } from "./release-notes.mjs";
+import { parseMigrations, isAdditive } from "../src/migrations.mjs";
 
 // Bumped by hand when the install contract changes in a way an older updater
 // cannot follow (PM-16); an updater below this number refuses the release
@@ -73,6 +74,14 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // then the extension with its dot removed, blake3, first 32 hex chars
 export const cfHash = (bytes, file) =>
   blake3(Buffer.from(bytes).toString("base64") + extname(file).substring(1)).toString("hex").slice(0, 32);
+
+// refuse to package a non-additive migration — the gate R5 asks for, at the
+// one point every release passes through
+function migAssert(migrations) {
+  for (const m of migrations)
+    if (!isAdditive(m)) throw new Error(`migrations.sql has a non-additive statement, refusing to package: ${m.slice(0, 80)}`);
+  return migrations;
+}
 
 // wrangler.jsonc carries line comments only; strip those and parse
 export function readWranglerConfig(dir = root) {
@@ -175,10 +184,11 @@ export function packageRelease({ outDir, repo, cwd = root }) {
         not_found_handling: cfg.assets?.not_found_handling ?? "none",
         run_worker_first: cfg.assets?.run_worker_first ?? [],
       },
-      // additive migrations the updater runs BEFORE the script swap. Empty
-      // until PM-06 moves the guarded ALTERs out of deploy.sh and into a
-      // form both the deploy and this manifest read.
-      migrations: [],
+      // additive migrations the updater runs BEFORE the script swap (PM-06),
+      // read from migrations.sql. A non-additive statement is refused here, at
+      // packaging — a release cannot ship one a rolled-back swap could not
+      // survive (R5).
+      migrations: migAssert(parseMigrations(existsSync(join(cwd, "migrations.sql")) ? readFileSync(join(cwd, "migrations.sql"), "utf8") : "")),
       requiresAttention: attention.some((a) => shipping.has(a.commit)),
       attention,
       minUpdaterVersion: MIN_UPDATER_VERSION,
