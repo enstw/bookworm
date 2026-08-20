@@ -35,7 +35,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-05 · the install path | 2 | done — built and proven; armed by PM-07/PM-15 |
 | PM-06 · migrations before the swap, additive-only | 2 | — |
 | PM-07 · health check and automatic rollback | 3 | done — built and proven; armed by PM-15 |
-| PM-15 · the rules for when an install may happen | 3 | — |
+| PM-15 · the rules for when an install may happen | 3 | done — decision + lock; wired by PM-08 |
 | PM-08 · the panel and the policy | 3 | — |
 | PM-14 · alarm on a silent updater | 3 | — |
 | PM-09 · the owner's phone, and only the owner's | 3 | wip — channel landed, messages pending |
@@ -1061,6 +1061,27 @@ can go in.
 - Done when: one table-driven test covers the soak, all three overrides and
   the lock, and an overrunning install cannot start a second one.
 - Needs: PM-05
+- **Landed, 2026-08-21.** `decide()` in `src/updater-core.mjs` is the pure
+  decision — three modes, the soak, and the three overrides — returning
+  install / skip / notify / refuse with a reason. An `/admin` install-now
+  overrides the soak, the mode, the attention downgrade and the
+  failed-version block, but never `minUpdaterVersion`. The install lock is
+  `install_lock` (one D1 row, seeded by `schema.sql`); `acquireInstallLock()`
+  is a conditional `UPDATE` whose row-count is the verdict — atomic, not a
+  read-then-write race — reclaiming a stale lock so a died-mid-install isolate
+  cannot wedge it. `test-updater.mjs` runs the 15-case table (up-to-date,
+  soaking, soaked, canary soak-0, pinned ±install-now, notify ±install-now,
+  requiresAttention downgrade ±install-now, minUpdaterVersion refuse even with
+  install-now, failed-version skip vs install-now retry vs a different failed
+  version not blocking) and the lock (one at a time, released frees it, a
+  stale lock reclaimed). The lock's `meta.changes` verdict is the same D1
+  runtime field `announceBuild`'s exactly-once already rides; the `WHERE`
+  gating was confirmed against a live local D1.
+- **Built, not armed.** `decide()` decides and the lock guards, but nothing
+  calls them yet — PM-08 wires them into the cron split and stores the policy
+  `decide()` reads. With PM-05, PM-07 and PM-15 in, the whole loop —
+  check → decide → install → verify → roll back, one at a time — exists and
+  is proven; PM-08 turns it on.
 
 **PM-08 · the panel and the policy**
 - Why: `/admin` reads the updater's D1 record and never contacts upstream

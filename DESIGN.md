@@ -595,6 +595,27 @@ the single-asset refusal, the dropped-secret throw, the health-check verdicts,
 the deployments API, key minting, and the whole rollback decision matrix
 including the no-oscillation guard.
 
+**When an install may happen** (PM-15, `decide()`) is the decision layer, kept
+separate from how (PM-05) and did-it-work (PM-07): three modes — **automatic**
+(install once a release has soaked N days), **notify** (push and wait for the
+button), **pinned** (stay, still check) — and three overrides that are not the
+owner's choice: `requiresAttention` downgrades automatic to notify, a
+`minUpdaterVersion` newer than this updater **refuses** (better than half an
+install), and a version that failed is **never retried automatically** (or the
+next check reinstalls it, fails, rolls back, forever). An `/admin` "install
+now" is a deliberate human choice that overrides the soak, the mode, the
+attention downgrade and the failed-version block — but never `minUpdaterVersion`.
+The default is **automatic after 2 days**, and upstream's own instance runs
+with a soak of zero, which makes it the fleet's canary at no code cost: the
+author is always first to hit a bad release. `decide()` is pure — every input
+passed in — so the table test covers the whole matrix; it decides only, and
+`installWithRollback()` acts. One install runs at a time, held by
+`install_lock` in D1: `acquireInstallLock()` is a conditional `UPDATE` whose
+row-count is the verdict (atomic in the database, not a read-then-write race),
+and a lock older than the stale window is reclaimed so a died-mid-install
+isolate cannot wedge the updater. Still not armed — nothing calls `decide()`
+yet; PM-08 wires it into the cron and stores the policy it reads.
+
 ## Reader frontend
 
 - **The paged grid.** Both writing modes page on an integer grid:

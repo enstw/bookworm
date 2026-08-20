@@ -383,3 +383,81 @@ export async function installWithRollback({ manifest, cf, script, fetchReader, r
   if (recordOutcome) await recordOutcome({ at: now, version: manifest.version, outcome, detail: detail.slice(0, 300) });
   return { outcome, rolledBack, before, after, restored, report, installErr };
 }
+
+// ---- deciding whether to install (PM-15) --------------------------------
+//
+// The decision, separate from how to install (PM-05) and did-it-work (PM-07):
+// three modes and one soak number, plus three overrides that are NOT the
+// owner's choice. Pure — every input is passed in, so the table test can pin
+// the whole matrix — and it decides only; installWithRollback() acts. Nothing
+// calls it automatically yet; PM-08 wires it into the cron and stores the
+// policy this reads.
+//
+//   policy  : { mode: "automatic"|"notify"|"pinned", soakDays: number }
+//   manifest: { version, released_at, requiresAttention, minUpdaterVersion }
+//   lastInstall: { version, result } — updater_status.last_install_* (R: never
+//                 auto-retry a version that failed)
+//   installNow: the version /admin queued for immediate install, or null
+//
+// Returns { action, reason }:
+//   install — take it now
+//   skip    — do nothing (up to date, soaking, pinned, or a failed version)
+//   notify  — a new release is waiting for the owner's decision (notify mode,
+//             or requiresAttention downgrading automatic)
+//   refuse  — cannot install (minUpdaterVersion newer than this updater)
+export function decide({ policy, manifest, runningVersion, updaterVersion, lastInstall = {}, installNow = null, now }) {
+  const v = manifest.version;
+  if (v === runningVersion) return { action: "skip", reason: "up to date" };
+
+  // an updater too old to install the release safely stops — always better
+  // than installing half of it (override 2). Even an install-now cannot pass.
+  if (Number.isInteger(manifest.minUpdaterVersion) && manifest.minUpdaterVersion > updaterVersion)
+    return { action: "refuse", reason: `needs updater v${manifest.minUpdaterVersion}, this is v${updaterVersion}` };
+
+  // the owner asked for THIS version from /admin: a deliberate human choice
+  // overrides the soak, the mode, the attention downgrade and the failed-
+  // version block (a manual retry is not an automatic one). minUpdaterVersion
+  // above already had the last word.
+  if (installNow === v) return { action: "install", reason: "install now (owner requested)" };
+
+  // a version that failed to install is never retried automatically, or the
+  // next check finds it, installs it, fails, rolls back — forever (override 3)
+  if (lastInstall.version === v && lastInstall.result && lastInstall.result !== "ok")
+    return { action: "skip", reason: `${v} failed to install; not retried automatically` };
+
+  if (policy.mode === "pinned") return { action: "skip", reason: "pinned" };
+
+  // upstream says a human is needed (a new secret, a non-additive migration):
+  // downgrade automatic to notify (override 1)
+  if (manifest.requiresAttention) return { action: "notify", reason: "requires attention — waiting for you" };
+
+  if (policy.mode === "notify") return { action: "notify", reason: "notify-only — waiting for install now" };
+
+  // automatic, no override: the soak. Install once it has been out N days —
+  // upstream's own instance runs with soakDays 0, which makes it the fleet's
+  // canary at no code cost.
+  const ageMs = now - Date.parse(manifest.released_at);
+  if (!Number.isFinite(ageMs)) return { action: "skip", reason: "released_at unreadable" };
+  const soakMs = (policy.soakDays ?? 0) * 86400000;
+  if (ageMs < soakMs) {
+    const leftDays = ((soakMs - ageMs) / 86400000).toFixed(1);
+    return { action: "skip", reason: `soaking (${leftDays} days left)` };
+  }
+  return { action: "install", reason: `soak of ${policy.soakDays} day(s) elapsed` };
+}
+
+// One install at a time (the plan's second safeguard): an overrunning cron and
+// a queued install-now must not interleave. The lock is one D1 row, seeded by
+// schema.sql; acquire is a conditional UPDATE whose row-count is the verdict,
+// so it is atomic in the database rather than a read-then-write race. A lock
+// older than staleMs is reclaimed — an install that died mid-flight (the
+// isolate was evicted) must not wedge the updater forever.
+export async function acquireInstallLock(env, holder, now, staleMs = 15 * 60 * 1000) {
+  const res = await env.DB.prepare(
+    "UPDATE install_lock SET held_at = ?, holder = ? WHERE id = 1 AND (held_at = 0 OR held_at < ?)",
+  ).bind(now, holder, now - staleMs).run();
+  return (res.meta?.changes ?? 0) === 1;
+}
+export async function releaseInstallLock(env) {
+  await env.DB.prepare("UPDATE install_lock SET held_at = 0, holder = '' WHERE id = 1").run();
+}
