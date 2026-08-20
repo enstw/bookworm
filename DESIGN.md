@@ -376,6 +376,14 @@ row means no browser suite could have passed; read it before any of them.
 
 ### Data migrations
 
+This rule governs **upstream's own instance** — the one with a repo and
+Actions. A pull-mode instance has neither, so it cannot run a
+`workflow_dispatch` migration; its additive schema changes travel in
+`manifest.migrations` and the updater applies them before the swap (see the
+updater section above, PM-06). A *data reshape* (backfilling a column,
+renaming a slug) is still a one-off dispatch here; a *schema addition* is now
+declared once in `migrations.sql` and reaches instances through the manifest.
+
 Data migrations are one-off dispatch workflows, not app code. There is
 exactly one instance, so a change in stored shape never needs a
 compatibility layer living in the app — it needs one migration run, then the
@@ -556,7 +564,14 @@ budget at 42 files, PM-00 fact 2); and after the `PUT`, `install()` re-reads
 the script's bindings and secrets and throws if anything that was bound
 before is gone — R4's loud failure. Confirmation is CF-API-side because a
 Worker cannot fetch the reader over `workers.dev` (error 1042, PM-00); that
-the new version actually *serves* is the HTTP health check in PM-07.
+the new version actually *serves* is the HTTP health check in PM-07. A
+release that needs a schema change carries it in `manifest.migrations`
+(from `migrations.sql`, gated additive-only by `src/migrations.mjs`), and
+`install()` runs them against the shared D1 **before the `PUT`** (PM-06,
+R5): the new code finds its columns, and because every migration is
+additive the old code survives them if the swap rolls back. They are
+idempotent — a duplicate-column error is a migration already applied on
+this instance.
 
 **The safety net** (PM-07, `installWithRollback()`) is what an install is not
 allowed to run without. It checks health BEFORE the install, installs, checks

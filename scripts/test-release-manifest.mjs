@@ -25,6 +25,7 @@ import { hash as blake3 } from "blake3-wasm";
 import { buildId, root } from "./build-id.mjs";
 import { packageRelease, readWranglerConfig } from "./package-release.mjs";
 import { pendingRelease } from "./release-notes.mjs";
+import { isAdditive } from "../src/migrations.mjs";
 
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const VERSION_RE = /^[0-9a-f]{7,40} · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
@@ -114,6 +115,10 @@ export function checkManifest(m, { cfg, repo }) {
   is(JSON.stringify(m.assetsConfig.run_worker_first) === JSON.stringify(cfg.assets?.run_worker_first ?? []), "assetsConfig.run_worker_first ≠ wrangler.jsonc");
 
   is(m.migrations.every((s) => typeof s === "string"), "migrations must be SQL strings");
+  // R5's gate: a release must not carry a migration a rolled-back swap could
+  // not survive — additive-only, checked at the manifest as at packaging
+  for (const mig of m.migrations)
+    is(isAdditive(mig), `migration is not additive: ${String(mig).slice(0, 50)}`);
   for (const a of m.attention)
     is(typeOf(a) === "object" && keysOf(a) === "commit,reason,version" && VERSION_RE.test(a.version) && typeof a.reason === "string" && a.reason.length > 0,
       `attention entry ${JSON.stringify(a)} is not { commit, version, reason }`);
@@ -224,6 +229,7 @@ try {
     ["assetsConfig drifting", (m) => { m.assetsConfig.run_worker_first = []; }],
     ["icon source shipped", (m) => { m.assets.push({ ...m.assets.at(-1), path: "/zz/icon-source.png", file: "public/zz/icon-source.png" }); }],
     ["attention entry without reason", (m) => { m.attention.push({ commit: "abc1234", version: A.version }); }],
+    ["non-additive migration", (m) => { m.migrations.push("DROP TABLE readers"); }],
   ];
   const missed = mutations.filter(([, mutate]) => {
     const m = clone();

@@ -1,0 +1,17 @@
+-- Pull-mode migrations (PM-06). Additive-only schema changes a pull-mode
+-- instance must apply on top of its bootstrap baseline (the schema.sql a
+-- one-shot bootstrap ran when the instance was created). package-release.mjs
+-- reads this file into the release manifest; the updater runs each statement
+-- against the shared D1 BEFORE it swaps the Worker, and idempotently — an
+-- ALTER whose column already exists is a migration already applied, not a
+-- failure.
+--
+-- The rule, enforced by isAdditive() in src/migrations.mjs and the manifest
+-- gate: only CREATE TABLE/INDEX IF NOT EXISTS, ALTER TABLE ADD COLUMN, and
+-- INSERT OR IGNORE. Never a DROP, DELETE, UPDATE or rename — a failed swap
+-- leaves the OLD worker facing this schema, and it must survive.
+--
+-- Currently empty: the baseline schema.sql is current, so there is nothing to
+-- migrate on top of it. A future schema change appends its additive statement
+-- here (and, for upstream's own already-live D1, its guarded ALTER in
+-- scripts/deploy.sh — the two must agree).
