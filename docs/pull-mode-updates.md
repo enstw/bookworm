@@ -32,7 +32,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-02 · the manifest becomes a stated contract | 1 | done |
 | PM-03 · a release can demand a human | 1 | wip — publishing half landed, honouring half waits on PM-15 |
 | PM-04 · split out `bookworm-updater` | 2 | done — check landed; token+install are PM-05 |
-| PM-05 · the install path | 2 | — |
+| PM-05 · the install path | 2 | done — built and proven; armed by PM-07/PM-15 |
 | PM-06 · migrations before the swap, additive-only | 2 | — |
 | PM-07 · health check and automatic rollback | 3 | — |
 | PM-15 · the rules for when an install may happen | 3 | — |
@@ -942,6 +942,35 @@ can go in.
   binding and secret *name* the reader held before the PUT is still bound
   after it — the loud failure R4 asks for, holding not one value.
 - Needs: PM-00, PM-01, PM-04
+- **Landed, 2026-08-21.** `install()` in `src/updater-core.mjs`: download →
+  `sha256`-verify each file → assets-upload session → upload the buckets
+  Cloudflare asks for (`Buffer` base64) → `PUT` with `bindings: [ASSETS]` +
+  `keep_bindings` (the non-assets types read off the live script, so the
+  keep set is exactly what is there) + the assets token, compat and assets
+  config from the manifest. The `wrangler_single_asset_uploads` claim is read
+  from the session JWT and refused, not worked around. After the `PUT` it
+  re-reads bindings and secrets and throws if any pre-existing one is gone —
+  R4's loud failure, built into the function. Confirmation is CF-API-side:
+  Worker→`workers.dev` is error 1042 (PM-00), so proving it *serves* is
+  PM-07.
+- **The Done-when, met on the real release.** A throwaway target with an
+  `ASSETS`/`d1`/`r2`/two-`secret_text` baseline took the live
+  `releases/latest/download` release end to end — 42 assets, 7.6 MB, ~15 s —
+  and both secrets and all four bindings survived; run against the SHIPPED
+  `install()`, not spike code, then torn down. `scripts/test-updater.mjs`
+  pins the pieces with a fake API (verify + tamper-catching, the metadata
+  shape, the single-asset refusal firing before any upload, a dropped secret
+  throwing).
+- **Built, deliberately not armed.** The cron still only checks; the
+  Cloudflare token is not on the production updater (`deploy.sh` pushes it
+  only behind `UPDATER_CF_API_TOKEN`); nothing calls `install()`
+  automatically. A Worker-rewrite token that could auto-install with no
+  rollback is the risk the split exists to defend — so the credential and the
+  policy that fires the install wait for PM-07 and PM-15. `keep_assets: true`
+  for a code-only release is deferred: the session already returns empty
+  buckets and uploads nothing when no asset changed, so it is a micro-opt
+  that would trade a proven-safe path for stored state and a way to drop
+  assets if wrong.
 
 **PM-06 · migrations before the swap, additive-only**
 - Why: R5, promoted from habit to gate.

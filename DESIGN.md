@@ -538,6 +538,37 @@ does not even do that. `checkOnce` takes a store and a fetch seam, so
 deploys it beside the reader (`--config wrangler.updater.jsonc`) and rewrites
 its `database_id` the same way.
 
+**The install path** (PM-05, `install()` in `updater-core.mjs`) is the
+updater's one risky act: download the release bundle, `sha256`-verify every
+file against the manifest (download integrity, not authenticity — TLS to
+upstream is the anchor), open an assets-upload session, upload only the files
+Cloudflare says it lacks (base64 via `Buffer`, never chunked `btoa` — 5× the
+edge CPU, PM-00), and `PUT` the reader script. The `PUT` re-declares **only**
+`ASSETS` (it carries the fresh upload token) and keeps every other binding by
+type via `keep_bindings` — the types read off the live script before the
+swap, so the keep set is exactly what is there — which is how the updater
+holds **no reader secret** yet cannot drop `ADMIN_TOKEN`, the VAPID pair, the
+D1 id or the bucket (R4). `compatibility_date`/`_flags` and the assets config
+come from the manifest, never re-typed (R6). Two guards: the session JWT's
+`wrangler_single_asset_uploads` claim is read before any upload and is a
+**refusal**, not a fallback (one-file-per-request breaks the subrequest
+budget at 42 files, PM-00 fact 2); and after the `PUT`, `install()` re-reads
+the script's bindings and secrets and throws if anything that was bound
+before is gone — R4's loud failure. Confirmation is CF-API-side because a
+Worker cannot fetch the reader over `workers.dev` (error 1042, PM-00); that
+the new version actually *serves* is the HTTP health check in PM-07.
+
+`install()` is **built and proven but not armed**: the `scheduled` handler
+still only checks, the Cloudflare token is not on the production updater
+(`deploy.sh` pushes it only when `UPDATER_CF_API_TOKEN` is set), and nothing
+calls `install()` automatically. The credential and the trigger arrive with
+the safety net — PM-07's rollback and PM-15's policy — never before it.
+Proven live against a throwaway target: the shipped `install()` took the real
+published release (42 assets, 7.6 MB) onto it in ~15 s and every binding and
+secret survived (`scripts/test-updater.mjs` pins the pieces — verify,
+metadata, the single-asset refusal, the dropped-secret throw — with a fake
+API).
+
 ## Reader frontend
 
 - **The paged grid.** Both writing modes page on an integer grid:
