@@ -19,7 +19,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pendingRelease, root } from "./release-notes.mjs";
+import { pendingRelease, renderEntry, root } from "./release-notes.mjs";
 
 const release = pendingRelease();
 if (release.empty) {
@@ -27,14 +27,8 @@ if (release.empty) {
   process.exit(0);
 }
 
-const items = release.commits.map((l) => {
-  const [sha, ...subject] = l.split(" ");
-  return `- ${subject.join(" ")} (\`${sha}\`)`;
-});
-const notes = release.notes.map((n) => `> ${n}`);
-const entry = `## ${release.date} — \`${release.build}\`\n\n` +
-  (notes.length ? `${notes.join("\n")}\n\n` : "") +
-  `${items.join("\n")}\n`;
+// the same text the GitHub release body carries (package-release.mjs)
+const entry = renderEntry(release);
 
 const header = `# Releases
 

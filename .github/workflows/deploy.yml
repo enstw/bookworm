@@ -157,6 +157,19 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           VAPID_PRIVATE_JWK: ${{ secrets.VAPID_PRIVATE_JWK }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+      # The release artifact (docs/pull-mode-updates.md, PM-01): the bundle
+      # an instance's updater installs, plus the manifest that describes it,
+      # as a GitHub release per deploy — `releases/latest/download/` is what
+      # every instance polls. After deploy.sh, so only a build that is live
+      # is ever published; before the ledger step, which moves the tag the
+      # notes are computed from. Built from a staging copy of the same
+      # commit, so it needs no credential but the GitHub token.
+      - name: Publish the release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/package-release.mjs out/release
+          node scripts/publish-release.mjs out/release
       # Ledger the release: prepend what shipped to RELEASES.md, then move the
       # `released` tag onto the deployed commit — commits that land mid-deploy
       # stay inside the next range; the script filters the ledger's own docs
