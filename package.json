@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/vendor.mjs && wrangler dev",
+    "dev": "node scripts/vendor.mjs && wrangler dev --test-scheduled",
     "deploy": "node scripts/vendor.mjs && wrangler deploy",
     "vendor": "node scripts/vendor.mjs",
     "db:init": "wrangler d1 execute bookworm --remote --file=schema.sql",

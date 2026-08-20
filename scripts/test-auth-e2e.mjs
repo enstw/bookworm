@@ -51,7 +51,7 @@ const READER_401 = [
 ];
 const ADMIN_401 = [
   "/api/admin/ping", "/api/admin/session", "/api/admin/feedback",
-  "/api/admin/readers", "/api/admin/reindex", "/api/admin/announce-build",
+  "/api/admin/readers", "/api/admin/reindex",
   "/api/admin/audit", "/api/admin/cleanup", "/api/admin/owner-test",
 ];
 // Open, and each for its own reason: the shell is the public repo's

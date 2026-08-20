@@ -18,8 +18,8 @@ function json(data, status = 200, extra = {}) {
 
 // stamped by deploy.sh at deploy time, the same dance as app.js's BUILD:
 // "dev" means an unstamped local run. /api/version serves it so a shell
-// already open on a phone can learn that a newer one has deployed, and
-// announceBuild() pushes it to the phones that have no shell open at all.
+// already open on a phone can learn that a newer one has deployed, and the
+// cron's announceSelf() pushes it to the phones that have no shell open.
 const BUILD = "dev";
 
 export default {
@@ -83,6 +83,16 @@ export default {
       return json({ error: String(err?.message ?? err) }, 500);
     }
     return json({ error: "not found" }, 404);
+  },
+
+  // The reader's own cron (wrangler.jsonc triggers): every minute, the
+  // version that is actually running asks whether it has been announced yet.
+  // Nothing external fires this, which is the whole point — see
+  // announceSelf. The pull-mode plan's owner-only messages and its
+  // silent-updater alarm will be further calls here, reading rows the
+  // updater wrote; the updater itself never pushes.
+  async scheduled(controller, env, ctx) {
+    await announceSelf(env, ctx);
   },
 };
 
@@ -947,33 +957,31 @@ async function pushNewBook(env, ctx, title) {
   logPush(env, ctx, `新書 ${title}: ${rows.length} 訂閱\n${out.join("\n")}`);
 }
 
-// Announce THIS deploy to every subscription — the server side of
-// checkVersion() in app.js, which can only run while a page is open. An
-// installed phone nobody opened never learns a newer shell exists, and the
-// badge checkVersion would have set never appears; this is the same channel
-// 新書上架 uses, so the app icon gets its dot with the app closed.
+// Announce THIS version to every subscription, from the worker's own cron —
+// the server side of checkVersion() in app.js, which can only run while a
+// page is open. An installed phone nobody opened never learns a newer shell
+// exists, and the badge checkVersion would have set never appears; this is
+// the same channel 新書上架 uses, so the app icon gets its dot with the app
+// closed.
 //
-// The worker announces its OWN stamp, never one the caller supplies:
-// deploy.sh decides *whether* to ring (it calls this once, after a
-// successful deploy), and what gets announced is whatever actually shipped.
-// Exactly-once is the announced_builds row, so a re-run of the deploy
-// workflow, a rollback, or a second call by hand all stay silent.
-async function announceBuild(request, env, ctx) {
-  if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
-  // The edge can still be serving the PREVIOUS version a second after
-  // `wrangler deploy` returns, and deploy.sh calls this immediately. Measured
-  // on the deploy of e96279f: the call landed on the old isolate, which read
-  // its own stamp (45c24a1), found it already recorded and reported success —
-  // so the build that had just shipped never rang, and never would. The caller
-  // says which build it deployed; anything else is a stale isolate to retry,
-  // not an answer to believe.
-  const want = new URL(request.url).searchParams.get("build");
-  if (want && want !== BUILD)
-    return json({ announced: false, reason: "stale worker", build: BUILD });
+// It runs every minute and announces its OWN stamp, which is what makes it
+// correct without a handshake. The old shape — an admin route deploy.sh
+// POSTed right after the deploy — had a race: the edge can still serve the
+// PREVIOUS version seconds after `wrangler deploy` returns, and the call
+// landed on the old isolate, which announced ITS stamp, found it recorded,
+// and reported success while the build that had just shipped never rang
+// (measured on e96279f; the fix was a ?build= check and a 30 s retry). A
+// version asking about itself from its own cron cannot be stale: an old
+// isolate that ticks once more finds its build recorded and does nothing,
+// and the next tick on the new version rings. Exactly-once is the
+// announced_builds row, keyed on the commit, so a workflow re-run, a
+// rollback and the 1439 other ticks of the day all stay silent — silent in
+// the log too, because a line per minute would evict page=push's quota.
+async function announceSelf(env, ctx) {
   // An unstamped worker is a local `wrangler deploy` with edits in the tree
   // (see deploy.sh) or `wrangler dev`. "dev" is not a version anyone can be
   // told to update to, and a dev run must never ring the owner's phone.
-  if (BUILD === "dev") return json({ announced: false, reason: "unstamped build" });
+  if (BUILD === "dev") return { announced: false, reason: "unstamped build" };
   const commit = BUILD.split(" ")[0];
   // Counted before the insert: on a fresh install every build is new, and the
   // first one is not news — it IS the install. Record it silently so the next
@@ -984,12 +992,12 @@ async function announceBuild(request, env, ctx) {
     `INSERT INTO announced_builds (build, stamp, created_at) VALUES (?, ?, ?)
      ON CONFLICT (build) DO NOTHING`,
   ).bind(commit, BUILD, Date.now()).run();
-  if (ins.meta?.changes !== 1)
-    return json({ announced: false, reason: "already announced", build: BUILD });
-  if (first) return json({ announced: false, reason: "first build on this install", build: BUILD });
+  if (ins.meta?.changes !== 1) return { announced: false, reason: "already announced" };
+  if (first) return { announced: false, reason: "first build on this install" };
+  // the row is already written, so this logs once per build, not per tick
   if (!env.VAPID_PRIVATE_JWK || !env.VAPID_SUBJECT) {
     logPush(env, ctx, `新版本 ${BUILD}: VAPID 未設定`);
-    return json({ announced: false, reason: "push not configured", build: BUILD });
+    return { announced: false, reason: "push not configured" };
   }
   const rows = (await env.DB.prepare(
     "SELECT endpoint, p256dh, auth FROM push_subs").all()).results ?? [];
@@ -998,23 +1006,14 @@ async function announceBuild(request, env, ctx) {
   // which is the reload path that already exists. Reloading from here instead
   // would fight that note's "seen it, not now" dismissal.
   const payload = { title: "新版本已上線", body: BUILD, url: "/" };
-  // Awaited, not waitUntil'd like pushNewBook: nothing is riding on this
-  // response except deploy.sh, so the deploy log gets the real verdict
-  // instead of a fire-and-forget "accepted".
   const out = await Promise.all(rows.map(async (sub) => {
     const { status, detail } = await pushOne(env, sub, payload);
-    return { line: `${subTag(sub.endpoint)} → ${status}${detail ? " " + detail : ""}`, status };
+    return `${subTag(sub.endpoint)} → ${status}${detail ? " " + detail : ""}`;
   }));
-  logPush(env, ctx, `新版本 ${BUILD}: ${rows.length} 訂閱\n${out.map((r) => r.line).join("\n")}`);
-  // Statuses only, never the tags: this response is echoed into the deploy
-  // log, and a public repo's Actions logs are world-readable and indexed (the
-  // same reason deploy.sh swallows `wrangler whoami`). subTag names the tail
-  // of a capability URL. The per-device lines stay in testlog page=push,
-  // which is open too but takes knowing the origin, and self-prunes.
-  return json({
-    announced: true, build: BUILD, subs: rows.length,
-    statuses: out.map((r) => r.status),
-  });
+  // the log is the only witness now that nothing awaits this; page=push is
+  // where "did the build ring" is answered, per device
+  logPush(env, ctx, `新版本 ${BUILD}: ${rows.length} 訂閱\n${out.join("\n")}`);
+  return { announced: true, subs: rows.length };
 }
 
 // endpoint host + last 12 chars: enough to tell two devices apart in a log
@@ -1056,10 +1055,6 @@ async function handleAdmin(request, env, ctx, path) {
 
   // POST /api/admin/reindex — rebuild the D1 shelf index from the bucket
   if (path === "/api/admin/reindex") return reindex(request, env);
-
-  // POST /api/admin/announce-build — 新版本已上線 push; deploy.sh calls it
-  // once at the end of a deploy
-  if (path === "/api/admin/announce-build") return announceBuild(request, env, ctx);
 
   // POST /api/admin/audit — read-only housekeeping sweep; /api/admin/cleanup
   // is the only thing it can ask for that the other routes cannot already do
