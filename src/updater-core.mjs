@@ -33,19 +33,23 @@ export function d1Store(env) {
       ).first();
     },
     async write(row) {
+      // updater_version rides every check so /admin can show it beside the
+      // running and upstream versions (PM-08) without the updater opening a
+      // route — the reader reads it straight out of this row.
       await env.DB.prepare(
         `INSERT INTO updater_status
-           (id, last_check_at, last_check_ok, upstream_version, upstream_released_at, detail)
-         VALUES (1, ?, ?, ?, ?, ?)
+           (id, last_check_at, last_check_ok, upstream_version, upstream_released_at, detail, updater_version)
+         VALUES (1, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            last_check_at = excluded.last_check_at,
            last_check_ok = excluded.last_check_ok,
            upstream_version = excluded.upstream_version,
            upstream_released_at = excluded.upstream_released_at,
-           detail = excluded.detail`,
+           detail = excluded.detail,
+           updater_version = excluded.updater_version`,
       ).bind(
         row.last_check_at, row.last_check_ok,
-        row.upstream_version, row.upstream_released_at, row.detail,
+        row.upstream_version, row.upstream_released_at, row.detail, UPDATER_VERSION,
       ).run();
     },
   };

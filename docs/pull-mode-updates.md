@@ -36,7 +36,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-06 · migrations before the swap, additive-only | 2 | — |
 | PM-07 · health check and automatic rollback | 3 | done — built and proven; armed by PM-15 |
 | PM-15 · the rules for when an install may happen | 3 | done — decision + lock; wired by PM-08 |
-| PM-08 · the panel and the policy | 3 | — |
+| PM-08 · the panel and the policy | 3 | wip — panel landed; cron split is the arming step |
 | PM-14 · alarm on a silent updater | 3 | — |
 | PM-09 · the owner's phone, and only the owner's | 3 | wip — channel landed, messages pending |
 | PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | — |
@@ -1098,6 +1098,25 @@ can go in.
 - Done when: the panel's running version, upstream version, last-check time
   and last-install outcome all come from D1 rows the updater wrote, and the
   reader Worker makes no outbound request to upstream on any code path.
+- **Panel landed, 2026-08-21.** `src/update-panel.mjs` (`readPanel`,
+  `setPolicy`, `queueInstallNow`) + three admin routes (`GET
+  /api/admin/update`, `POST …/update/policy`, `POST …/update/install-now`) +
+  the 更新 fold on `/admin`. Everything is read from the shared D1 the
+  updater wrote — the reader makes no outbound request to upstream — and the
+  panel shows running / upstream / last-check / updater version / last-install
+  (a rolled-back one flagged), with a mode selector, soak-days, and an
+  install-now button that queues the request in D1 rather than calling the
+  updater. `updater_status.updater_version` (written on every check) and the
+  seeded `updater_policy` row carry it; `test-updater.mjs` unit-tests the
+  three functions and the panel routes are gated + exercised end to end
+  through the reader (401 bare, policy round-trip, install-now queued, 400 on
+  bad input). Default shipped: automatic, 2 days.
+- **Remaining: the cron split — the arming step.** The updater's
+  `scheduled` handler still only checks; wiring it to read the policy, call
+  `decide()`, and run `installWithRollback()` under the lock is what finally
+  executes the loop, and it is gated on the owner's `UPDATER_CF_API_TOKEN`.
+  Held as its own change so the panel can be seen and the cron cadence agreed
+  before anything installs itself.
 
 **PM-14 · alarm on a silent updater**
 - Why: R10. A cron-only Worker fails invisibly, and stale data on the panel

@@ -8,6 +8,7 @@ import { RESERVED_SLUGS, SLUG_RE } from "../public/split-core.mjs";
 import { PACK_NAMES } from "../public/vendor/wasmtts/pack-manifest.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
 import { vapidPublicKey, sendPush, b64u } from "./push.js";
+import { readPanel, setPolicy, queueInstallNow } from "./update-panel.mjs";
 
 function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
@@ -1052,6 +1053,23 @@ async function handleAdmin(request, env, ctx, path) {
 
   // POST /api/admin/owner-test — the owner-only push channel's self-test
   if (path === "/api/admin/owner-test") return ownerTest(request, env, ctx);
+
+  // The pull-mode panel (PM-08): all D1 the updater wrote — the reader never
+  // contacts upstream (see update-panel.mjs).
+  if (path === "/api/admin/update") {
+    if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
+    return json(await readPanel(env, BUILD), 200, { "cache-control": "no-store" });
+  }
+  if (path === "/api/admin/update/policy") {
+    if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+    const r = await setPolicy(env, await request.json().catch(() => ({})));
+    return json(r, r.ok ? 200 : 400);
+  }
+  if (path === "/api/admin/update/install-now") {
+    if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+    const r = await queueInstallNow(env, Date.now());
+    return json(r, r.ok ? 200 : 400);
+  }
 
   // POST /api/admin/reindex — rebuild the D1 shelf index from the bucket
   if (path === "/api/admin/reindex") return reindex(request, env);
