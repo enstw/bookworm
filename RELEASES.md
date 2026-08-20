@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-21 — `ff6d49b6e353`
+
+- updater: health check and automatic rollback — the net under the install (`ff6d49b`)
+
 ## 2026-08-21 — `884ddb73e688`
 
 - updater: the install path — rewrite the reader, keep every binding it held (`884ddb7`)
