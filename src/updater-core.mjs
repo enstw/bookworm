@@ -259,3 +259,127 @@ export async function install({ manifest, cf, script, fetchFn = fetch }) {
     secretsHeld: postSecrets.map((s) => s.name),
   };
 }
+
+// ---- health check + rollback (PM-07) ------------------------------------
+//
+// The safety net install() is not allowed to run without. A bad release is
+// unrecoverable by update (R2, the verification code is itself replaced), so
+// the only recovery is to put the previous version back — which is what the
+// two-Worker split bought (R3) and this spends.
+
+const randHex = (bytes) => [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+// The health key. /api/books is the shelf query that touches the worker, the
+// D1 binding, the readers row and the books table in one request, and it is
+// what "healthy" means here — but it needs a reader key. The updater mints one
+// in the readers table it already writes, granting itself nothing it could not
+// already insert. It is a normal reader key: it shows on /admin as the reader
+// `updater` and is revocable there like any other, and carries no admin power
+// if it leaks. Minted once and reused.
+const HEALTH_USER = "updater";
+export async function ensureHealthKey(env, mint = () => randHex(16)) {
+  const row = await env.DB.prepare(
+    "SELECT key FROM readers WHERE user = ? ORDER BY created_at LIMIT 1").bind(HEALTH_USER).first();
+  if (row?.key) return row.key;
+  const key = mint();
+  await env.DB.prepare(
+    "INSERT INTO readers (key, user, label, created_at) VALUES (?, ?, ?, ?)")
+    .bind(key, HEALTH_USER, "health check (updater)", Date.now()).run();
+  return key;
+}
+
+// `fetchReader(path, init)` is how the updater reaches the reader. A Worker
+// cannot fetch its own instance over workers.dev (error 1042, PM-00), so in
+// production this goes through the READER service binding; the node proof uses
+// plain fetch to the instance URL. Either way the logic below is identical.
+export const readerVia = (env) => (path, init) =>
+  env.READER.fetch(new Request("https://reader" + path, init));
+
+// Is the reader healthy? With expectedVersion set, poll /api/version until the
+// new BUILD answers first — the swap can take seconds to propagate past the
+// PUT, and a check that runs at once reads the OLD worker and calls it green.
+// But /api/version is a compiled-in constant: a release that unbound D1 would
+// answer it cheerfully. /api/books is the request that actually exercises the
+// worker and its D1, so it is the verdict. With expectedVersion null this is a
+// single-shot baseline of whatever is live now.
+export async function healthCheck({ fetchReader, readerKey, expectedVersion = null, tries = 15, waitMs = 1000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  let versionSeen = null;
+  const loops = expectedVersion === null ? 1 : tries;
+  for (let i = 0; i < loops; i++) {
+    try {
+      const r = await fetchReader("/api/version", { headers: { "cache-control": "no-cache" } });
+      versionSeen = r.ok ? (await r.json()).build : `http ${r.status}`;
+    } catch (err) { versionSeen = String(err?.message ?? err).slice(0, 100); }
+    if (expectedVersion === null || versionSeen === expectedVersion) break;
+    if (i < loops - 1) await sleep(waitMs);
+  }
+  if (expectedVersion !== null && versionSeen !== expectedVersion)
+    return { ok: false, versionSeen, detail: `version stayed ${versionSeen}, wanted ${expectedVersion}` };
+  let booksStatus = 0, booksOk = false;
+  try {
+    const r = await fetchReader("/api/books", { headers: { "x-reader-key": readerKey, "cache-control": "no-cache" } });
+    booksStatus = r.status;
+    booksOk = r.ok && Array.isArray((await r.json())?.books);
+  } catch (err) {
+    return { ok: false, versionSeen, detail: `/api/books threw ${String(err?.message ?? err).slice(0, 80)}` };
+  }
+  return booksOk ? { ok: true, versionSeen } : { ok: false, versionSeen, detail: `/api/books → ${booksStatus}` };
+}
+
+// The version currently deployed, to roll back TO. Read BEFORE the install, so
+// the target is the last-known-good, not whatever the failed install left.
+export async function currentVersionId(cf, script) {
+  const deps = await cf(`/workers/scripts/${script}/deployments`);
+  return deps.deployments?.[0]?.versions?.[0]?.version_id ?? null;
+}
+
+// Put a previous version back: one POST, script and assets restored together
+// (PM-00 fact 4). No bundle is kept on the instance — keeping it would re-run
+// the very install path that may be what broke.
+export async function rollbackTo(cf, script, versionId, message = "bookworm-updater rollback") {
+  return cf(`/workers/scripts/${script}/deployments`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ strategy: "percentage", versions: [{ version_id: versionId, percentage: 100 }], annotations: { "workers/message": message } }),
+  });
+}
+
+// The guarded install: health BEFORE, install, health AFTER, roll back only if
+// a WORKING site regressed. The pre-install baseline is not optional — without
+// it a site that was already broken oscillates install → red → rollback
+// forever, blaming each release for damage that predates it. Records the
+// outcome for the panel (PM-08 reads it, including a rolled-back one). This is
+// the loop PM-15's policy will fire; nothing calls it automatically yet.
+export async function installWithRollback({ manifest, cf, script, fetchReader, readerKey, installFn = install, recordOutcome, now = 0, fetchFn = fetch, sleep }) {
+  const preVersionId = await currentVersionId(cf, script);
+  const before = await healthCheck({ fetchReader, readerKey, sleep });
+
+  let installErr = null, report = null;
+  try {
+    report = await installFn({ manifest, cf, script, fetchFn });
+  } catch (err) {
+    installErr = String(err?.message ?? err);
+  }
+
+  // if the install threw we do not trust the version it aimed for, so probe
+  // whatever is live; on success, wait for the new BUILD to propagate
+  const after = await healthCheck({ fetchReader, readerKey, expectedVersion: installErr ? null : manifest.version, sleep });
+
+  let outcome, rolledBack = false, restored = null, detail = installErr ?? after.detail ?? "";
+  if (!installErr && after.ok) {
+    outcome = "ok";
+    detail = "";
+  } else if (!after.ok && before.ok && preVersionId) {
+    // the install regressed a working site — put the previous version back
+    await rollbackTo(cf, script, preVersionId, `rollback: ${manifest.version} failed health check`);
+    restored = await healthCheck({ fetchReader, readerKey, expectedVersion: before.versionSeen, sleep });
+    outcome = "rolled-back";
+    rolledBack = true;
+  } else {
+    // install failed but the site is unharmed, or it was already broken and
+    // there is nothing better to go back to — either way, no rollback
+    outcome = "failed";
+  }
+
+  if (recordOutcome) await recordOutcome({ at: now, version: manifest.version, outcome, detail: detail.slice(0, 300) });
+  return { outcome, rolledBack, before, after, restored, report, installErr };
+}

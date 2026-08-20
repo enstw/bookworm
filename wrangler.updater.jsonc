@@ -21,6 +21,13 @@
       "database_id": "7d14d581-406b-40fd-bd3e-94078ebd50d8"
     }
   ],
+  // The health check (PM-07) reaches the reader through this binding, not over
+  // the internet: a Worker fetching its own instance on workers.dev gets error
+  // 1042 (PM-00), and a service binding is instance-config, not something the
+  // manifest can carry. Outbound only — the updater still has no fetch handler.
+  // An instance with a custom domain could check that URL instead; the binding
+  // is the domain-free default.
+  "services": [{ "binding": "READER", "service": "bookworm" }],
   // The check interval (the plan's "Checking and installing run at different
   // rates"): ~15 min, read-only, too cheap to ration. PM-08 splits this into
   // a check cadence and a policy-driven install; until then the cron only

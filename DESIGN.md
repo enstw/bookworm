@@ -558,16 +558,42 @@ before is gone — R4's loud failure. Confirmation is CF-API-side because a
 Worker cannot fetch the reader over `workers.dev` (error 1042, PM-00); that
 the new version actually *serves* is the HTTP health check in PM-07.
 
-`install()` is **built and proven but not armed**: the `scheduled` handler
-still only checks, the Cloudflare token is not on the production updater
-(`deploy.sh` pushes it only when `UPDATER_CF_API_TOKEN` is set), and nothing
-calls `install()` automatically. The credential and the trigger arrive with
-the safety net — PM-07's rollback and PM-15's policy — never before it.
-Proven live against a throwaway target: the shipped `install()` took the real
-published release (42 assets, 7.6 MB) onto it in ~15 s and every binding and
-secret survived (`scripts/test-updater.mjs` pins the pieces — verify,
-metadata, the single-asset refusal, the dropped-secret throw — with a fake
-API).
+**The safety net** (PM-07, `installWithRollback()`) is what an install is not
+allowed to run without. It checks health BEFORE the install, installs, checks
+AFTER, and rolls back **only if a working site regressed** — the pre-install
+baseline is not optional, or a site already broken oscillates install → red →
+rollback forever, blaming each release for damage that predates it. "Healthy"
+is two requests in order: `/api/version` **polled** until the new `BUILD`
+answers (the swap can take seconds to propagate past the `PUT`, and a check
+that runs at once reads the old worker and calls it green), then `/api/books`
+— because `BUILD` is a compiled-in constant a release that unbound D1 would
+answer cheerfully, while `/api/books` touches the worker, the D1 binding, the
+`readers` row and the shelf in one request and is the real verdict. The
+updater reaches the reader through a **`READER` service binding**, not the
+internet (a Worker fetching its instance over `workers.dev` is error 1042,
+PM-00); it authenticates with a reader key it mints in the `readers` table it
+already writes (shows on `/admin` as the reader `updater`, revocable, no admin
+power). Rollback is Cloudflare's own version rollback — one `POST
+…/deployments` naming the previous `version_id`, script and assets restored
+together (PM-00 fact 4), nothing kept on the instance. The outcome (`ok`,
+`rolled-back`, `failed`) lands in `updater_status` for the panel (PM-08), a
+rolled-back one included.
+
+`install()`/`installWithRollback()` are **built and proven but not armed**:
+the `scheduled` handler still only checks, the Cloudflare token is not on the
+production updater (`deploy.sh` pushes it only when `UPDATER_CF_API_TOKEN` is
+set), and nothing calls the install loop automatically. The credential and the
+trigger arrive with PM-15's policy — never before the safety net that catches
+a bad release. Both proven live against throwaway targets: the shipped
+`install()` took the real published release (42 assets, 7.6 MB, ~15 s) with
+every binding and secret surviving; the shipped `installWithRollback()`
+installed a deliberately broken release (its `/api/version` answered while
+`/api/books` 500'd — the exact failure `BUILD`-only checks miss), detected it,
+and put the previous version back serving, then kept a good one.
+`scripts/test-updater.mjs` pins every piece against fakes — verify, metadata,
+the single-asset refusal, the dropped-secret throw, the health-check verdicts,
+the deployments API, key minting, and the whole rollback decision matrix
+including the no-oscillation guard.
 
 ## Reader frontend
 

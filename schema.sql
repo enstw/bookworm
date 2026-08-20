@@ -130,13 +130,22 @@ CREATE TABLE IF NOT EXISTS announced_builds (
 -- last_check_at/ok/detail move, so upstream_version keeps the last known-good
 -- rather than being erased by a transient outage. Persistent like readers —
 -- no DELETE here, or every deploy would forget what upstream last offered.
+-- The last_install_* columns are the outcome of the guarded install (PM-07):
+-- 'ok', 'rolled-back' (the release failed its health check and the previous
+-- version was put back), or 'failed'. A rolled-back install stays on the
+-- panel — a push that scrolls away is not a record. Added after this table
+-- first shipped, so scripts/deploy.sh carries the guarded ALTERs too.
 CREATE TABLE IF NOT EXISTS updater_status (
   id                   INTEGER PRIMARY KEY CHECK (id = 1),
   last_check_at        INTEGER NOT NULL DEFAULT 0,
   last_check_ok        INTEGER NOT NULL DEFAULT 0,
   upstream_version     TEXT    NOT NULL DEFAULT '',
   upstream_released_at TEXT    NOT NULL DEFAULT '',
-  detail               TEXT    NOT NULL DEFAULT ''
+  detail               TEXT    NOT NULL DEFAULT '',
+  last_install_at      INTEGER NOT NULL DEFAULT 0,
+  last_install_version TEXT    NOT NULL DEFAULT '',
+  last_install_result  TEXT    NOT NULL DEFAULT '',
+  last_install_detail  TEXT    NOT NULL DEFAULT ''
 );
 
 -- Web Push subscriptions (新書上架、新版本通知), one row per browser push
