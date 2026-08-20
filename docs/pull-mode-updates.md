@@ -28,7 +28,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | Ticket | Phase | State |
 |---|---|---|
 | PM-00 · prove a Worker can install 12 MB of assets | 0 | wip |
-| PM-01 · publish the artifact and its manifest | 1 | — |
+| PM-01 · publish the artifact and its manifest | 1 | wip |
 | PM-02 · the manifest becomes a stated contract | 1 | — |
 | PM-03 · a release can demand a human | 1 | — |
 | PM-04 · split out `bookworm-updater` | 2 | — |
@@ -181,7 +181,7 @@ that publishes them, described by a manifest:
 The zip is unpacked with `fflate`, which is already vendored for the browser.
 
 `version` is the display string `deploy.sh` stamps into the worker and
-`app.js` (`scripts/deploy.sh:97`), so the panel can compare it to the
+`app.js` (`scripts/deploy.sh:102`), so the panel can compare it to the
 reader's own `BUILD` without translating anything. It is an *identity* — it
 answers "differs?" and keys the failed-version block — and nothing more.
 `released_at` is separate because the soak ("install once it has been out
@@ -659,7 +659,8 @@ can go in.
 
 **PM-01 · publish the artifact and its manifest**
 - Touches: `.github/workflows/deploy.yml`, `scripts/deploy.sh`,
-  `scripts/release-notes.mjs`, new packaging script
+  `scripts/release-notes.mjs`, `scripts/make-icons.mjs`, new packaging
+  script
 - Why: nothing produces a deployable bundle today — the bundler's output is
   uploaded and discarded in one motion. The manifest carries the asset
   hashes, the binding shape, the assets config and the migrations.
@@ -670,7 +671,12 @@ can go in.
   the 12.1, so the artifact leaves at **41 files, 9.7 MB**. R8's bench was
   taken on the 42, and its verdict does not move: rescaled, the same one
   pass is ~7.5 ms against a 10 ms budget, still with the manifest, the
-  bodies and the responses unpaid for.
+  bodies and the responses unpaid for. The drop is a **move out of
+  `public/`**, not an `.assetsignore`: wrangler serves the directory
+  wholesale, so an ignore file would put the exclusion in two places —
+  wrangler's and the packaging script's — and their drift is R6's class
+  of bug. `make-icons.mjs` reads the file from `public/icons/` today and
+  follows it to its new home.
 - **Reproducible means the clock cannot reach the bytes — done, in
   `7d885c2`.** It reached them in two places: `deploy.sh` stamped `BUILD`
   into `public/app.js` from `date`, and `release-notes.mjs` dated the
@@ -683,6 +689,14 @@ can go in.
   impossible on the way: its two callers run either side of the deploy, so
   on a wall clock a deploy crossing midnight dated the shipped JSON a day
   off its own ledger entry.
+- **One manifest field is exempt from that rule, on purpose:
+  `released_at`.** It is the soak clock, so it has to say when the release
+  was *published*, off the wall — derived from the commit like everything
+  else now is, a redeploy of an old commit would ship a `released_at`
+  already days in the past, and every instance on automatic would skip the
+  soak and install at once, closing the canary window the wait exists to
+  hold open. This is why the Done when below is worded on the asset
+  *hashes*, never on the manifest's bytes.
 - Done when: a deploy leaves behind a release whose manifest lists every
   asset with its sha256, and a clean checkout of the same commit reproduces
   those hashes — an artifact nobody can re-derive is not one anybody can
