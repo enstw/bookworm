@@ -280,7 +280,13 @@ retry. A version asking about itself from its own cron cannot be stale: an
 old isolate that ticks once more finds its build recorded and does nothing,
 and the next tick on the new version rings. The handshake, the retry and
 the route are gone; the deploy makes no admin call to announce anything,
-and the banner arrives within a minute instead of within seconds. The same
+and the banner arrives within a minute instead of within seconds — once
+the cron is live: **a Cron Trigger added for the first time took 20
+minutes to start firing** (Cloudflare documents "up to 15"; measured on
+the deploy of 34606e8, schedule created 16:26:57Z, first tick recorded
+16:47:27Z), and `wrangler deploy` re-PUTs the schedule on every deploy, so
+whether an unchanged schedule re-propagates is the next thing to measure
+(`announced_builds.created_at` against the deploy log). The same
 tick is where the pull-mode plan's owner-only messages and silent-updater
 alarm will live — the reader is the one Worker that holds the VAPID pair.
 Locally, `pnpm run dev` runs `wrangler dev --test-scheduled`, which exposes

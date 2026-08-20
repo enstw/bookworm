@@ -469,6 +469,11 @@ anywhere.
 it; the admin route, `deploy.sh`'s POST, the `?build=` handshake and the
 30 s retry are deleted (DESIGN.md, *The reader announces itself*). The
 other three messages attach to the same tick as their tickets land.
+Measured on its first deploy: the schedule took 20 minutes to start
+firing (documented as "up to 15"), then announced the build with nobody
+calling. For the updater this is a number to design against — a freshly
+bootstrapped instance's first check (PM-08's interval, PM-14's staleness
+threshold) cannot assume the cron is live the minute the script is.
 
 ## Risks
 
