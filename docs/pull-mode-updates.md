@@ -129,7 +129,7 @@ flowchart TD
   D --> MIG["run migrations — additive only,<br/>BEFORE the script swap"]
   MIG --> A["assets upload session → send only<br/>the files Cloudflare says it lacks"]
   A --> P["PUT script: bundle + binding shapes<br/>+ keep_bindings + assets token"]
-  P --> H{"poll /api/version until<br/>the new BUILD answers"}
+  P --> H{"poll /api/version to the new BUILD,<br/>then /api/books with a reader key"}
   H -->|green| OK["record 'installed' in D1 — the reader's<br/>own cron announces 新版本已上線"]
   H -->|red| RB["roll back · record the failure<br/>for the reader to push"]
 ```
@@ -455,13 +455,35 @@ The reason is that mirroring invents two failures in *ordinary* operation:
   every PUT, so a copy that is empty, wrong, or one rotation stale destroys
   the live secrets. `keep_bindings` cannot destroy what it never sends.
 
-Accepted in exchange, and real: the updater cannot supply a **new** secret
-that a release needs — which is exactly what `requiresAttention` is for —
-and it cannot repair a secret set that some other accident cleared. The
-recovery path for a cleared secret is the bootstrap (PM-10), not the
-updater. A test that fails loudly if any PUT drops a binding is still
-required; it is now asserting something the API is supposed to guarantee,
-which is the cheap kind of test to keep.
+What mirroring would have bought, weighed rather than waved away — because
+an option dismissed without its case stated gets proposed again:
+
+- **Self-repair of a cleared secret set.** Real, but largely insurance
+  against a cause `keep_bindings` removes. What survives is the residue: a
+  dashboard slip, a Cloudflare-side incident, a future code path that
+  forgets to pass the flag. For those the recovery is the bootstrap
+  (PM-10), and the owner is present by definition. Accepted.
+- **Independence from a platform feature.** This is the serious one, and it
+  is unmeasured. `keep_bindings` has to compose with the assets-upload
+  token in the *same* PUT, and nothing in this tree proves it does.
+  Mirroring leans only on setting bindings, which is the most basic thing
+  the API does. PM-00 measures it; **if the two do not compose, this
+  decision inverts** and the updater mirrors after all.
+- **Knowing the deployed binding set rather than trusting it.**
+  Neutralised. `GET /workers/scripts/{name}/secrets` returns secret
+  *names*, so the updater can assert after every PUT that `ADMIN_TOKEN` and
+  the VAPID pair are still bound — without ever holding a value. That is
+  the loud test this risk asks for, and it costs less than mirroring.
+- **A health check with a real credential.** Neutralised, but not by
+  `keep_bindings` — see PM-07. The updater already writes the same D1, so
+  it can mint itself a reader key there. It gains no capability by doing
+  so, because it could always have inserted that row.
+
+One thing is **not** on that list because it is true either way: neither
+option lets the updater supply a secret that does not yet exist. A release
+demanding a brand-new secret finds it missing from the updater's copy too.
+That is what `requiresAttention` is for, and it is a property of the design
+rather than a price paid for this decision.
 
 **R5 · migration ordering.** New code needing a new column requires the
 migration to land *before* the script swap; a failed swap then leaves old
@@ -516,6 +538,13 @@ Ticket ids are stable; `needs` is a hard ordering.
 - Why: R8. Every other ticket assumes this works. Find out before building
   anything on top of it — including how many subrequests an upload session
   actually costs and what a scheduled invocation gets to spend.
+- Answer R4's open fact on the same trip: **does `keep_bindings` compose
+  with an assets-upload token in one PUT?** The decision that the updater
+  holds no reader secret rests entirely on it. If they do not compose, R4
+  inverts and the updater has to mirror.
+- And PM-07's: can the free plan list a script's versions and re-deploy an
+  older one, and do assets travel back with it? That decides whether
+  rollback is three API calls or a second copy of the bundle.
 - Done when: a throwaway Worker has uploaded the real `public/` to a real
   account, with the measured numbers written down. If it cannot, the answer
   is a bootstrap-assisted first install, and the plan below changes shape.
@@ -557,8 +586,9 @@ Ticket ids are stable; `needs` is a hard ordering.
   config applied from the manifest (R6). `https://`-only, enforcing the
   trust anchor.
 - Done when: an instance has taken a real upstream release end to end, and
-  a test asserts that every binding and secret the reader held before the
-  PUT is still bound after it — the loud failure R4 asks for.
+  a test asserts against `GET /workers/scripts/{name}/secrets` that every
+  binding and secret *name* the reader held before the PUT is still bound
+  after it — the loud failure R4 asks for, holding not one value.
 - Needs: PM-00, PM-01, PM-04
 
 **PM-06 · migrations before the swap, additive-only**
@@ -569,12 +599,21 @@ Ticket ids are stable; `needs` is a hard ordering.
 
 **PM-07 · health check and automatic rollback**
 - Why: R3. Spends what the split bought.
-- The check is `/api/version` **polled** until the new `BUILD` answers, not
-  the two-route check sketched earlier: `/api/books` is 401 without an admin
-  Bearer or a reader key, and after R4 the updater holds neither. Polling is
-  required regardless — the edge can still serve the previous version
-  seconds after the PUT returns (`src/worker.js:900`), so a check that runs
-  immediately reads the old worker and calls it green.
+- Two routes, and the order matters. `/api/version` **polled** until the new
+  `BUILD` answers proves the swap actually landed — polling is required
+  regardless, because the edge can still serve the previous version seconds
+  after the PUT returns (`src/worker.js:900`), so a check that runs at once
+  reads the old worker and calls it green. But `BUILD` is a compiled-in
+  constant: a release that unbound D1 would answer it cheerfully.
+  `/api/books` is the one that touches the worker, the D1 binding, the
+  `readers` row and the shelf query in a single request, and it is what
+  "healthy" actually means here.
+- `/api/books` is 401 without a credential, and after R4 the updater holds
+  no admin token. It mints itself a **reader key** in the D1 it already
+  writes to, and calls with `x-reader-key` (`src/worker.js:103`). This
+  grants it nothing new — it could always have inserted that row — and
+  unlike an admin token the key is revocable from `/admin` like any other,
+  and carries no admin power if it leaks.
 - The updater also needs the instance's own public URL to check it at all —
   the third and last value in its configuration, beside the two secrets.
   It is instance-specific, so the manifest cannot carry it.
