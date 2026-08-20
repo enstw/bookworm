@@ -840,6 +840,13 @@ can go in.
   `public/releases.json`, which is written from the ledger plus the commits
   since the `released` tag — a tag that moves after every deploy, so that
   one asset re-derives only up to the ledger state at publish time.
+- **Measured on the first real release (`release-998cb63`):** a laptop
+  packaging of the same commit hashed identically to what CI published —
+  the worker and all 41 other assets, sha256 and `cfhash` both — with
+  `releases.json` the one difference, for the reason above (the laptop's
+  `released` tag had already moved). `latest/download/manifest.json`
+  resolved to the tag, the zip matched its hash, all 43 files verified.
+  The Done when holds across machines, not just twice on one.
 
 **PM-02 · the manifest becomes a stated contract**
 - Touches: `DESIGN.md`, `scripts/test-deploy-policy.mjs`
