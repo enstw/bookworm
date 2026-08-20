@@ -110,7 +110,14 @@ export function pendingRelease(cwd = root) {
   notes.push(...bumps(gitOrNull, from, "HEAD"));
   return {
     build: git("rev-parse", "--short=12", "HEAD"),
-    date: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date()),
+    // The COMMIT's date, not this process's. Two callers run at different
+    // moments — gen-release-notes.mjs before the deploy, update-releases.mjs
+    // after it — so a wall clock lets a deploy that crosses midnight in
+    // Asia/Taipei ship a releases.json dated a day off its own ledger entry,
+    // which is exactly the disagreement the header above promises cannot
+    // happen. It also keeps the shipped bytes re-derivable from the commit.
+    date: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" })
+      .format(new Date(git("log", "-1", "--format=%cI", "HEAD"))),
     commits: lines,
     notes,
     empty: lines.length === 0,
