@@ -68,25 +68,27 @@ Branch before the first commit. The ruleset's rejection surfaces only at
 push time: committing on local `main` feels fine right up until the push
 dies with `push declined due to repository rule violations`. A batch of
 related work is ONE PR, not one per commit: branch, commit there, `gh pr
-create`, watch `gh pr checks <n> --watch` until `candidate-gate` is green,
-`gh pr merge --rebase`. Rebase, not squash — squash would melt the
-per-commit `Release-Note:` trailers the ledger reads. Already committed on
-`main` by mistake? `git branch <name>`, `git reset --hard origin/main`, then
-PR the branch as usual.
+create`, then `gh pr merge <n> --auto --rebase` and walk away — auto-merge
+is on, so GitHub does the waiting and lands it the moment the gate is
+green. Rebase, not squash — squash would melt the per-commit
+`Release-Note:` trailers the ledger reads. Watch instead (`gh pr checks
+<n> --watch`) when you want to see the failure, not the merge. Already
+committed on `main` by mistake? `git branch <name>`, `git reset --hard
+origin/main`, then PR the branch as usual.
 
 Expect the merge to be refused ONCE even on a green gate — "head branch is
 not up to date" or `Required status check "candidate-gate" is expected`.
 That is the ledger race, not a failure: every non-md merge deploys, the
 deploy lands a release-ledger commit on `main` minutes later, and a strict
 required check goes stale the moment the base moves. The recipe: `git fetch
-&& git rebase origin/main && git push --force-with-lease` (which re-runs the
-gate), then chain the retry in one breath — `gh pr checks <n> --watch
---fail-fast && gh pr merge <n> --rebase` — so the merge fires the instant
-the re-run turns green, inside the window the next ledger commit needs to
-open. Give a fresh PR (or push) a beat before watching: in the first seconds
-the check suite does not exist yet and `gh pr checks --watch` dies
-immediately with `no checks reported` instead of waiting. `gh pr merge
---auto` is no shortcut: repo-level auto-merge is off.
+&& git rebase origin/main && git push --force-with-lease`, which re-runs the
+gate. Auto-merge survives that push, so there is no green window to catch by
+hand any more — arm it once and the merge fires whenever the re-run lands.
+The manual chain (`gh pr checks <n> --watch --fail-fast && gh pr merge <n>
+--rebase`) is now only for when you are watching anyway. Give a fresh PR (or
+push) a beat before watching: in the first seconds the check suite does not
+exist yet and `gh pr checks --watch` dies immediately with `no checks
+reported` instead of waiting.
 
 ### The deploy gate
 
@@ -145,10 +147,10 @@ Settings that live in GitHub, not in any file:
   `main` or a merge over a red gate is rejected server-side. A rebase that
   rewrites any other pushed branch is still fine — the ruleset only guards
   `main`.
-- Merge-commit merges are disabled repo-wide, auto-merge is off
-  (`enablePullRequestAutoMerge` false, so `gh pr merge --auto` is no
-  shortcut), merged branches auto-delete, and the update-branch button is
-  on. In practice:
+- Merge-commit merges are disabled repo-wide, auto-merge is on
+  (`allow_auto_merge` true, so `gh pr merge --auto --rebase` is the normal
+  way to land one), merged branches auto-delete, and the update-branch
+  button is on. In practice:
   `gh pr merge` needs `--rebase` or `--squash` and fails a stale head with
   "head branch is not up to date" — the ledger race in *Landing a PR* above.
   Watch a PR's gate with `gh pr checks <n> --watch` — the workflow's display
