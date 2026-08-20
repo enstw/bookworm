@@ -83,6 +83,29 @@ else
   echo "    added"
 fi
 
+# the owner-only push channel (readers.is_owner / push_subs.key in
+# schema.sql): both columns have to exist before the worker that reads them
+# serves, which is why they are added here, ahead of the deploy below
+echo "==> ensuring readers.is_owner column"
+RCOLS=$($W d1 execute bookworm --remote --json --command "PRAGMA table_info(readers)")
+if grep -q '"is_owner"' <<<"$RCOLS"; then
+  echo "    (already present)"
+else
+  $W d1 execute bookworm --remote --command \
+    "ALTER TABLE readers ADD COLUMN is_owner INTEGER NOT NULL DEFAULT 0"
+  echo "    added"
+fi
+
+echo "==> ensuring push_subs.key column"
+PCOLS=$($W d1 execute bookworm --remote --json --command "PRAGMA table_info(push_subs)")
+if grep -q '"key"' <<<"$PCOLS"; then
+  echo "    (already present)"
+else
+  $W d1 execute bookworm --remote --command \
+    "ALTER TABLE push_subs ADD COLUMN key TEXT NOT NULL DEFAULT ''"
+  echo "    added"
+fi
+
 echo "==> vendoring browser bundles (public/vendor/ is gitignored)"
 node scripts/vendor.mjs
 

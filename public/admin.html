@@ -110,6 +110,12 @@
       <summary data-i18n="rd.h">讀者鑰匙</summary>
       <p class="hint" data-i18n="rd.hint">每台裝置一把鑰匙。把連結傳到裝置上打開就完成登入；裝置遺失就撤銷那把鑰匙。同一位讀者（同代號）可以有多把鑰匙。</p>
       <div id="readerList"></div>
+      <!-- the owner-only push channel (update waiting / rolled back /
+           updater silent) goes to keys marked 管理者, and to nobody when
+           none is — so an unmarked state has to say so here, out loud -->
+      <div id="ownerNote" class="msg"></div>
+      <button class="btn" id="ownerTest" data-i18n="rd.ownerTest" hidden>測試管理者通知</button>
+      <div id="ownerMsg" class="msg"></div>
       <div class="row">
         <div>
           <label for="rdUser" data-i18n="rd.user">讀者代號（留空自動產生）</label>
@@ -473,6 +479,14 @@
         ...(readers.length
           ? readers.map(readerRow)
           : [el("p", { class: "muted small", text: t("rd.empty") })]));
+      // with no key marked the owner-only messages are not being sent — said
+      // here in as many words, because a silent channel and an unset one
+      // would otherwise look identical
+      const owners = readers.filter((r) => r.owner).length;
+      $("ownerNote").textContent = owners ? t("rd.ownerCount", owners) : t("rd.noOwner");
+      $("ownerNote").className = "msg" + (owners ? " muted" : " err");
+      $("ownerTest").hidden = owners === 0;
+      $("ownerMsg").textContent = "";
     }
 
     function readerRow(r) {
@@ -481,7 +495,25 @@
         el("div", { class: "book-head" },
           el("span", { class: "name" },
             el("code", { text: r.user }),
-            r.label ? ` — ${r.label}` : ""),
+            r.label ? ` — ${r.label}` : "",
+            r.owner ? ` ★ ${t("rd.ownerTag")}` : ""),
+          el("button", {
+            class: "linklike",
+            text: t(r.owner ? "rd.ownerOff" : "rd.ownerOn"),
+            onclick: async () => {
+              try {
+                await api(`/api/admin/readers/${encodeURIComponent(r.key)}`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ owner: !r.owner }),
+                });
+                loadReaders();
+              } catch (err) {
+                msg.textContent = err.message;
+                msg.className = "small err";
+              }
+            },
+          }),
           el("button", {
             class: "linklike",
             text: t("rd.copy"),
@@ -512,6 +544,23 @@
           }),
           msg));
     }
+
+    // rings the marked devices and only those — proven from the phone in
+    // hand, the way the per-device 測試 button proves its own row
+    $("ownerTest").onclick = async () => {
+      const m = $("ownerMsg");
+      m.textContent = "…";
+      m.className = "msg";
+      try {
+        const r = await api("/api/admin/owner-test", { method: "POST" });
+        const good = r.statuses.filter((s) => s >= 200 && s < 300).length;
+        m.textContent = r.subs === 0 ? t("rd.ownerNoSubs") : t("rd.ownerTested", r.subs, good);
+        m.className = "msg " + (r.ok ? "ok" : "err");
+      } catch (err) {
+        m.textContent = err.message;
+        m.className = "msg err";
+      }
+    };
 
     $("rdCreate").onclick = async () => {
       const say = (text, cls = "") => {

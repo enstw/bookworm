@@ -100,7 +100,13 @@ CREATE TABLE IF NOT EXISTS readers (
   key        TEXT PRIMARY KEY,
   user       TEXT NOT NULL,
   label      TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL DEFAULT 0
+  created_at INTEGER NOT NULL DEFAULT 0,
+  -- The owner's devices: the audience for the messages that are the
+  -- owner's business and nobody else's (an update waiting for a decision,
+  -- an install rolled back, a silent updater). On the key, not the user —
+  -- a household may share a user and the owner may carry two phones. With
+  -- no key flagged those messages go nowhere, never to everyone.
+  is_owner   INTEGER NOT NULL DEFAULT 0
 );
 
 -- Builds that have already been announced by push (新版本已上線 — see
@@ -123,5 +129,11 @@ CREATE TABLE IF NOT EXISTS push_subs (
   user       TEXT NOT NULL DEFAULT '',
   p256dh     TEXT NOT NULL,
   auth       TEXT NOT NULL,
-  created_at INTEGER NOT NULL DEFAULT 0
+  created_at INTEGER NOT NULL DEFAULT 0,
+  -- The reader key that registered the endpoint — what lets
+  -- readers.is_owner pick out a DEVICE rather than everyone sharing its
+  -- user. '' on rows the admin Bearer wrote (scripts, tests) and on rows
+  -- from before the column; healPush() re-upserts every phone's row at each
+  -- open, so the field fills itself in without a migration.
+  key        TEXT NOT NULL DEFAULT ''
 );

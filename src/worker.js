@@ -120,7 +120,9 @@ async function authenticate(request, env, url) {
   const row = await env.DB.prepare(
     "SELECT user, label FROM readers WHERE key = ?",
   ).bind(key).first();
-  return row ? { user: row.user, label: row.label } : null;
+  // the key rides along so a push subscription can remember which DEVICE
+  // registered it (push_subs.key) — the owner flag lives on keys, not users
+  return row ? { user: row.user, label: row.label, key } : null;
 }
 
 // ---- the diagnostic-log session cookie ----------------------------------
@@ -530,10 +532,11 @@ async function postFeedback(request, env) {
 async function handleReaders(request, env) {
   if (request.method === "GET") {
     const rows = (await env.DB.prepare(
-      "SELECT key, user, label, created_at FROM readers ORDER BY created_at, key",
+      "SELECT key, user, label, created_at, is_owner FROM readers ORDER BY created_at, key",
     ).all()).results ?? [];
     return json({ readers: rows.map((r) => ({
       key: r.key, user: r.user, label: r.label, createdAt: r.created_at,
+      owner: r.is_owner === 1,
     })) }, 200, { "cache-control": "no-store" });
   }
   if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
@@ -552,10 +555,20 @@ async function handleReaders(request, env) {
 // request carrying this key 401s and the app on that device asks for a new
 // one. Chapters the device already cached keep working offline, which is
 // right — revocation fences the server; it cannot reach into a phone.
-async function deleteReader(request, env, key) {
-  if (request.method !== "DELETE") return json({ error: "method not allowed" }, 405);
-  const res = await env.DB.prepare("DELETE FROM readers WHERE key = ?").bind(key).run();
-  return json({ ok: true, removed: res.meta?.changes ?? 0 });
+// POST /api/admin/readers/<key> {owner: true|false} — mark or unmark this
+// device as the owner's (readers.is_owner; see pushOwner for what it routes).
+async function handleReaderKey(request, env, key) {
+  if (request.method === "DELETE") {
+    const res = await env.DB.prepare("DELETE FROM readers WHERE key = ?").bind(key).run();
+    return json({ ok: true, removed: res.meta?.changes ?? 0 });
+  }
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+  const body = (await request.json().catch(() => ({}))) ?? {};
+  if (typeof body.owner !== "boolean") return json({ error: "owner must be true or false" }, 400);
+  const res = await env.DB.prepare("UPDATE readers SET is_owner = ? WHERE key = ?")
+    .bind(body.owner ? 1 : 0, key).run();
+  if ((res.meta?.changes ?? 0) === 0) return json({ error: "no such key" }, 404);
+  return json({ ok: true, owner: body.owner });
 }
 
 // Reader ids keep the app's own alphabet (6-hex minted, but roomy enough
@@ -828,13 +841,17 @@ async function handlePush(request, env, ctx, path, who) {
     typeof auth !== "string" || auth.length > 64 || !B64U.test(auth)
   )
     return json({ error: "invalid body" }, 400);
+  // the key is remembered too, so readers.is_owner can single out this
+  // device; the Bearer has none, and healPush() re-upserting at every open is
+  // what fills the column in on rows that predate it
   await env.DB.prepare(
-    `INSERT INTO push_subs (endpoint, user, p256dh, auth, created_at)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO push_subs (endpoint, user, p256dh, auth, created_at, key)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (endpoint) DO UPDATE SET
-       user = excluded.user, p256dh = excluded.p256dh, auth = excluded.auth`,
+       user = excluded.user, p256dh = excluded.p256dh, auth = excluded.auth,
+       key = excluded.key`,
   )
-    .bind(endpoint, u, p256dh, auth, Date.now())
+    .bind(endpoint, u, p256dh, auth, Date.now(), who?.key ?? "")
     .run();
   return json({ ok: true });
 }
@@ -863,6 +880,52 @@ function logPush(env, ctx, line) {
   ctx?.waitUntil(env.DB.prepare(
     "INSERT INTO testlog (page, device, ts, data) VALUES (?, ?, ?, ?)",
   ).bind("push", "worker", Date.now(), line.slice(0, 4000)).run().catch(() => {}));
+}
+
+// The owner-only channel: push to the devices whose key is flagged
+// readers.is_owner, and to nobody else. This is the one sender for every
+// message that is the owner's business rather than every reader's (an
+// update waiting for a decision, an install rolled back, a silent updater —
+// see docs/pull-mode-updates.md, "Who gets told"). With no key flagged it
+// sends NOTHING, deliberately: falling back to a broadcast would put the
+// owner's business on every reader's lock screen. The silence is not
+// invisible, though — the log line says so, and /admin says so in as many
+// words, because an unset flag that looked like a quiet channel would be the
+// kind of defect nobody ever finds. `owners` is the flagged-key count, which
+// is what tells "no device is marked" apart from "the marked device never
+// subscribed to push".
+async function pushOwner(env, ctx, tag, payload) {
+  const owners = (await env.DB.prepare(
+    "SELECT COUNT(*) n FROM readers WHERE is_owner = 1").first())?.n ?? 0;
+  if (owners === 0) {
+    logPush(env, ctx, `${tag}: 沒有標記為管理者的裝置，未送出`);
+    return { owners, subs: 0, statuses: [] };
+  }
+  const rows = (await env.DB.prepare(
+    `SELECT endpoint, p256dh, auth FROM push_subs
+     WHERE key IN (SELECT key FROM readers WHERE is_owner = 1)`).all()).results ?? [];
+  const out = await Promise.all(rows.map(async (sub) => {
+    const { status, detail } = await pushOne(env, sub, payload);
+    return { line: `${subTag(sub.endpoint)} → ${status}${detail ? " " + detail : ""}`, status };
+  }));
+  logPush(env, ctx,
+    `${tag}: ${owners} 把管理者鑰匙，${rows.length} 訂閱\n${out.map((r) => r.line).join("\n")}`);
+  return { owners, subs: rows.length, statuses: out.map((r) => r.status) };
+}
+
+// POST /api/admin/owner-test — ring the owner's devices and only those, so
+// the flag can be proven from the phone it is meant to reach (the same
+// reason the per-device 測試 button exists). A fixed payload on purpose: an
+// admin route that pushed arbitrary text would be a door the design
+// otherwise refuses to open. Nothing rides on the response but /admin, so
+// it is awaited and carries the push service's verdicts.
+async function ownerTest(request, env, ctx) {
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+  if (!env.VAPID_PRIVATE_JWK || !env.VAPID_SUBJECT) return json({ error: "push not configured" }, 503);
+  const r = await pushOwner(env, ctx, "管理者測試", {
+    title: "管理者通知測試", body: "只有標記為管理者的裝置會收到這則。", url: "/admin",
+  });
+  return json({ ok: r.subs > 0 && r.statuses.every((s) => s >= 200 && s < 300), ...r });
 }
 
 // Announce a new book to every subscription. Runs in waitUntil — a push
@@ -982,11 +1045,14 @@ async function handleAdmin(request, env, ctx, path) {
   // POST /api/admin/feedback — one 改進建議 onto the AI's queue
   if (path === "/api/admin/feedback") return postFeedback(request, env);
 
-  // /api/admin/readers — mint, list and revoke reader keys; the whole
+  // /api/admin/readers — mint, list, revoke and flag reader keys; the whole
   // lifecycle lives on /admin (see the readers table in schema.sql)
   if (path === "/api/admin/readers") return handleReaders(request, env);
   const km = path.match(/^\/api\/admin\/readers\/([^/]+)$/);
-  if (km) return deleteReader(request, env, decodeURIComponent(km[1]));
+  if (km) return handleReaderKey(request, env, decodeURIComponent(km[1]));
+
+  // POST /api/admin/owner-test — the owner-only push channel's self-test
+  if (path === "/api/admin/owner-test") return ownerTest(request, env, ctx);
 
   // POST /api/admin/reindex — rebuild the D1 shelf index from the bucket
   if (path === "/api/admin/reindex") return reindex(request, env);
