@@ -956,7 +956,13 @@ panel.
   (`…/update/install-now`) for the updater to pick up on its next check —
   never a call into the updater, which has no door (the plan's "An install
   button, without giving the updater a door"). Absent an updater the panel
-  reads "never checked" and does no harm.
+  reads "never checked" and does no harm. A **silent updater** is warned about
+  (PM-14, R10): a cron-only Worker fails invisibly — token expired, cron
+  stopped, all identical from outside — so the reader's own cron
+  (`alarmSilentUpdater`) watches `last_check_at`, and past `SILENT_THRESHOLD_MS`
+  the fold shows a warning and the owner is pushed once per stall (`pushOwner`;
+  a dead updater cannot report its own death, which is why the reader raises
+  it). A never-checked updater never nags.
 - **Check and fix are different buttons.** On /admin, 健康檢查 is read-only
   and 修復 is the only thing that writes — a check that mutates what it is
   checking is not a check, and the check treats the D1 index as evidence

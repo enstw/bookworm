@@ -8,7 +8,7 @@ import { RESERVED_SLUGS, SLUG_RE } from "../public/split-core.mjs";
 import { PACK_NAMES } from "../public/vendor/wasmtts/pack-manifest.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
 import { vapidPublicKey, sendPush, b64u } from "./push.js";
-import { readPanel, setPolicy, queueInstallNow } from "./update-panel.mjs";
+import { readPanel, setPolicy, queueInstallNow, shouldAlarm } from "./update-panel.mjs";
 
 function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
@@ -87,15 +87,38 @@ export default {
   },
 
   // The reader's own cron (wrangler.jsonc triggers): every minute, the
-  // version that is actually running asks whether it has been announced yet.
-  // Nothing external fires this, which is the whole point — see
-  // announceSelf. The pull-mode plan's owner-only messages and its
-  // silent-updater alarm will be further calls here, reading rows the
-  // updater wrote; the updater itself never pushes.
+  // version that is actually running asks whether it has been announced yet,
+  // and whether the updater has gone silent. Nothing external fires this,
+  // which is the whole point — see announceSelf. The reader raises the
+  // silent-updater alarm because a dead updater cannot report its own death
+  // (R10); the updater itself never pushes.
   async scheduled(controller, env, ctx) {
     await announceSelf(env, ctx);
+    await alarmSilentUpdater(env, ctx);
   },
 };
+
+// The silent-updater alarm (PM-14, R10). A cron-only Worker fails invisibly —
+// an expired token, a revoked credential, a cron that stopped firing all look
+// identical: updater_status.last_check_at stops moving. The reader watches it
+// and, past the threshold, warns the owner ONCE per stall (silent_alarm_for
+// holds the value it last alarmed about). A fresh install with no updater
+// leaves last_check_at 0 and never nags. Recorded before the push, so a second
+// tick or a push failure does not double-fire; the panel's own stale warning
+// is the durable signal either way.
+async function alarmSilentUpdater(env, ctx) {
+  const row = await env.DB.prepare(
+    "SELECT last_check_at, silent_alarm_for FROM updater_status WHERE id = 1").first();
+  if (!row) return;
+  const now = Date.now();
+  if (!shouldAlarm({ lastCheckAt: row.last_check_at, silentAlarmFor: row.silent_alarm_for, now })) return;
+  await env.DB.prepare("UPDATE updater_status SET silent_alarm_for = ? WHERE id = 1")
+    .bind(row.last_check_at).run();
+  const hours = Math.max(1, Math.round((now - row.last_check_at) / 3600000));
+  await pushOwner(env, ctx, "更新器失聯", {
+    title: "更新器失聯", body: `更新器已約 ${hours} 小時沒有回報，請到 /admin 檢查。`, url: "/admin",
+  });
+}
 
 // ---------- reader auth ----------
 //

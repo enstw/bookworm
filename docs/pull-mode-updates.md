@@ -37,7 +37,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-07 · health check and automatic rollback | 3 | done — built and proven; armed by PM-15 |
 | PM-15 · the rules for when an install may happen | 3 | done — decision + lock; wired by PM-08 |
 | PM-08 · the panel and the policy | 3 | done — panel + cron split; armed by the owner's token |
-| PM-14 · alarm on a silent updater | 3 | — |
+| PM-14 · alarm on a silent updater | 3 | done |
 | PM-09 · the owner's phone, and only the owner's | 3 | wip — channel landed, messages pending |
 | PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | — |
 | PM-16 · updating the updater | 4 | — |
@@ -1142,6 +1142,21 @@ can go in.
 - Done when: an updater stopped by hand produces a warning on the panel and
   a push to the owner, within a few times the check interval.
 - Needs: PM-08
+- **Landed, 2026-08-21.** The reader's own cron
+  (`alarmSilentUpdater` in `src/worker.js`, beside `announceSelf`) watches
+  `updater_status.last_check_at`: past `SILENT_THRESHOLD_MS` (~4 check
+  intervals) it warns and calls `pushOwner` — the first of PM-09's owner-only
+  messages to be wired. Exactly once per stall (`silent_alarm_for` holds the
+  value it alarmed about; recorded before the push so a second tick or a
+  failed push does not double-fire), and never for a never-checked updater
+  (`last_check_at` 0 — a reader-only install must not nag). `readPanel`
+  exposes a `stale` flag and the 更新 fold shows the warning at the top; the
+  panel is the durable record even if the push is missed. `test-updater.mjs`
+  pins `shouldAlarm`/`isStale`/`readPanel.stale`, and it was proven live: a
+  stale seed → one cron tick → panel `stale: true`, one `更新器失聯` alarm
+  through `pushOwner`, `silent_alarm_for` set, and a second tick silent.
+  (With no owner device flagged the push no-ops, as PM-09 intends; the
+  delivery itself is `pushOwner`, proven in `test:push`.)
 
 **PM-09 · the owner's phone, and only the owner's**
 - Why: the owner watches a phone, not a repo — but three of the four update

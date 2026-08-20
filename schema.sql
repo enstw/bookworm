@@ -149,7 +149,12 @@ CREATE TABLE IF NOT EXISTS updater_status (
   -- the updater's own version (UPDATER_VERSION), written on every check, shown
   -- on /admin beside the running and upstream ones so a minUpdaterVersion
   -- refusal (PM-16) names a number the owner can look up.
-  updater_version      INTEGER NOT NULL DEFAULT 0
+  updater_version      INTEGER NOT NULL DEFAULT 0,
+  -- the last_check_at the reader's cron last raised the silent-updater alarm
+  -- about (PM-14, R10): the reader watches this table because a dead updater
+  -- cannot report its own death, and this column makes the alarm fire once
+  -- per stall rather than every minute the updater stays quiet.
+  silent_alarm_for     INTEGER NOT NULL DEFAULT 0
 );
 
 -- The update policy (PM-08), set from /admin by the owner and read by the
