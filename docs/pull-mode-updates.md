@@ -40,6 +40,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-14 · alarm on a silent updater | 3 | — |
 | PM-09 · the owner's phone, and only the owner's | 3 | — |
 | PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | — |
+| PM-16 · updating the updater | 4 | — |
 | PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md` | 4 | — |
 | PM-12 · DESIGN.md absorbs the decisions; this document goes away | 4 | — |
 | PM-13 · two instances, one real release | 5 | — |
@@ -136,7 +137,7 @@ flowchart TD
 
 ### Why the asset step is smaller than it sounds
 
-`public/` is 39 files and 12 MB, and the size is concentrated in things
+`public/` is 42 files and 12 MB, and the size is concentrated in things
 that never change: `fonts/ENSFont.woff2` is 6.2 MB, `icons/icon-source.png`
 2.9 MB, `vendor/opencc-cn2t.js` 1.1 MB. What actually moves in a release is
 `app.js` (104 KB), `sw.js`, `app.css`, `i18n.js`.
@@ -157,7 +158,8 @@ that publishes them, described by a manifest:
 
 ```jsonc
 {
-  "version": "9a3855f · 2026-08-19 15:53",
+  "version":     "9a3855f · 2026-08-19 15:53",  // the reader's BUILD, verbatim
+  "released_at": "2026-08-19T15:53:00+08:00",   // the soak clock, see below
   "worker":  { "path": "worker.js", "sha256": "…" },
   "assets":  [ { "path": "/app.js", "sha256": "…", "size": 106496 }, … ],
   "bundle":  { "url": "…/bookworm-9a3855f.zip", "sha256": "…" },
@@ -177,6 +179,37 @@ that publishes them, described by a manifest:
 ```
 
 The zip is unpacked with `fflate`, which is already vendored for the browser.
+
+`version` is the display string `deploy.sh` stamps into the worker and
+`app.js` (`scripts/deploy.sh:97`), so the panel can compare it to the
+reader's own `BUILD` without translating anything. It is an *identity* — it
+answers "differs?" and keys the failed-version block — and nothing more.
+`released_at` is separate because the soak ("install once it has been out
+for N days") needs an instant a machine can subtract. Parsing it back out of
+the display string would be fragile, and the obvious substitute — when this
+updater first saw the release — is wrong in the one case that matters: a
+freshly bootstrapped instance would soak a release that has been out for
+months.
+
+### Where it is published
+
+Upstream cuts a **GitHub release per deploy**, and `UPSTREAM_URL` is that
+repo's `releases/latest/download/`. This is not a free choice — the trust
+section below fixes it. Fleet integrity is already defined as the integrity
+of the upstream GitHub account; publishing to a bucket or a domain instead
+would add a second thing every instance has to trust, for nothing.
+
+Nothing cuts such a release today. `deploy.yml` marks a deploy with the
+`released` git tag and the `RELEASES.md` ledger, and its only
+`gh release create` is the test-failure pre-release. Adding one is PM-01's
+work, not a step that already exists.
+
+One rule comes with the choice: **the manifest must never be read from
+cache.** `latest/download` is a stable URL whose contents change, polled
+every check interval, and a cached copy is indistinguishable from "no new
+release" — R10's symptom with a different cause, and one the panel would
+report as healthy. The check fetches it uncached; the bundle is per-version
+and immutable, so that may be cached freely.
 
 ## Trust: TLS, and why there is no signature
 
@@ -517,9 +550,12 @@ numbers, because when it goes wrong, *what version is upstream* is a lie.
 
 ### To be measured, not assumed
 
-**R8 · can a Worker finish the first install at all?** 39 files, 12 MB,
+**R8 · can a Worker finish the first install at all?** 42 files, 12 MB,
 base64-inflated, against the free plan's 50-subrequest ceiling and whatever
-CPU and wall-clock a scheduled invocation actually gets. Ordinary updates
+CPU and wall-clock a scheduled invocation actually gets. 42 against 50 is
+not headroom, it is a coincidence — if the upload session costs one
+subrequest per file this fails on arithmetic alone, before any limit that
+needs measuring. Ordinary updates
 touch a handful of files and are clearly fine; **the 12 MB first install is
 the open question, and it can invalidate the design.** Phase 0 exists for
 exactly this.
@@ -559,18 +595,32 @@ Ticket ids are stable; `needs` is a hard ordering.
 - Why: nothing produces a deployable bundle today — the bundler's output is
   uploaded and discarded in one motion. The manifest carries the asset
   hashes, the binding shape, the assets config and the migrations.
-- Also drop `icons/icon-source.png` from what gets served.
+- Also cuts the GitHub release the artifact rides on: `deploy.yml` marks a
+  deploy with a tag and a ledger today, and creates no release for the app.
+- Also drop `icons/icon-source.png` from what gets served — it is the input
+  to `scripts/make-icons.mjs` and nothing fetches it.
+- Done when: a deploy leaves behind a release whose manifest lists every
+  asset with its sha256, and a clean checkout of the same commit reproduces
+  those hashes — an artifact nobody can re-derive is not one anybody can
+  verify.
 
 **PM-02 · the manifest becomes a stated contract**
 - Touches: `DESIGN.md`, `scripts/test-deploy-policy.mjs`
 - Why: N instances will depend on its shape unattended. Changing or losing
   it silently strands the fleet, so it needs the same kind of gate the
   permission split has.
+- Done when: the CI gate fails if the packaging script drops, renames or
+  retypes a manifest field — the way `test-deploy-policy.mjs` already fails
+  on a permission change, and for the same reason.
 
 **PM-03 · a release can demand a human**
 - Why: `requiresAttention` is what lets upstream ship a change needing a new
   secret or a non-additive migration without gambling on every instance's
-  policy.
+  policy. Neither R4 branch can conjure a secret that does not yet exist,
+  so this is the only door such a release has.
+- Done when: a release carrying the flag leaves an instance on **automatic**
+  policy uninstalled and waiting, with the reason on the panel rather than
+  in a log.
 - Needs: PM-01
 
 ### Phase 2 — the updater
@@ -593,6 +643,16 @@ Ticket ids are stable; `needs` is a hard ordering.
 
 **PM-06 · migrations before the swap, additive-only**
 - Why: R5, promoted from habit to gate.
+- Supersedes DESIGN.md's *Data migrations* rule, which stands on two
+  premises pull mode removes: "there is exactly one instance, so a change in
+  stored shape never needs a compatibility layer living in the app", and a
+  `workflow_dispatch` workflow as the runner "because repo secrets are the
+  only place the production `ADMIN_TOKEN` exists". An instance with no repo
+  can run neither. Rewrite that section when this lands — it is the one
+  place in DESIGN.md that will actively mislead an agent mid-transition.
+- Done when: a release carrying a migration installs on an instance, and a
+  test proves the migration ran before the script swap and that the old
+  code still serves against the migrated schema.
 - Needs: PM-05
 
 ### Phase 3 — safe to leave alone
@@ -637,6 +697,8 @@ Ticket ids are stable; `needs` is a hard ordering.
 - The failed-version rule needs a test proving the exact version is blocked
   and the *next* one still installs; getting that backwards is either an
   install loop or a permanently stuck instance.
+- Done when: one table-driven test covers the soak, all three overrides and
+  the lock, and an overrunning install cannot start a second one.
 - Needs: PM-05
 
 **PM-08 · the panel and the policy**
@@ -648,6 +710,9 @@ Ticket ids are stable; `needs` is a hard ordering.
   install, and queues an "install now" request through D1 rather than
   opening a callable surface on the updater.
 - Ships the default: automatic, after 2 days.
+- Carries the **updater's own version** too, beside the running and upstream
+  ones: `minUpdaterVersion` can refuse a release by number (PM-16), and a
+  refusal naming a number the owner cannot look up is not an explanation.
 - Done when: the panel's running version, upstream version, last-check time
   and last-install outcome all come from D1 rows the updater wrote, and the
   reader Worker makes no outbound request to upstream on any code path.
@@ -686,15 +751,43 @@ Ticket ids are stable; `needs` is a hard ordering.
   and set secrets the first time, and no Worker can do that before it
   exists. A single local command is the honest answer: one-time friction
   traded against permanent friction.
+- Done when: an empty Cloudflare account becomes a working instance — two
+  Workers, D1, R2, the secrets, a first reader key — from one command, with
+  no fork and no clone of this repo.
+
+**PM-16 · updating the updater**
+- Why: `minUpdaterVersion` can refuse a release outright (*Three
+  overrides*, 2), and the owner's remedy is currently undefined. An instance
+  is a Cloudflare account with no repo, no clone and no CI — there is
+  nothing to `git pull`. Without a route, that refusal is a permanent stop
+  rather than the delay it was meant to be.
+- The answer is PM-10's bootstrap, re-run: the same one-shot command that
+  placed the two Workers replaces the updater in place and leaves D1, R2 and
+  every secret alone. That is what makes "update the updater" the rare,
+  deliberate act the two-Worker split assumed, instead of a thing nobody
+  can do.
+- Done when: an instance refusing a release on `minUpdaterVersion` can be
+  brought current with one command, and takes the release it refused.
+- Needs: PM-10
 
 **PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md`**
 - Why: both are built end to end on fork + `gh workflow run`. This is a
   rewrite, not an edit.
+- Done when: an agent following the document alone brings up an instance on
+  a fresh account, and no step mentions a fork, `gh workflow run`, or a
+  local checkout — the same bar `INSTALLATION.md` is already written to.
 - Needs: PM-10
 
 **PM-12 · DESIGN.md absorbs the decisions; this document goes away**
 - Why: house rule — decisions worth keeping are distilled into the relevant
   subsystem section, superseded ones are deleted rather than annotated.
+- Two sections are rewrites rather than distillations, because pull mode
+  removes what they rest on: *Data migrations* (one instance, and Actions as
+  the migration runner — see PM-06) and *A deploy announces itself* (an
+  external hook firing the announce, and the `?build=` staleness dance that
+  exists only because the caller is external).
+- Done when: this file is deleted and nothing points at it any more — the
+  Backlog entry in DESIGN.md that sends readers here included.
 
 ### Phase 5 — prove it
 
