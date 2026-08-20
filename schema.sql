@@ -145,8 +145,27 @@ CREATE TABLE IF NOT EXISTS updater_status (
   last_install_at      INTEGER NOT NULL DEFAULT 0,
   last_install_version TEXT    NOT NULL DEFAULT '',
   last_install_result  TEXT    NOT NULL DEFAULT '',
-  last_install_detail  TEXT    NOT NULL DEFAULT ''
+  last_install_detail  TEXT    NOT NULL DEFAULT '',
+  -- the updater's own version (UPDATER_VERSION), written on every check, shown
+  -- on /admin beside the running and upstream ones so a minUpdaterVersion
+  -- refusal (PM-16) names a number the owner can look up.
+  updater_version      INTEGER NOT NULL DEFAULT 0
 );
+
+-- The update policy (PM-08), set from /admin by the owner and read by the
+-- updater's decide() (PM-15). One row. mode is automatic | notify | pinned;
+-- soak_days is the wait before an automatic install. install_now_* is the
+-- notify-mode "install now" request, queued through D1 rather than opening a
+-- callable surface on the updater — it picks the request up on its next check.
+-- Seeded with the shipped default (automatic, 2 days) and kept across deploys.
+CREATE TABLE IF NOT EXISTS updater_policy (
+  id                  INTEGER PRIMARY KEY CHECK (id = 1),
+  mode                TEXT    NOT NULL DEFAULT 'automatic',
+  soak_days           INTEGER NOT NULL DEFAULT 2,
+  install_now_version TEXT    NOT NULL DEFAULT '',
+  install_now_at      INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO updater_policy (id) VALUES (1);
 
 -- The install lock (PM-15): one row, so an overrunning cron and a queued
 -- install-now cannot interleave — at most one install runs at a time.

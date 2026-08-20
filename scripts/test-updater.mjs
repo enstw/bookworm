@@ -12,6 +12,7 @@ import { zipSync } from "fflate";
 import { checkOnce, d1Store, UPDATER_VERSION, verifyBundle, buildMetadata, install,
   ensureHealthKey, healthCheck, currentVersionId, rollbackTo, installWithRollback,
   decide, acquireInstallLock, releaseInstallLock } from "../src/updater-core.mjs";
+import { readPanel, setPolicy, queueInstallNow } from "../src/update-panel.mjs";
 
 const out = {};
 const eq = (name, actual, expected) => {
@@ -460,6 +461,72 @@ const CASES = [
   out.installLock = a1 && !a2 && a3 && !a4 && a5 && row.holder === "cronE"
     ? "ok (one at a time; released frees it; a stale lock is reclaimed)"
     : `FAIL ${JSON.stringify({ a1, a2, a3, a4, a5, holder: row.holder })}`;
+}
+
+// ---- the panel, reader side (PM-08) -------------------------------------
+
+function panelDb(state) {
+  return { prepare(sql) {
+    let args = [];
+    const self = {
+      bind(...a) { args = a; return self; },
+      async first() {
+        if (/FROM updater_status/.test(sql)) return state.status;
+        if (/FROM updater_policy/.test(sql)) return state.policy;
+        return null;
+      },
+      async run() {
+        if (/INSERT INTO updater_policy/.test(sql)) {
+          state.policy = state.policy || {};
+          if (/mode = excluded\.mode/.test(sql)) { state.policy.mode = args[0]; state.policy.soak_days = args[1]; }
+          if (/install_now_version = excluded/.test(sql)) { state.policy.install_now_version = args[0]; state.policy.install_now_at = args[1]; }
+          return { meta: { changes: 1 } };
+        }
+        return { meta: { changes: 0 } };
+      },
+    };
+    return self;
+  } };
+}
+
+// 22. readPanel reflects the updater's D1 rows and never contacts upstream
+{
+  const state = {
+    status: { upstream_version: "9a · x", upstream_released_at: "2026-08-19T00:00:00Z", last_check_at: 123, last_check_ok: 1, detail: "", last_install_at: 456, last_install_version: "9a · x", last_install_result: "ok", last_install_detail: "", updater_version: 1 },
+    policy: { mode: "notify", soak_days: 3, install_now_version: "", install_now_at: 0 },
+  };
+  const d = await readPanel({ DB: panelDb(state) }, "old · x");
+  out.panelRead = d.running === "old · x" && d.upstream.version === "9a · x" && d.lastCheck.ok === true &&
+    d.updaterVersion === 1 && d.policy.mode === "notify" && d.policy.soakDays === 3 && d.lastInstall.result === "ok"
+    ? "ok (running, upstream, last-check, updater version, policy, last-install)" : `FAIL ${JSON.stringify(d)}`;
+  // a fresh install with no rows → sensible defaults, not a crash
+  const empty = await readPanel({ DB: panelDb({ status: null, policy: null }) }, "b · x");
+  out.panelDefaults = empty.running === "b · x" && empty.upstream.version === "" && empty.policy.mode === "automatic" && empty.policy.soakDays === 2 && empty.lastCheck.at === 0
+    ? "ok (no rows: running only, automatic/2 default)" : `FAIL ${JSON.stringify(empty)}`;
+}
+
+// 23. setPolicy validates and writes; bad input is refused
+{
+  const state = { status: null, policy: { mode: "automatic", soak_days: 2 } };
+  const env = { DB: panelDb(state) };
+  const okr = await setPolicy(env, { mode: "pinned", soakDays: 7 });
+  const badMode = await setPolicy(env, { mode: "whenever", soakDays: 1 });
+  const badSoak = await setPolicy(env, { mode: "automatic", soakDays: -1 });
+  out.panelPolicy = okr.ok && state.policy.mode === "pinned" && state.policy.soak_days === 7 &&
+    badMode.ok === false && /mode/.test(badMode.error) && badSoak.ok === false && /soakDays/.test(badSoak.error)
+    ? "ok (valid written; bad mode and bad soak refused)" : `FAIL ${JSON.stringify({ okr, badMode, badSoak, policy: state.policy })}`;
+}
+
+// 24. queueInstallNow stores the version the updater last saw; refuses when
+// nothing has been seen
+{
+  const seen = { status: { upstream_version: "9a · x" }, policy: {} };
+  const q1 = await queueInstallNow({ DB: panelDb(seen) }, 999);
+  const none = { status: { upstream_version: "" }, policy: {} };
+  const q2 = await queueInstallNow({ DB: panelDb(none) }, 999);
+  out.panelInstallNow = q1.ok && q1.version === "9a · x" && seen.policy.install_now_version === "9a · x" && seen.policy.install_now_at === 999 &&
+    q2.ok === false && /no upstream/.test(q2.error)
+    ? "ok (queues the seen version; refuses when none seen)" : `FAIL ${JSON.stringify({ q1, q2, policy: seen.policy })}`;
 }
 
 console.log(JSON.stringify(out, null, 2));

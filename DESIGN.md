@@ -936,6 +936,19 @@ yet; PM-08 wires it into the cron and stores the policy it reads.
   rejected — with the folds closed the page is already one screen, so a
   second navigation system would be furniture for a problem that no longer
   exists.
+- **The 更新 fold is a mirror of D1, never a call upstream.** The pull-mode
+  panel (PM-08, `src/update-panel.mjs`) shows the running version, what the
+  updater last saw of upstream, when it last checked, the updater's own
+  version and the last install's outcome — all read from the shared D1 the
+  updater writes (`GET /api/admin/update`). The reader holds no relationship
+  with upstream and must not acquire one: the moment `/admin` fetched upstream
+  itself, the largest attack surface would reacquire the trust the design
+  keeps solely in the updater. The mode/soak controls write `updater_policy`
+  (`POST …/update/policy`), and 立即安裝 queues the request in D1
+  (`…/update/install-now`) for the updater to pick up on its next check —
+  never a call into the updater, which has no door (the plan's "An install
+  button, without giving the updater a door"). Absent an updater the panel
+  reads "never checked" and does no harm.
 - **Check and fix are different buttons.** On /admin, 健康檢查 is read-only
   and 修復 is the only thing that writes — a check that mutates what it is
   checking is not a check, and the check treats the D1 index as evidence

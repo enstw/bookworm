@@ -209,6 +209,33 @@
       <div id="auditList"></div>
     </details>
 
+    <!-- 更新: the pull-mode panel. Everything shown here is D1 the updater
+         wrote — the reader never contacts upstream (see update-panel.mjs).
+         Absent an updater (this install is not pull-mode), the panel simply
+         shows "never checked" and the policy controls no one reads yet. -->
+    <details id="update" class="fold" hidden>
+      <summary data-i18n="up.h">更新</summary>
+      <p class="hint" data-i18n="up.hint">這台機器自己去上游看有沒有新版本、依照下面的原則決定要不要安裝。全部讀自本機資料庫，這個頁面不會連到上游。</p>
+      <div id="updatePanel" class="small"></div>
+      <div class="row">
+        <div>
+          <label for="upMode" data-i18n="up.mode">安裝原則</label>
+          <select id="upMode">
+            <option value="automatic" data-i18n="up.modeAuto">自動（滿 N 天後）</option>
+            <option value="notify" data-i18n="up.modeNotify">只通知我</option>
+            <option value="pinned" data-i18n="up.modePinned">固定不動</option>
+          </select>
+        </div>
+        <div>
+          <label for="upSoak" data-i18n="up.soak">觀察天數</label>
+          <input type="number" id="upSoak" min="0" max="365" step="1">
+        </div>
+      </div>
+      <button class="btn primary" id="upSave" data-i18n="up.save">儲存原則</button>
+      <button class="btn" id="upNow" data-i18n="up.now" hidden>立即安裝</button>
+      <div id="upMsg" class="msg"></div>
+    </details>
+
     <!-- 改進建議: the owner's suggestion inbox for the AI. Written here (the
          phone is where ideas strike), read back by a dev agent with a plain
          unauthenticated GET /api/feedback — no key to hand over. Deleted by
@@ -292,9 +319,10 @@
       // which matters because an expired cookie is a 401 that sendBeacon
       // reports to nobody.
       fetch("/api/admin/session", { method: "POST", headers: authHeaders() });
-      for (const id of ["books", "readers", "pick", "house", "fb", "diag"]) $(id).hidden = false;
+      for (const id of ["books", "readers", "pick", "house", "update", "fb", "diag"]) $(id).hidden = false;
       loadBooks();
       loadReaders();
+      loadUpdate();
       loadNotes();
     }
 
@@ -1289,6 +1317,55 @@
       applyWake();
     };
 
+    // ---------- 更新 (pull-mode panel) ----------
+
+    // one labelled line for the panel; everything comes from the D1 the
+    // updater wrote, read through GET /api/admin/update
+    const upRow = (label, value, warn) =>
+      el("div", { class: "book-head" },
+        el("span", { class: "name" }, el("strong", { text: label + "：" }),
+          el("span", { class: warn ? "err" : "", text: value })));
+
+    async function loadUpdate() {
+      const panel = $("updatePanel");
+      let d;
+      try { d = await api("/api/admin/update", { cache: "no-store" }); }
+      catch (err) { return panel.replaceChildren(el("div", { class: "small err", text: err.message })); }
+      const when = (ms) => ms ? new Date(ms).toLocaleString() : t("up.never");
+      const upToDate = d.upstream.version && d.upstream.version === d.running;
+      panel.replaceChildren(
+        upRow(t("up.running"), d.running || "dev"),
+        upRow(t("up.upstream"), upToDate ? t("up.current") : (d.upstream.version || t("up.unknown"))),
+        upRow(t("up.lastCheck"),
+          d.lastCheck.at ? when(d.lastCheck.at) + (d.lastCheck.ok ? "" : " — " + d.lastCheck.detail) : t("up.never"),
+          d.lastCheck.at && !d.lastCheck.ok),
+        upRow(t("up.updaterVer"), d.updaterVersion ? "v" + d.updaterVersion : "—"),
+        upRow(t("up.lastInstall"),
+          d.lastInstall.at ? `${d.lastInstall.version} · ${d.lastInstall.result}${d.lastInstall.detail ? " — " + d.lastInstall.detail : ""}` : t("up.never"),
+          d.lastInstall.result === "rolled-back" || d.lastInstall.result === "failed"));
+      $("upMode").value = d.policy.mode;
+      $("upSoak").value = d.policy.soakDays;
+      // offer "install now" only when upstream has something newer to install
+      $("upNow").hidden = !(d.upstream.version && !upToDate);
+    }
+
+    $("upSave").onclick = async () => {
+      const m = $("upMsg"); m.textContent = "…"; m.className = "msg";
+      try {
+        await api("/api/admin/update/policy", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mode: $("upMode").value, soakDays: Number($("upSoak").value) }) });
+        m.textContent = t("up.saved"); m.className = "msg ok";
+        loadUpdate();
+      } catch (err) { m.textContent = err.message; m.className = "msg err"; }
+    };
+    $("upNow").onclick = async () => {
+      const m = $("upMsg"); m.textContent = "…"; m.className = "msg";
+      try {
+        const r = await api("/api/admin/update/install-now", { method: "POST" });
+        m.textContent = t("up.queued", r.version); m.className = "msg ok";
+      } catch (err) { m.textContent = err.message; m.className = "msg err"; }
+    };
+
     // ---------- 改進建議 ----------
 
     // the same public GET the AI uses — what this list shows is exactly the
@@ -1339,7 +1416,7 @@
     $("testlogOn").onchange = (e) => bwTestlogSet(e.target.checked);
 
     const OPEN_KEY = "bookworm:admin-open";
-    const FOLDS = ["books", "readers", "pick", "house", "fb", "diag"];
+    const FOLDS = ["books", "readers", "pick", "house", "update", "fb", "diag"];
     function saveFolds() {
       try {
         localStorage.setItem(OPEN_KEY, JSON.stringify(FOLDS.filter((id) => $(id).open)));
