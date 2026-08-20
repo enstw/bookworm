@@ -9,6 +9,13 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-20 — `998cb631281c`
+
+> blake3-wasm 2.1.5
+
+- ci: the release manifest is a contract the gate enforces (`998cb63`)
+- release: every deploy publishes the artifact an instance can install (`d24ffaf`)
+
 ## 2026-08-20 — `c46d28a54462`
 
 > 管理頁的讀者鑰匙可把自己手機設為「管理者」：之後更新等候決定、安裝失敗回退、更新器失聯這類通知只送管理者裝置；沒標記就不送，管理頁會明說。
