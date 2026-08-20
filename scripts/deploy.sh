@@ -160,6 +160,21 @@ else
   echo "    (UPSTREAM_URL not set — the updater checks nothing until it is)"
 fi
 
+# The Cloudflare API token that rewrites the reader (PM-05's install path) —
+# on the UPDATER, never the reader (R1), and gated behind its own env var so
+# it is not armed until the safety net exists. install() is built and proven
+# but nothing calls it yet: the cron only checks. Arming it (setting this
+# secret AND turning on the policy-driven install) waits for PM-07's health
+# check and rollback and PM-15's policy — a Worker-rewrite token that could
+# auto-install with no rollback is exactly the risk the split defends against,
+# so the token stays out until the thing that catches a bad release is in.
+if [[ -n "${UPDATER_CF_API_TOKEN:-}" ]]; then
+  echo "==> pushing CF_API_TOKEN secret to bookworm-updater"
+  printf '%s' "$UPDATER_CF_API_TOKEN" | $UPDATER secret put CF_API_TOKEN
+else
+  echo "    (UPDATER_CF_API_TOKEN not set — the install path stays unarmed until PM-07/PM-15)"
+fi
+
 # optional: Web Push (新書通知) — without the key the feature just reports
 # "push not configured" and everything else works
 if [[ -n "${VAPID_PRIVATE_JWK:-}" ]]; then

@@ -4,6 +4,9 @@
 // it — and because a plain function behind a seam is testable with no wrangler,
 // no account, no D1 (scripts/test-updater.mjs).
 
+import { unzipSync } from "fflate";
+import { Buffer } from "node:buffer";
+
 // The updater's own version, an integer, deliberately separate from the
 // reader's git BUILD stamp. A release's manifest carries minUpdaterVersion
 // (PM-16); an updater below it refuses rather than half-installs. /admin shows
@@ -100,4 +103,159 @@ export async function checkOnce({ upstreamUrl, store, now, fetchFn = fetch }) {
     detail: "",
   });
   return { ok: true, version: manifest.version };
+}
+
+// ---- the install path (PM-05) -------------------------------------------
+//
+// The updater's one risky act: rewrite the reader Worker to a new release.
+// Everything below is portable between the Workers runtime and node (the
+// live proof in the deploy runs it in the Worker; scripts/test-updater.mjs
+// runs the pieces in node), which is why fflate and node:buffer are imported
+// rather than assumed global.
+//
+// NOT yet wired into the cron: the scheduled handler only checks. Automatic
+// installation waits for the health check and rollback that protect it
+// (PM-07) and the policy that decides when (PM-15) — the credential and the
+// trigger arrive together with the safety net, never before it.
+
+const MIME = {
+  js: "application/javascript", mjs: "application/javascript", css: "text/css",
+  html: "text/html", json: "application/json", woff2: "font/woff2",
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", svg: "image/svg+xml",
+  wasm: "application/wasm", webmanifest: "application/manifest+json",
+  txt: "text/plain", ico: "image/x-icon", map: "application/json", md: "text/markdown",
+};
+const contentTypeFor = (p) => MIME[p.slice(p.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream";
+
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+const sha256Hex = async (bytes) => hex(await crypto.subtle.digest("SHA-256", bytes));
+function decodeJwt(jwt) {
+  const payload = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+  return JSON.parse(Buffer.from(payload, "base64").toString());
+}
+
+// Verify a downloaded bundle against its manifest and return the unzipped
+// files. This is download integrity, not source authenticity — it catches a
+// truncated or corrupt release, never proves the manifest genuine (TLS to
+// upstream is the trust anchor, the plan's trust section). Throws on any
+// mismatch, before a byte of it reaches the script.
+export async function verifyBundle(manifest, zipBytes) {
+  if ((await sha256Hex(zipBytes)) !== manifest.bundle.sha256)
+    throw new Error("bundle sha256 mismatch");
+  const files = unzipSync(zipBytes);
+  const want = new Map([[manifest.worker.file, manifest.worker], ...manifest.assets.map((a) => [a.file, a])]);
+  for (const [file, entry] of want) {
+    const bytes = files[file];
+    if (!bytes) throw new Error(`bundle missing ${file}`);
+    if (bytes.length !== entry.size) throw new Error(`${file} size ${bytes.length} ≠ ${entry.size}`);
+    if ((await sha256Hex(bytes)) !== entry.sha256) throw new Error(`${file} sha256 mismatch`);
+  }
+  return files;
+}
+
+// The PUT metadata. Only ASSETS is re-declared — it must carry the fresh
+// upload token — so every other binding is kept BY TYPE via keep_bindings,
+// and the updater never sends (and so can never clear) a value it does not
+// hold: the D1 id, the bucket name, ADMIN_TOKEN, the VAPID pair (R4). Compat
+// date and flags come from the manifest, never re-typed here (R6). Proven in
+// PM-00: keep_bindings composes with the assets token in this one PUT.
+export function buildMetadata(manifest, assetsJwt, keepBindingTypes) {
+  const assetsBinding = manifest.bindings.find((b) => b.type === "assets");
+  if (!assetsBinding) throw new Error("manifest declares no assets binding");
+  return {
+    main_module: manifest.worker.file,
+    compatibility_date: manifest.compatibility_date,
+    compatibility_flags: manifest.compatibility_flags ?? [],
+    bindings: [{ type: "assets", name: assetsBinding.name }],
+    keep_bindings: keepBindingTypes,
+    assets: { jwt: assetsJwt, config: manifest.assetsConfig },
+    observability: { enabled: true },
+  };
+}
+
+const listBindings = async (cf, script) =>
+  ((await cf(`/workers/scripts/${script}/settings`)).bindings ?? []).map((b) => ({ type: b.type, name: b.name }));
+const listSecrets = async (cf, script) =>
+  (await cf(`/workers/scripts/${script}/secrets`) ?? []).map((s) => ({ name: s.name, type: s.type }));
+
+// Install a release onto the reader script. `cf(path, init, bearer?)` is the
+// Cloudflare API bound to the updater's token — path relative to
+// /accounts/{id}, bearer overriding the token for the asset uploads (they
+// carry the session's own JWT). `fetchFn` downloads the bundle. Confirmation
+// is CF-API-side on purpose: a Worker cannot fetch the reader over
+// workers.dev (error 1042, PM-00), so proving the swap actually SERVES is the
+// HTTP health check in PM-07. What this proves is narrower and is R4's Done:
+// every binding and secret that was on the script before the PUT is still
+// there after it. Throws before the PUT on any verify/claim failure, so a bad
+// release never reaches the swap; throws after it if anything was dropped.
+export async function install({ manifest, cf, script, fetchFn = fetch }) {
+  // the R4 baseline: what is bound before the swap
+  const [preBindings, preSecrets] = await Promise.all([listBindings(cf, script), listSecrets(cf, script)]);
+
+  // download and verify BEFORE touching the script
+  const res = await fetchFn(manifest.bundle.url, { cache: "no-store", redirect: "follow" });
+  if (!res.ok) throw new Error(`bundle HTTP ${res.status}`);
+  const files = await verifyBundle(manifest, new Uint8Array(await res.arrayBuffer()));
+
+  // the upload session: Cloudflare answers with only the file hashes it lacks
+  // from THIS script's store (PM-00), so a code-only release uploads nothing
+  const session = await cf(`/workers/scripts/${script}/assets-upload-session`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ manifest: Object.fromEntries(manifest.assets.map((a) => [a.path, { hash: a.cfhash, size: a.size }])) }),
+  });
+  // read the session JWT's claims before uploading anything. When the server
+  // sets wrangler_single_asset_uploads it wants one file per request, which
+  // breaks the 50-subrequest budget at 42 files — a refusal with a reason,
+  // not a fallback (PM-00 fact 2). It is a per-account server-side claim, so
+  // it can only be discovered here, at run time.
+  const claims = decodeJwt(session.jwt);
+  if (claims.wrangler_single_asset_uploads)
+    throw new Error("upstream session set wrangler_single_asset_uploads; refusing (see PM-00)");
+
+  // upload each bucket, base64 via Buffer — never chunked btoa, which costs 5×
+  // the CPU on the edge core (PM-00). The last response carries the
+  // completion token; an empty bucket list leaves it as the session JWT.
+  const byHash = new Map(manifest.assets.map((a) => [a.cfhash, a]));
+  let completion = session.jwt, uploaded = 0;
+  for (const bucket of session.buckets ?? []) {
+    const fd = new FormData();
+    for (const h of bucket) {
+      const a = byHash.get(h);
+      if (!a) throw new Error(`session asked for unknown hash ${h}`);
+      const bytes = files[a.file];
+      if (!bytes) throw new Error(`bundle lacks ${a.file}`);
+      fd.append(h, new File([Buffer.from(bytes).toString("base64")], h, { type: contentTypeFor(a.path) }), h);
+      uploaded++;
+    }
+    const r = await cf(`/workers/assets/upload?base64=true`, { method: "POST", body: fd }, session.jwt);
+    if (r.jwt) completion = r.jwt;
+  }
+
+  // the swap: keep every non-assets binding that is on the script now, by
+  // type, and re-declare only ASSETS with the fresh token. Reading the types
+  // off the live script rather than a fixed list means the keep set is exactly
+  // what exists — nothing stale kept, nothing present dropped.
+  const keepBindings = [...new Set(preBindings.filter((b) => b.type !== "assets").map((b) => b.type))];
+  const metadata = buildMetadata(manifest, completion, keepBindings);
+  const workerBytes = files[manifest.worker.file];
+  const fd = new FormData();
+  fd.append("metadata", new File([JSON.stringify(metadata)], "metadata.json", { type: "application/json" }));
+  fd.append(manifest.worker.file, new File([workerBytes], manifest.worker.file, { type: "application/javascript+module" }), manifest.worker.file);
+  await cf(`/workers/scripts/${script}`, { method: "PUT", body: fd });
+
+  // R4's loud test: everything bound before the swap must still be bound after
+  const [postBindings, postSecrets] = await Promise.all([listBindings(cf, script), listSecrets(cf, script)]);
+  const missing = [
+    ...preBindings.filter((b) => !postBindings.some((p) => p.name === b.name && p.type === b.type)).map((b) => `binding ${b.type}:${b.name}`),
+    ...preSecrets.filter((s) => !postSecrets.some((p) => p.name === s.name)).map((s) => `secret ${s.name}`),
+  ];
+  if (missing.length) throw new Error(`install dropped ${missing.join(", ")}`);
+
+  return {
+    version: manifest.version,
+    uploaded,
+    buckets: (session.buckets ?? []).length,
+    keptBindings: keepBindings,
+    secretsHeld: postSecrets.map((s) => s.name),
+  };
 }
