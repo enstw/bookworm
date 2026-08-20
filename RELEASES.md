@@ -9,6 +9,20 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-20 — `a87f5d86d138`
+
+- chore: ignore .codegraph, a local index that is not the repo's business (`a87f5d8`)
+- docs: close the plan's open decisions and give every ticket a bar to clear (`a072505`)
+- docs: state the case for mirroring, and lose two arguments to it (`da740ba`)
+- docs: settle who holds the reader's secrets — nobody but the updater's own two (`3ea67f0`)
+- docs: say why a fork was dropped, so it does not get proposed again (`fa2f69c`)
+- docs: the plan carries its own status, and only ever in the commit that moves it (`20ff2c0`)
+- docs: settle the update policy — automatic after two days, owner-only alerts (`05ebaad`)
+- docs: /admin reads the updater's record, it does not ask upstream (`8df7d28`)
+- docs: an instance is a Cloudflare account, not a fork (`88e28a7`)
+- docs: phase the pull-mode transition, and two blockers it turned up (`f013086`)
+- docs: write down the pull-mode update plan before building any of it (`1fb76e0`)
+
 ## 2026-08-17 — `150ce3de28ad`
 
 > 管理頁改代號時，太長或與系統頁面同名的代號會當場說明原因，不再等伺服器退回。
