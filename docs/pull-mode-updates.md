@@ -671,17 +671,18 @@ can go in.
   taken on the 42, and its verdict does not move: rescaled, the same one
   pass is ~7.5 ms against a 10 ms budget, still with the manifest, the
   bodies and the responses unpaid for.
-- **Reproducible means the clock cannot reach the bytes — and today it does,
-  twice.** `deploy.sh` stamps `BUILD` into `public/app.js` from
-  `date +'%Y-%m-%d %H:%M'`, so the same commit deployed a minute later is a
-  different asset with a different hash; and `release-notes.mjs:113` dates
-  the pending release from `new Date()`, which ships inside
-  `public/releases.json`. Both want one fix — take the time from the commit
-  being deployed, not from the wall — and it closes a latent bug on the way:
-  `gen-release-notes.mjs` runs before the deploy and `update-releases.mjs`
-  after it, so a deploy straddling midnight in Asia/Taipei already ships a
-  `releases.json` dated a day off its own ledger entry. The comment claiming
-  they cannot disagree is counting on the deploy being fast.
+- **Reproducible means the clock cannot reach the bytes — done, in
+  `7d885c2`.** It reached them in two places: `deploy.sh` stamped `BUILD`
+  into `public/app.js` from `date`, and `release-notes.mjs` dated the
+  pending release from `new Date()` into the shipped `public/releases.json`,
+  so one commit produced different assets on every deploy. Both now read the
+  time off the commit being deployed, guarded by a case in
+  `test-release-notes.mjs` that pins a commit to 23:30 UTC — already the
+  next day in Asia/Taipei — so one assertion covers the source and the
+  timezone. It settled a bug `release-notes.mjs`'s own header called
+  impossible on the way: its two callers run either side of the deploy, so
+  on a wall clock a deploy crossing midnight dated the shipped JSON a day
+  off its own ledger entry.
 - Done when: a deploy leaves behind a release whose manifest lists every
   asset with its sha256, and a clean checkout of the same commit reproduces
   those hashes — an artifact nobody can re-derive is not one anybody can
