@@ -10,7 +10,8 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { zipSync } from "fflate";
 import { checkOnce, d1Store, UPDATER_VERSION, verifyBundle, buildMetadata, install,
-  ensureHealthKey, healthCheck, currentVersionId, rollbackTo, installWithRollback } from "../src/updater-core.mjs";
+  ensureHealthKey, healthCheck, currentVersionId, rollbackTo, installWithRollback,
+  decide, acquireInstallLock, releaseInstallLock } from "../src/updater-core.mjs";
 
 const out = {};
 const eq = (name, actual, expected) => {
@@ -388,6 +389,77 @@ const runRB = async (opts) => {
   const cfg = JSON.parse(readFileSync(new URL("../wrangler.updater.jsonc", import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, ""));
   out.readerBinding = cfg.services?.[0]?.binding === "READER" && cfg.services[0].service === "bookworm"
     ? "ok (READER service binding → bookworm)" : `FAIL ${JSON.stringify(cfg.services)}`;
+}
+
+// ---- the install decision (PM-15) ---------------------------------------
+
+const DAY = 86400000;
+const NOWD = 2_000_000_000_000; // fixed clock for the table
+const rel = (daysAgo) => new Date(NOWD - daysAgo * DAY).toISOString();
+// a release that is `age` days old; overrides off unless named
+const man = (over = {}) => ({ version: "new · x", released_at: rel(over.age ?? 5), requiresAttention: over.requiresAttention ?? false, minUpdaterVersion: over.minUpdaterVersion ?? 1 });
+const auto = { mode: "automatic", soakDays: 2 };
+const base = { runningVersion: "old · x", updaterVersion: 1, now: NOWD };
+
+const CASES = [
+  ["up to date", { policy: auto, manifest: { ...man(), version: "old · x" } }, "skip", /up to date/],
+  ["automatic, soaked", { policy: auto, manifest: man({ age: 5 }) }, "install", /soak/],
+  ["automatic, still soaking", { policy: auto, manifest: man({ age: 1 }) }, "skip", /soaking/],
+  ["canary (soakDays 0) installs at once", { policy: { mode: "automatic", soakDays: 0 }, manifest: man({ age: 0 }) }, "install", /elapsed/],
+  ["pinned skips a new release", { policy: { mode: "pinned", soakDays: 2 }, manifest: man({ age: 5 }) }, "skip", /pinned/],
+  ["pinned + install-now installs", { policy: { mode: "pinned", soakDays: 2 }, manifest: man({ age: 0 }), installNow: "new · x" }, "install", /install now/],
+  ["notify mode notifies", { policy: { mode: "notify", soakDays: 2 }, manifest: man({ age: 5 }) }, "notify", /notify-only/],
+  ["notify + install-now installs", { policy: { mode: "notify", soakDays: 2 }, manifest: man({ age: 5 }), installNow: "new · x" }, "install", /install now/],
+  ["requiresAttention downgrades automatic to notify", { policy: auto, manifest: man({ age: 9, requiresAttention: true }) }, "notify", /attention/],
+  ["requiresAttention + install-now installs", { policy: auto, manifest: man({ age: 9, requiresAttention: true }), installNow: "new · x" }, "install", /install now/],
+  ["minUpdaterVersion too new refuses", { policy: auto, manifest: man({ age: 9, minUpdaterVersion: 2 }) }, "refuse", /needs updater v2/],
+  ["minUpdaterVersion refuses even install-now", { policy: auto, manifest: man({ age: 9, minUpdaterVersion: 2 }), installNow: "new · x" }, "refuse", /needs updater v2/],
+  ["failed version is not auto-retried", { policy: auto, manifest: man({ age: 9 }), lastInstall: { version: "new · x", result: "rolled-back" } }, "skip", /not retried/],
+  ["failed version + install-now retries", { policy: auto, manifest: man({ age: 9 }), lastInstall: { version: "new · x", result: "rolled-back" }, installNow: "new · x" }, "install", /install now/],
+  ["a DIFFERENT failed version does not block this one", { policy: auto, manifest: man({ age: 9 }), lastInstall: { version: "other · x", result: "failed" } }, "install", /soak/],
+];
+{
+  const fails = [];
+  for (const [name, input, action, reasonRe] of CASES) {
+    const d = decide({ ...base, ...input });
+    if (d.action !== action || !reasonRe.test(d.reason)) fails.push(`${name}: got ${d.action}/${d.reason}`);
+  }
+  out.decide = fails.length === 0 ? `ok (${CASES.length} cases: soak, 3 overrides, install-now, canary)` : `FAIL ${fails.join(" | ")}`;
+}
+
+// 21. the install lock, modeled on standard SQLite UPDATE ... WHERE semantics
+// (the conditional UPDATE's row-count is the verdict). A live check against
+// D1 runs in run-ci-tests where a local database exists; here the row is a
+// faithful in-memory stand-in.
+{
+  const row = { held_at: 0, holder: "" };
+  const env = { DB: { prepare(sql) {
+    let args = [];
+    const self = {
+      bind(...a) { args = a; return self; },
+      async run() {
+        if (/SET held_at = \?, holder = \?/.test(sql)) {
+          const [now, holder, staleBefore] = args;
+          if (row.held_at === 0 || row.held_at < staleBefore) { row.held_at = now; row.holder = holder; return { meta: { changes: 1 } }; }
+          return { meta: { changes: 0 } };
+        }
+        if (/SET held_at = 0/.test(sql)) { row.held_at = 0; row.holder = ""; return { meta: { changes: 1 } }; }
+        return { meta: { changes: 0 } };
+      },
+    };
+    return self;
+  } } };
+  const t = 1_000_000_000_000;
+  const a1 = await acquireInstallLock(env, "cronA", t);
+  const a2 = await acquireInstallLock(env, "cronB", t + 1000);       // held → refused
+  await releaseInstallLock(env);
+  const a3 = await acquireInstallLock(env, "cronC", t + 2000);       // free again → acquired
+  // hold it, then a much later attempt reclaims a stale lock
+  const a4 = await acquireInstallLock(env, "cronD", t + 3000);       // held by cronC → refused
+  const a5 = await acquireInstallLock(env, "cronE", t + 20 * 60 * 1000); // >15 min later → stale, reclaimed
+  out.installLock = a1 && !a2 && a3 && !a4 && a5 && row.holder === "cronE"
+    ? "ok (one at a time; released frees it; a stale lock is reclaimed)"
+    : `FAIL ${JSON.stringify({ a1, a2, a3, a4, a5, holder: row.holder })}`;
 }
 
 console.log(JSON.stringify(out, null, 2));

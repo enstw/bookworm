@@ -148,6 +148,20 @@ CREATE TABLE IF NOT EXISTS updater_status (
   last_install_detail  TEXT    NOT NULL DEFAULT ''
 );
 
+-- The install lock (PM-15): one row, so an overrunning cron and a queued
+-- install-now cannot interleave — at most one install runs at a time.
+-- acquireInstallLock() is a conditional UPDATE whose row-count is the verdict
+-- (atomic in the DB, not a read-then-write race); held_at 0 is free, and a
+-- lock older than the stale window is reclaimed so a died-mid-install isolate
+-- cannot wedge the updater. The row is seeded here and kept across deploys
+-- (INSERT OR IGNORE never resets a held lock).
+CREATE TABLE IF NOT EXISTS install_lock (
+  id      INTEGER PRIMARY KEY CHECK (id = 1),
+  held_at INTEGER NOT NULL DEFAULT 0,
+  holder  TEXT    NOT NULL DEFAULT ''
+);
+INSERT OR IGNORE INTO install_lock (id, held_at, holder) VALUES (1, 0, '');
+
 -- Web Push subscriptions (新書上架、新版本通知), one row per browser push
 -- endpoint, registered from the library footer. Rows are dropped when the
 -- push service reports the endpoint gone (404/410) or the user unsubscribes.
