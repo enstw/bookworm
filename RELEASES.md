@@ -9,6 +9,17 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-20 — `c46d28a54462`
+
+> 管理頁的讀者鑰匙可把自己手機設為「管理者」：之後更新等候決定、安裝失敗回退、更新器失聯這類通知只送管理者裝置；沒標記就不送，管理頁會明說。
+
+- ci: pay chrome's cold start before the first browser suite's 20 s clock (`c46d28a`)
+- push: the owner-only channel rides the key, and says so when nobody is marked (`003d683`)
+- docs: the spike is in, and the 10 ms turns out to be a burst budget (`82f94c2`)
+- docs: the soak clock is the one field the no-wall-clock rule exempts (`56dc009`)
+- docs: PM-01's reproducibility half is landed, not pending (`994c514`)
+- docs: PM-01 has to stop the clock reaching the bytes (`817737d`)
+
 ## 2026-08-20 — `7d885c2aea31`
 
 - fix: date a build by its commit, not by the clock it deployed on (`7d885c2`)
