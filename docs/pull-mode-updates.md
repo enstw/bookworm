@@ -27,7 +27,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 
 | Ticket | Phase | State |
 |---|---|---|
-| PM-00 · prove a Worker can install 12 MB of assets | 0 | — |
+| PM-00 · prove a Worker can install 12 MB of assets | 0 | wip |
 | PM-01 · publish the artifact and its manifest | 1 | — |
 | PM-02 · the manifest becomes a stated contract | 1 | — |
 | PM-03 · a release can demand a human | 1 | — |
@@ -571,17 +571,38 @@ one-subrequest-per-file case restored — server-side, unannounced, and with
 42 files it breaks 50. What R8 has to ask is no longer whether a file costs
 a subrequest, but what turns that mode on.
 
-**The ceiling that is left is the 10 ms.** Waiting on the network is not
-billed, but inflating 12 MB into ~16 MB of base64 is, and so is any hashing
-the manifest wants. Neither obviously fits. Two things already in this plan
-soften it: upstream computes the asset hashes and ships them in the
-manifest (PM-01), so the updater hashes nothing; and the 12 MB first
-install belongs to the one-shot bootstrap (PM-10), where a human and a
-laptop are present by definition, leaving the updater the incremental
-updates it was always going to be fine at. **The 12 MB first install is
-still the open question** — but if 10 ms cannot carry it, the fallback
-PM-00 already names stops being a contingency and becomes the design.
-Phase 0 exists for exactly this.
+**The ceiling that is left is the 10 ms**, and it has now been measured
+against the real `public/` — on a laptop, in the same V8 the Workers
+runtime uses, which makes it a proxy and not the spike:
+
+| over all 42 files, 12.1 MB | ms |
+|---|---|
+| base64 via chunked `btoa` | 47.6 |
+| base64 via `Buffer.from(u8).toString('base64')` | 2.3 |
+| `crypto.subtle.digest('SHA-256')` | 6.5 |
+| **sha256 + `Buffer` base64, one pass** | **9.4** |
+
+Two things fall out. The first is an implementation rule with a 20×
+penalty attached: the obvious Worker idiom for base64 — chunk the array,
+`String.fromCharCode`, `btoa` — misses the whole budget on its own, and
+`Buffer` is natively supported in the Workers runtime and does the same
+work in 2.3 ms. PM-05 has to know that before it writes a line.
+
+The second is the answer R8 was asking for. **9.4 ms of an Apple M2
+against 10 ms of a shared edge core is not a margin**, and that is before
+the manifest JSON, the multipart bodies, and the response handling — with
+nothing left over even if upstream ships the hashes and the updater skips
+the 6.5 ms entirely. The 12 MB first install does not fit in one scheduled
+invocation. So the fallback stops being a fallback: **the first install
+belongs to the one-shot bootstrap (PM-10)**, where a human and a laptop
+are present by definition, and the updater owns the incremental updates it
+was always going to be fine at — ~200 KB and a handful of files, three
+orders of magnitude inside the same budget.
+
+PM-00 still runs, but it confirms rather than discovers, and what it is
+really there for is the two facts no proxy can supply: whether
+`keep_bindings` composes with the assets-upload token, and what turns
+`wrangler_single_asset_uploads` on.
 
 **R9 · one release, N sites down.** A green release can still break every
 instance at once. Mitigated by jitter on the cron, a minimum-age policy,
@@ -604,11 +625,12 @@ can go in.
 ### Phase 0 — the spike that can kill this
 
 **PM-00 · prove a Worker can install 12 MB of assets**
-- Why: R8. Every other ticket assumes this works. The published limits have
-  already narrowed it: an upload session batches into buckets, so subrequests
-  are not the ceiling and **the 10 ms of CPU a scheduled invocation gets
-  is** — with a second question behind it, what makes the API fall back to
-  one file per request.
+- Why: R8, and it is now a confirmation rather than a discovery. The
+  published limits ruled subrequests out, and the bench under R8 rules the
+  12 MB first install out on CPU. What is left needs a real account: does
+  `keep_bindings` compose with the assets-upload token, what turns
+  `wrangler_single_asset_uploads` on, and does a *typical* update — 200 KB,
+  a handful of files — sit as far inside 10 ms as the arithmetic says.
 - Answer R4's open fact on the same trip: **does `keep_bindings` compose
   with an assets-upload token in one PUT?** The decision that the updater
   holds no reader secret rests entirely on it. If they do not compose, R4
@@ -616,11 +638,15 @@ can go in.
 - And PM-07's: can the free plan list a script's versions and re-deploy an
   older one, and do assets travel back with it? That decides whether
   rollback is three API calls or a second copy of the bundle.
-- Done when: a throwaway Worker has uploaded the real `public/` to a real
-  account, with the measured numbers written down — CPU milliseconds burnt,
-  how many buckets came back, and whether the session's JWT carried
-  `wrangler_single_asset_uploads`. If it cannot, the answer is a
-  bootstrap-assisted first install, and the plan below changes shape.
+- Done when: a throwaway Worker has run an install against a real account,
+  with the numbers written down — how many buckets came back, whether the
+  session's JWT carried `wrangler_single_asset_uploads`, and whether the
+  invocation completed or was killed for exceeding CPU.
+- The CPU number cannot come from inside. `Date.now()` and
+  `performance.now()` only advance after I/O in production — a Spectre
+  mitigation — so a Worker timing its own compute reads zero. The number
+  comes from the GraphQL analytics API afterwards; the *verdict* comes free,
+  because an invocation over budget is terminated and says so.
 - Needs from outside the repo, which no clone carries: a Cloudflare account
   to burn and an API token for it. Everything else this plan needs is in the
   tree.
@@ -675,7 +701,11 @@ can go in.
 - Why: manifest → verify → upload session → script PUT, sending the binding
   shapes the manifest declares plus `keep_bindings` (R4), with the assets
   config applied from the manifest (R6). `https://`-only, enforcing the
-  trust anchor.
+  trust anchor. This is the updater's incremental path only — the 12 MB
+  first install is PM-10's, per R8.
+- Base64 with `Buffer`, never chunked `btoa`. Same bytes, 20× the CPU, and
+  the budget is 10 ms — the bench is under R8. A future reviewer will find
+  the `btoa` form more idiomatic, which is why the reason is written down.
 - Done when: an instance has taken a real upstream release end to end, and
   a test asserts against `GET /workers/scripts/{name}/secrets` that every
   binding and secret *name* the reader held before the PUT is still bound
@@ -792,9 +822,13 @@ can go in.
   and set secrets the first time, and no Worker can do that before it
   exists. A single local command is the honest answer: one-time friction
   traded against permanent friction.
+- It also owns the first install of `public/`, which R8 measured out of a
+  scheduled invocation's CPU budget. That is not extra scope: the bootstrap
+  is already the one moment a human and a laptop are present, and it is
+  already placing the Workers those assets belong to.
 - Done when: an empty Cloudflare account becomes a working instance — two
-  Workers, D1, R2, the secrets, a first reader key — from one command, with
-  no fork and no clone of this repo.
+  Workers, D1, R2, the secrets, a first reader key, and `public/` served —
+  from one command, with no fork and no clone of this repo.
 
 **PM-16 · updating the updater**
 - Why: `minUpdaterVersion` can refuse a release outright (*Three
