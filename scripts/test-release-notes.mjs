@@ -15,11 +15,16 @@ import { ledgerHistory, pendingRelease } from "./release-notes.mjs";
 
 const repo = mkdtempSync(join(tmpdir(), "bw-relnotes-"));
 const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+const gitEnv = (env, ...args) =>
+  execFileSync("git", args, { cwd: repo, encoding: "utf8", env: { ...process.env, ...env } }).trim();
 const write = (name, body) => writeFileSync(join(repo, name), body);
 const pkg = (deps) => write("package.json", JSON.stringify({ devDependencies: deps }, null, 2));
-const commit = (message) => {
+// `when` (an ISO instant) pins the commit's dates, so a test can assert what
+// the release date is derived FROM rather than what today happens to be.
+const commit = (message, when) => {
   git("add", "-A");
-  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message);
+  const env = when ? { GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when } : {};
+  gitEnv(env, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message);
 };
 
 const out = {};
@@ -94,6 +99,18 @@ try {
   write("d.txt", "x");
   commit("ci: another workflow tweak");
   eq("quietRelease", pendingRelease(repo).notes, []);
+
+  // The date belongs to the commit, not to the clock this runs on. Two things
+  // rest on it: public/releases.json ships as an asset, so a wall clock gives
+  // the same commit a different hash every day and nobody can re-derive the
+  // artifact; and the two callers run either side of the deploy, so a wall
+  // clock lets a deploy crossing midnight date the JSON a day off its own
+  // ledger entry. The instant below is 23:30 UTC — already the NEXT day in
+  // Asia/Taipei — so one assertion pins the source AND the timezone.
+  git("tag", "-f", "released");
+  write("e.txt", "x");
+  commit("reader: dated\n\nRelease-Note: x", "2020-01-02T23:30:00+00:00");
+  eq("dateFromCommitNotClock", pendingRelease(repo).date, "2020-01-03");
 } finally {
   rmSync(repo, { recursive: true, force: true });
 }
