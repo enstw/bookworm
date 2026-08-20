@@ -9,6 +9,13 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-20 — `7815ef0be0b8`
+
+- docs: auto-merge is on, so nobody has to catch the green window (`7815ef0`)
+- docs: the plan lands per phase, and the spike lands as numbers (`4845ee2`)
+- ci: a markdown-only PR stops running the browser suite (`55a09c2`)
+- docs: the published limits move R8 from subrequests to the 10 ms (`0251208`)
+
 ## 2026-08-20 — `a87f5d86d138`
 
 - chore: ignore .codegraph, a local index that is not the repo's business (`a87f5d8`)
