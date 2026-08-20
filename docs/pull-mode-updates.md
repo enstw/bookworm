@@ -464,6 +464,12 @@ away.
 The cost is one `scheduled` handler on the reader. No new credential
 anywhere.
 
+*Landed, 2026-08-21:* the reader has its cron (`wrangler.jsonc`
+`triggers.crons`, every minute) and `announceSelf` rings 新版本已上線 from
+it; the admin route, `deploy.sh`'s POST, the `?build=` handshake and the
+30 s retry are deleted (DESIGN.md, *The reader announces itself*). The
+other three messages attach to the same tick as their tickets land.
+
 ## Risks
 
 ### Fatal — the design is not defensible without these
@@ -1082,9 +1088,10 @@ can go in.
   subsystem section, superseded ones are deleted rather than annotated.
 - Two sections are rewrites rather than distillations, because pull mode
   removes what they rest on: *Data migrations* (one instance, and Actions as
-  the migration runner — see PM-06) and *A deploy announces itself* (an
-  external hook firing the announce, and the `?build=` staleness dance that
-  exists only because the caller is external).
+  the migration runner — see PM-06). The other, *A deploy announces itself*,
+  was already rewritten as *The reader announces itself* when the cron
+  landed (2026-08-21): the external hook and its `?build=` staleness dance
+  are gone, and nothing there waits for PM-12.
 - Done when: this file is deleted and nothing points at it any more — the
   Backlog entry in DESIGN.md that sends readers here included.
 

@@ -7,11 +7,13 @@
 // pruning, and the owner-only channel (readers.is_owner routes per key:
 // two keys under one user, only the marked one rings).
 //
-// The build announcement needs a STAMPED worker — announceBuild refuses to
+// The build announcement needs a STAMPED worker — announceSelf refuses to
 // ring for BUILD "dev" — so this script does deploy.sh's sed itself, on an
 // unstamped src/worker.js only, and puts the original bytes back in the
-// finally. Against a worker it did not start (BOOKWORM_URL) those checks
-// report skipped rather than quietly passing.
+// finally. It is the worker's own cron that announces, driven here through
+// wrangler dev's --test-scheduled tick (GET /__scheduled). Against a worker
+// it did not start (BOOKWORM_URL) those checks report skipped rather than
+// quietly passing.
 //
 // Prereqs: a worker on :8787 with VAPID_PRIVATE_JWK and ADMIN_TOKEN in
 // .dev.vars — this script starts `wrangler dev` itself unless
@@ -94,7 +96,7 @@ const endpoint = `http://127.0.0.1:${CAP_PORT}/push/one`;
 const sub = { user: "pushtest", endpoint, p256dh: b64u.enc(uaRaw), auth: b64u.enc(authSecret) };
 
 // --- stamp a build in, the way deploy.sh does ---
-// announceBuild() refuses to ring for BUILD "dev", so without this the whole
+// announceSelf() refuses to ring for BUILD "dev", so without this the whole
 // 新版本 path is unreachable from a dev server. The original bytes are written
 // back in the finally — not `git checkout`, which would take unrelated edits
 // with it.
@@ -107,9 +109,6 @@ if (stamped)
     workerSrc.replace('const BUILD = "dev";', `const BUILD = "${TEST_BUILD}";`));
 // every exit from here on goes through this, including the boot timeout below
 const unstamp = () => { if (stamped) writeFileSync(workerPath, workerSrc); };
-// deploy.sh names the build it just deployed, and the worker refuses to answer
-// for any other one — see the stale-isolate note in announceBuild
-const announceUrl = (b) => `/api/admin/announce-build?build=${encodeURIComponent(b)}`;
 
 // This suite writes push_subs and announced_builds straight into local D1, so
 // it applies the schema itself: a table the dev server has never seen is not
@@ -121,7 +120,7 @@ execFileSync("pnpm",
 // --- boot wrangler dev unless a worker was pointed at ---
 let dev = null;
 if (!process.env.BOOKWORM_URL) {
-  dev = spawn("pnpm", ["exec", "wrangler", "dev", "--port", String(DEV_PORT)],
+  dev = spawn("pnpm", ["exec", "wrangler", "dev", "--test-scheduled", "--port", String(DEV_PORT)],
     { stdio: "ignore", env: { ...process.env, CI: "true" } });
 }
 const deadline = Date.now() + 60000;
@@ -343,73 +342,62 @@ try {
     ? "ok (測試 / 新書 / republish all logged)"
     : "FAIL " + JSON.stringify(joined.slice(0, 300));
 
-  // 10. 新版本已上線 — the same channel, triggered by the deploy hook rather
-  // than by a publish. deploy.sh calls it on EVERY deploy, so exactly-once is
-  // the whole feature: what must never happen is a banner per workflow re-run.
-  if (!stamped) {
-    out.announceGate = out.announceStale = out.announceFirst = out.announce =
-      out.announceOnce = out.announceLog =
-      "skipped (BOOKWORM_URL set, or src/worker.js already carries a stamp)";
+  // 10. 新版本已上線 — the worker announces ITSELF, from its own cron, so
+  // there is no caller to race the edge's version propagation and no ?build=
+  // handshake. wrangler dev --test-scheduled exposes the tick as GET
+  // /cdn-cgi/handler/scheduled, which answers a bare "ok" — NOT the older
+  // /__scheduled: that path is not in run_worker_first, so the assets layer
+  // claims it and the SPA fallback serves index.html with a 200, and the
+  // handler never runs. A server started without the flag does not answer
+  // "ok", and an unstamped worker never rings, so both report skipped rather
+  // than quietly passing. Exactly-once is still the whole feature: what must
+  // never happen is a banner per tick, per workflow re-run, or per rollback.
+  const tick = () => fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*+*+*+*+*`);
+  const probe = stamped ? await tick() : null;
+  const ticks = probe ? probe.status === 200 && (await probe.text()) === "ok" : false;
+  // the probe itself may have announced whatever the table held from an
+  // earlier run — let that settle before the state below is arranged
+  await sleep(1500);
+  if (!stamped || !ticks) {
+    out.announceFirst = out.announce = out.announceOnce = out.announceLog =
+      `skipped (${stamped ? "server lacks --test-scheduled" : "BOOKWORM_URL set, or src/worker.js already carries a stamp"})`;
   } else {
-    // a trigger anyone could pull is a trigger anyone could ring the owner's
-    // phone with, so the admin gate is part of this route's contract
-    const naked = await fetch(`${BASE}/api/admin/announce-build`, { method: "POST" });
-    out.announceGate = naked.status === 401
-      ? "ok (401 without the admin Bearer)" : `FAIL ${naked.status}`;
-
     d1(`INSERT OR REPLACE INTO push_subs (endpoint, user, p256dh, auth, created_at)
         VALUES ('${endpoint}', 'pushtest', '${sub.p256dh}', '${sub.auth}', 0)`);
 
-    // A call that lands on the previous version — Cloudflare kept routing to
-    // it for seconds after `wrangler deploy` returned — must not answer for a
-    // build it isn't. Left unchecked it recorded the OLD stamp as announced
-    // and reported success, and the build that had just shipped never rang.
+    // a fresh install must not greet its owner with "there is a new version":
+    // the first build is recorded, silently
     d1("DELETE FROM announced_builds");
     captured.length = 0;
-    const aS = await (await post(announceUrl("9999999 · 2099-01-01 00:00"), {})).json();
-    await sleep(500);
-    const staleRows = JSON.parse(
-      d1("SELECT COUNT(*) n FROM announced_builds"))[0]?.results?.[0]?.n;
-    out.announceStale = aS.announced === false && aS.reason === "stale worker" &&
-      captured.length === 0 && staleRows === 0
-      ? "ok (a stamp that isn't ours announces nothing and records nothing)"
-      : `FAIL ${JSON.stringify(aS)} pushes=${captured.length} rows=${staleRows}`;
-
-    // a fresh install must not greet its owner with "there is a new version"
-    // (from here on the calls carry the matching stamp, the way deploy.sh
-    // does, which is also what proves the guard lets the right one through)
-    d1("DELETE FROM announced_builds");
-    captured.length = 0;
-    const a0 = await (await post(announceUrl(TEST_BUILD), {})).json();
-    await sleep(1000);
-    out.announceFirst = a0.announced === false && /first build/.test(a0.reason ?? "") &&
-      captured.length === 0
+    await tick();
+    await sleep(1500);
+    const firstRow = JSON.parse(d1("SELECT build, stamp FROM announced_builds"))[0]?.results?.[0];
+    out.announceFirst = firstRow?.stamp === TEST_BUILD && captured.length === 0
       ? "ok (first build recorded, not announced)"
-      : `FAIL ${JSON.stringify(a0)} pushes=${captured.length}`;
+      : `FAIL row=${JSON.stringify(firstRow)} pushes=${captured.length}`;
 
-    // with a history behind it, the same call rings — once
+    // with a history behind it, the next tick rings — once, and with the
+    // stamp the WORKER carries: nobody told it what shipped
     d1(`DELETE FROM announced_builds;
         INSERT INTO announced_builds (build, stamp, created_at) VALUES ('0000000', 'older', 0)`);
     captured.length = 0;
-    const a1 = await (await post(announceUrl(TEST_BUILD), {})).json();
+    await tick();
     for (let i = 0; i < 40 && !captured.length; i++) await sleep(250);
     const aPayload = captured.length
       ? await decrypt(captured[0].body).catch((e) => ({ error: String(e) }))
       : {};
-    // the body is the stamp the WORKER carries, never anything the caller
-    // sent: deploy.sh says when to ring, the worker says what shipped
-    out.announce = a1.announced === true && a1.subs === 1 && captured.length === 1 &&
+    out.announce = captured.length === 1 &&
       aPayload.title === "新版本已上線" && aPayload.body === TEST_BUILD && aPayload.url === "/"
       ? "ok (decrypted: 新版本已上線 / the worker's own stamp)"
-      : `FAIL ${JSON.stringify(a1)} ${JSON.stringify(aPayload)}`;
+      : `FAIL pushes=${captured.length} ${JSON.stringify(aPayload)}`;
 
-    // ...and never again for the same commit
+    // ...and never again for the same commit, tick after tick
     captured.length = 0;
-    const a2 = await (await post(announceUrl(TEST_BUILD), {})).json();
+    await tick();
+    await tick();
     await sleep(2000);
-    out.announceOnce = a2.announced === false && a2.reason === "already announced" &&
-      captured.length === 0
-      ? "ok (silent on re-deploy)" : `FAIL ${JSON.stringify(a2)} pushes=${captured.length}`;
+    out.announceOnce = captured.length === 0
+      ? "ok (silent on the ticks that follow)" : `FAIL ${captured.length} extra pushes`;
 
     await sleep(500);
     const alogs = (await (await fetch(`${BASE}/api/testlog?page=push&limit=20`,

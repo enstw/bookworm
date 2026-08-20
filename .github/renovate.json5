@@ -74,6 +74,17 @@
       additionalBranchPrefix: "",
       branchTopic: "ensfont-release",
     },
+    {
+      // blake3-wasm is pinned to whatever WRANGLER bundles with, never bumped
+      // on its own: package-release.mjs uses it to precompute the asset hash
+      // Cloudflare's upload session keys on (wrangler's hashFile), and a
+      // different blake3 build could mean a different hash for the same
+      // bytes. test-release-manifest.mjs fails when the two pins disagree, so
+      // a wrangler bump that moves blake3 is caught by the gate and the pin
+      // follows by hand in the same roll-up.
+      matchPackageNames: ["blake3-wasm"],
+      enabled: false,
+    },
   ],
   customManagers: [
     // The workflow runs Renovate with its own exact version instead of

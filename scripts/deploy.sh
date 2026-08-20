@@ -119,7 +119,7 @@ if git diff --quiet -- public/app.js src/worker.js 2>/dev/null; then
   # the why is there). The release manifest's `version` comes from the same
   # function, and an updater compares the two strings verbatim, so a second
   # formula here would be a fleet-wide "update available" that never clears.
-  # Announcements do not notice — announceBuild keys its exactly-once record on
+  # Announcements do not notice — announceSelf keys its exactly-once record on
   # the short SHA alone (src/worker.js), never on this timestamp.
   BUILD_ID="$(node scripts/build-id.mjs)"
   sed -i.bak "s/^const BUILD = \"dev\"/const BUILD = \"${BUILD_ID}\"/" public/app.js src/worker.js
@@ -158,36 +158,11 @@ if [[ -n "$URL" ]]; then
   echo "==> smoke probe: $URL/api/books"
   curl -fsS -H "authorization: Bearer $ADMIN_TOKEN" "$URL/api/books" && echo
 
-  # 新版本已上線: app.js's checkVersion only runs while a page is open, so an
-  # installed phone nobody opened never hears about a deploy. The worker
-  # announces its own stamp and keeps its own exactly-once record, so this is
-  # safe to call on every deploy — a re-run or a rollback stays silent. Never
-  # fatal: the deploy has already succeeded by the time we get here.
-  # The stamp goes along so the worker can tell us it is the version we just
-  # deployed. Cloudflare can still route this to the OLD isolate for a few
-  # seconds, and that one would announce ITS build, find it already recorded,
-  # and report success while the new build silently never rings — which is
-  # exactly what happened on the deploy of e96279f. Retry until the answer
-  # comes from the right worker.
-  echo "==> announcing the build"
-  # empty when the tree was dirty and nothing was stamped; the worker then
-  # skips the check and answers "unstamped build" anyway
-  WANT=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))' \
-    "${BUILD_ID:-}")
-  ANNOUNCE=""
-  for _ in $(seq 15); do
-    ANNOUNCE=$(curl -fsS -X POST -H "authorization: Bearer $ADMIN_TOKEN" \
-      "$URL/api/admin/announce-build?build=$WANT") || { ANNOUNCE=""; break; }
-    grep -q '"stale worker"' <<<"$ANNOUNCE" || break
-    sleep 2
-  done
-  if [[ -z "$ANNOUNCE" ]]; then
-    echo "    (announcement failed — the deploy itself is fine)" >&2
-  elif grep -q '"stale worker"' <<<"$ANNOUNCE"; then
-    echo "    (still the old worker after 30 s — this build was not announced)" >&2
-  else
-    echo "    $ANNOUNCE"
-  fi
+  # 新版本已上線 is the worker's own business: its cron (announceSelf in
+  # src/worker.js) rings within a minute of the new version serving, exactly
+  # once per commit. The old POST from here raced the edge's version
+  # propagation and needed a ?build= handshake plus a 30 s retry; a version
+  # announcing itself cannot be stale, so there is nothing left to call.
   echo
   echo "✓ deployed: $URL"
   echo "  publish a book:  node scripts/publish-book.mjs out/<slug> --url $URL --token \$ADMIN_TOKEN"

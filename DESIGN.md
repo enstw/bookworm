@@ -250,30 +250,45 @@ found an update — rare — and walks it down to its own build, so a phone left
 alone for a month hears about the whole month and never about the version it
 is already running.
 
-### A deploy announces itself
+### The reader announces itself
 
 `checkVersion` in `app.js` can only run while a page is open, so an
-installed phone nobody opened never learns a newer shell exists. `deploy.sh`
-POSTs `/api/admin/announce-build` after every successful deploy and
-`announceBuild` pushes 新版本已上線 down the same channel 新書上架 uses,
-which is what puts the red dot on a closed app. The worker announces its
-**own** stamp, never one the caller supplies: the deploy hook says *when* to
-ring, the worker says *what shipped*. Exactly-once is the `announced_builds`
-row, keyed on the **commit alone** — re-running the deploy workflow restamps
-the clock but is the same version, and a rollback lands on a build that
-already rang. The first build on a fresh install is recorded silently (it is
-the install, not news), and a `dev` stamp never rings at all. Tapping the
-banner opens the shell rather than forcing a reload: `checkVersion` then
-raises 立即更新, and overriding it here would fight that note's "seen it,
-not now" dismissal. Announcing only *some* deploys was considered and
-dropped — a `sw.js` SHELL bump is about cache invalidation, not about
-whether a change is worth hearing about, and md-only pushes already skip the
-deploy entirely. The hook does pass the stamp it deployed, for one reason:
-**the edge can still be running the previous version seconds after
-`wrangler deploy` returns** — the old isolate then announces *its* stamp,
-finds it already recorded and reports success, and the build that just
-shipped never rings. A mismatch therefore answers `stale worker` and
-`deploy.sh` retries for 30 s.
+installed phone nobody opened never learns a newer shell exists. The worker
+has a cron of its own (`triggers.crons` in `wrangler.jsonc`, every minute)
+whose `scheduled` handler, `announceSelf`, pushes 新版本已上線 down the same
+channel 新書上架 uses — which is what puts the red dot on a closed app.
+Exactly-once is the `announced_builds` row, keyed on the **commit alone** —
+re-running the deploy workflow restamps the clock but is the same version,
+and a rollback lands on a build that already rang. The first build on a
+fresh install is recorded silently (it is the install, not news), a `dev`
+stamp never rings at all, and a tick with nothing to do is silent in the
+push log too — a line per minute would evict `page=push`'s own quota.
+Tapping the banner opens the shell rather than forcing a reload:
+`checkVersion` then raises 立即更新, and overriding it here would fight that
+note's "seen it, not now" dismissal. Announcing only *some* deploys was
+considered and dropped — a `sw.js` SHELL bump is about cache invalidation,
+not about whether a change is worth hearing about, and md-only pushes
+already skip the deploy entirely.
+
+It used to be an admin route that `deploy.sh` POSTed after the deploy, and
+that shape had a race the cron does not have: **the edge can still be
+running the previous version seconds after `wrangler deploy` returns**, so
+the call landed on the old isolate, which announced *its* stamp, found it
+recorded and reported success while the build that had just shipped never
+rang (measured on e96279f). The fix was a `?build=` handshake and a 30 s
+retry. A version asking about itself from its own cron cannot be stale: an
+old isolate that ticks once more finds its build recorded and does nothing,
+and the next tick on the new version rings. The handshake, the retry and
+the route are gone; the deploy makes no admin call to announce anything,
+and the banner arrives within a minute instead of within seconds. The same
+tick is where the pull-mode plan's owner-only messages and silent-updater
+alarm will live — the reader is the one Worker that holds the VAPID pair.
+Locally, `pnpm run dev` runs `wrangler dev --test-scheduled`, which exposes
+the tick as `GET /cdn-cgi/handler/scheduled?cron=…` (answering a bare
+`ok`); that is how `test:push` drives it. Not the older `/__scheduled`:
+that path is not under `run_worker_first`, so the assets layer claims it
+and the SPA fallback serves `index.html` with a 200 — a tick that never
+ticked, with a green status.
 
 ### The release artifact
 

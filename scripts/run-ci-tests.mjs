@@ -69,7 +69,9 @@ run("vendor", ["node", "scripts/vendor.mjs"]);
 let server = null;
 let serverOutput = "";
 if (!(await alive())) {
-  server = spawn("pnpm", ["exec", "wrangler", "dev", "--port", new URL(base).port || "8787"], {
+  // --test-scheduled: exposes the cron as GET /cdn-cgi/handler/scheduled,
+  // which is how test:push drives the worker's self-announcement
+  server = spawn("pnpm", ["exec", "wrangler", "dev", "--test-scheduled", "--port", new URL(base).port || "8787"], {
     env: { ...process.env, CI: "true" },
     stdio: ["ignore", "pipe", "pipe"],
   });

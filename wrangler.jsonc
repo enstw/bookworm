@@ -24,5 +24,10 @@
       "bucket_name": "bookworm-books"
     }
   ],
+  // The reader's own cron: announceSelf in src/worker.js rings 新版本已上線
+  // within a minute of a new version serving (see DESIGN.md, "The reader
+  // announces itself"); the pull-mode plan's owner-only messages and
+  // silent-updater alarm will ride the same tick. One D1 read a minute.
+  "triggers": { "crons": ["* * * * *"] },
   "observability": { "enabled": true }
 }

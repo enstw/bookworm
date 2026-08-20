@@ -141,6 +141,13 @@ genuinely dead (`browser-e2e` explains why emulation cannot substitute):
   Miss it and the SPA fallback quietly returns the reader shell instead:
   the page under test never loads, and every assertion about it passes
   vacuously. `test:testlog` has the rule.
+- **The worker's cron is driven with `GET
+  /cdn-cgi/handler/scheduled?cron=*+*+*+*+*`** against a `wrangler dev
+  --test-scheduled` server (what `pnpm run dev` and `run-ci-tests.mjs`
+  start); it answers a bare `ok`. Never `/__scheduled`: that path is not
+  under `run_worker_first`, so the assets layer's SPA fallback answers it
+  with `index.html` and a 200, and the handler never runs — a tick that
+  passes vacuously. `test:push` is the reference.
 - A "second device" needs no second browser: positions belong to the KEY's
   user, so a `POST /api/position` from node with the same key is one, and
   `test:sync` is the reference. It also dispatches `visibilitychange` by hand

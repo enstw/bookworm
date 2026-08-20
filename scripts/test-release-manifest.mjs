@@ -197,6 +197,15 @@ try {
     ? `ok (${A.attention.length} attention commit(s) in history, this release: ${A.requiresAttention})`
     : "FAIL requiresAttention disagrees with the attention list";
 
+  // cfhash is only wrangler's hash if it is wrangler's blake3: the pin in
+  // package.json must be the one wrangler itself resolves (renovate is told
+  // to leave it alone — .github/renovate.json5 — so this is what moves it)
+  const ours = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).devDependencies["blake3-wasm"];
+  const theirs = JSON.parse(readFileSync(join(root, "node_modules", "wrangler", "package.json"), "utf8")).dependencies["blake3-wasm"];
+  out.blake3PinTracksWrangler = ours === theirs
+    ? `ok (blake3-wasm ${ours}, same as wrangler's)`
+    : `FAIL package.json pins blake3-wasm ${ours}, wrangler depends on ${theirs} — move the pin`;
+
   // every seeded violation must be caught — an assertion that can only pass
   // is not a gate
   const clone = () => JSON.parse(JSON.stringify(written));
