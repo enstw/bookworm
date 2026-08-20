@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-21 — `523a55eec9f9`
+
+- admin: the pull-mode panel — read D1, never call upstream (`523a55e`)
+
 ## 2026-08-21 — `ae413adcbbc0`
 
 - updater: the install decision and the one-at-a-time lock (`ae413ad`)
