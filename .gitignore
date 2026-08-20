@@ -11,3 +11,4 @@ public/vendor/
 public/releases.json
 test-artifacts/
 .gstack/
+.codegraph/
