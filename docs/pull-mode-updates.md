@@ -28,9 +28,9 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | Ticket | Phase | State |
 |---|---|---|
 | PM-00 · prove a Worker can install 12 MB of assets | 0 | done |
-| PM-01 · publish the artifact and its manifest | 1 | wip |
-| PM-02 · the manifest becomes a stated contract | 1 | — |
-| PM-03 · a release can demand a human | 1 | — |
+| PM-01 · publish the artifact and its manifest | 1 | done |
+| PM-02 · the manifest becomes a stated contract | 1 | done |
+| PM-03 · a release can demand a human | 1 | wip — publishing half landed, honouring half waits on PM-15 |
 | PM-04 · split out `bookworm-updater` | 2 | — |
 | PM-05 · the install path | 2 | — |
 | PM-06 · migrations before the swap, additive-only | 2 | — |
@@ -160,26 +160,42 @@ that publishes them, described by a manifest:
 ```jsonc
 {
   "version":     "9a3855f · 2026-08-19 15:53",  // the reader's BUILD, verbatim
-  "released_at": "2026-08-19T15:53:00+08:00",   // the soak clock, see below
-  "worker":  { "path": "worker.js", "sha256": "…" },
+  "released_at": "2026-08-19T07:53:12.000Z",    // the soak clock, see below
+  "tag":         "release-9a3855f",             // the GitHub release it rides on
+  "worker":  { "file": "worker.js", "sha256": "…", "size": 59786 },
   // cfhash is what the upload session keys on: blake3(base64(bytes)+ext),
   // 32 hex — not sha256. Shipped so the updater never computes it (PM-00).
-  "assets":  [ { "path": "/app.js", "sha256": "…", "cfhash": "…", "size": 106496 }, … ],
-  "bundle":  { "url": "…/bookworm-9a3855f.zip", "sha256": "…" },
+  // `file` is where the bytes sit inside the zip; `path` is the URL.
+  "assets":  [ { "path": "/app.js", "file": "public/app.js",
+                 "sha256": "…", "cfhash": "…", "size": 102734 }, … ],
+  "bundle":  { "url": "https://github.com/<owner>/<repo>/releases/download/release-9a3855f/bookworm-9a3855f.zip",
+               "file": "bookworm-9a3855f.zip", "sha256": "…", "size": 7994190 },
 
   // the artifact declares the SHAPE of what it needs; the instance owns the
   // VALUES (its own D1 id, its own bucket). Crossing that line is R4 below.
   "bindings": [ {"type":"d1","name":"DB"}, {"type":"r2_bucket","name":"BOOKS"},
                 {"type":"assets","name":"ASSETS"} ],
   "compatibility_date": "2026-06-01",
+  "compatibility_flags": [],
   "assetsConfig": { "not_found_handling": "single-page-application",
                     "run_worker_first": ["/api/*","/books/*","/admin"] },
 
-  "migrations": ["ALTER TABLE books ADD COLUMN …"],
-  "requiresAttention": false,   // forces review-first regardless of policy
-  "minUpdaterVersion": 3        // an older updater refuses rather than half-installs
+  "migrations": [],             // additive SQL, run before the swap — PM-06 fills it
+  "requiresAttention": false,   // THIS release needs a human; forces review-first
+  // every commit in history that did, each dated by its own stamp, so an
+  // instance that skipped the release in the middle still sees it (PM-03)
+  "attention": [ { "commit": "1f2e3d4", "version": "1f2e3d4 · 2026-07-01 09:12",
+                   "reason": "set NEW_SECRET before installing" } ],
+  "minUpdaterVersion": 1        // an older updater refuses rather than half-installs
 }
 ```
+
+This is what `scripts/package-release.mjs` writes today (PM-01), and
+`scripts/test-release-manifest.mjs` is the table above as a gate (PM-02):
+exact field set and types, hashes re-derived from the zip, two packagings of
+one tree hashing the same, seeded violations each caught. `bindings`,
+`compatibility_*` and `assetsConfig` are read out of `wrangler.jsonc`, not
+typed a second time (R6).
 
 The zip is unpacked with `fflate`, which is already vendored for the browser.
 
@@ -812,6 +828,18 @@ can go in.
   asset with its sha256, and a clean checkout of the same commit reproduces
   those hashes — an artifact nobody can re-derive is not one anybody can
   verify.
+- **Landed, 2026-08-20.** `scripts/package-release.mjs` builds
+  manifest + zip + notes from a staging copy (stamp, wrangler `--dry-run
+  --outdir`, hash, zip with commit mtimes); `scripts/publish-release.mjs`
+  cuts `release-<sha>` after `deploy.sh` and before the ledger, and
+  re-points `latest` without touching assets when the tag already exists;
+  `scripts/build-id.mjs` is the one stamp formula, used by `deploy.sh` and
+  the manifest both. The artifact is **41 files, 7.6 MB zipped**
+  (`icon-source.png` now lives in `artwork/`). Reproducibility has exactly
+  two exceptions, both deliberate: `released_at` (above) and
+  `public/releases.json`, which is written from the ledger plus the commits
+  since the `released` tag — a tag that moves after every deploy, so that
+  one asset re-derives only up to the ledger state at publish time.
 
 **PM-02 · the manifest becomes a stated contract**
 - Touches: `DESIGN.md`, `scripts/test-deploy-policy.mjs`
@@ -821,16 +849,33 @@ can go in.
 - Done when: the CI gate fails if the packaging script drops, renames or
   retypes a manifest field — the way `test-deploy-policy.mjs` already fails
   on a permission change, and for the same reason.
+- **Landed, 2026-08-20**, as `scripts/test-release-manifest.mjs` in the
+  `pnpm test` chain and the CI gate: the field table, per-field assertions
+  (hash widths, sorted assets, `file` = `public` + `path`, bindings equal to
+  `wrangler.jsonc`'s and carrying no instance value, the per-tag GitHub
+  URL), the zip re-hashed against the manifest, two packagings compared,
+  wrangler's `cfhash` recomputed, and fourteen seeded violations each
+  caught. `test-deploy-policy.mjs` additionally refuses a `deploy.yml` that
+  stops publishing, or publishes before the deploy or after the ledger.
 
 **PM-03 · a release can demand a human**
 - Why: `requiresAttention` is what lets upstream ship a change needing a new
   secret or a non-additive migration without gambling on every instance's
   policy. Neither R4 branch can conjure a secret that does not yet exist,
   so this is the only door such a release has.
+- **Publishing half landed, 2026-08-20.** A commit says it with a
+  `Requires-Attention: <why>` trailer — the same shape and column-0 rule as
+  `Release-Note:`, written by whoever makes the change, at the moment they
+  know why. `requiresAttention` in the manifest is "such a commit ships in
+  this release"; `attention` lists every such commit in history with its
+  own stamp, because an instance that skipped the release in the middle
+  must still be stopped by it — the updater compares each entry's version
+  string with its running BUILD, no git needed. What remains is the
+  honouring half: PM-15's policy override and PM-08's panel line.
 - Done when: a release carrying the flag leaves an instance on **automatic**
   policy uninstalled and waiting, with the reason on the panel rather than
   in a log.
-- Needs: PM-01
+- Needs: PM-01 (done); PM-15 for the honouring half
 
 ### Phase 2 — the updater
 

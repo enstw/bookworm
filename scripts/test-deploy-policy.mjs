@@ -98,6 +98,24 @@ export function checkDeployPolicy(text) {
     }
   }
 
+  // The release artifact is part of the contract N instances depend on
+  // (PM-02): the deploy job must package it and publish it, strictly after
+  // the deploy itself — a release for a build that never went live would
+  // be an update to nowhere — and before the ledger moves the tag the
+  // notes are computed from.
+  const deploy = jobs.deploy ?? "";
+  const at = (s) => deploy.indexOf(s);
+  const deployAt = at("./scripts/deploy.sh");
+  const packageAt = at("node scripts/package-release.mjs");
+  const publishAt = at("node scripts/publish-release.mjs");
+  const ledgerAt = at("node scripts/update-releases.mjs");
+  if (packageAt === -1) violations.push("deploy job does not package the release artifact");
+  if (publishAt === -1) violations.push("deploy job does not publish the release artifact");
+  if (packageAt !== -1 && publishAt !== -1 && deployAt !== -1 && ledgerAt !== -1 &&
+      !(deployAt < packageAt && packageAt < publishAt && publishAt < ledgerAt)) {
+    violations.push("release artifact must be packaged and published after deploy.sh and before the ledger");
+  }
+
   return violations;
 }
 
@@ -137,6 +155,10 @@ const mutations = [
   ["secrets outside deploy", (t) => t.replace("      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}", "      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}")],
   ["deploy job gaining an extra grant", (t) => t.replace("      pull-requests: write\n      actions: write", "      pull-requests: write\n      actions: write\n      issues: write")],
   ["deploy job losing a grant", (t) => t.replace("      pull-requests: write\n      actions: write", "      pull-requests: write")],
+  ["release artifact no longer published", (t) => t.replace("          node scripts/publish-release.mjs out/release\n", "")],
+  ["release artifact published before the deploy", (t) => t
+    .replace("          node scripts/package-release.mjs out/release\n          node scripts/publish-release.mjs out/release\n", "")
+    .replace("      - run: node scripts/gen-release-notes.mjs\n", "      - run: node scripts/gen-release-notes.mjs\n      - run: node scripts/package-release.mjs out/release && node scripts/publish-release.mjs out/release\n")],
 ];
 for (const [label, mutate] of mutations) {
   const mutated = mutate(real);

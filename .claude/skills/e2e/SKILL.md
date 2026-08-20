@@ -27,7 +27,8 @@ scripts in `scripts/` are the source of truth.
 
 | suite | command | needs |
 | --- | --- | --- |
-| slug, worker-pool, push-crypto | `pnpm run test:slug` etc. | nothing (pure node) |
+| slug, worker-pool, push-crypto, relnotes | `pnpm run test:slug` etc. | nothing (pure node) |
+| release | `pnpm run test:release` | pure node + `public/vendor/` (runs wrangler's dry-run bundler, no account) |
 | vertical, bg, testlog | `pnpm run test:vertical` / `test:bg` / `test:testlog` | Chromium only (own static server) |
 | auth, sync, admin, shelf-admin, push-api | `pnpm run test:auth` etc. | dev server + ADMIN_TOKEN |
 | tts-stream | `pnpm run test:tts-stream` | Chromium + `ffmpeg` on PATH (own static server) |

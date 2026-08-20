@@ -275,6 +275,44 @@ finds it already recorded and reports success, and the build that just
 shipped never rings. A mismatch therefore answers `stale worker` and
 `deploy.sh` retries for 30 s.
 
+### The release artifact
+
+Every deploy also publishes what it deployed, as a GitHub release per
+commit (`release-<sha>`: `manifest.json` + `bookworm-<sha>.zip`), because
+the pull-mode design (`docs/pull-mode-updates.md`) has every instance's
+updater poll `releases/latest/download/manifest.json`. `scripts/package-
+release.mjs` builds it from a **staging copy** of `src/` and `public/` —
+stamps the copies, runs wrangler's `--dry-run --outdir` bundler on them (the
+same esbuild pass a deploy runs, no credentials), hashes, zips — so it
+works both inside the deploy (where `deploy.sh` has already stamped the
+tree; a disagreeing stamp is an error) and from a clean checkout, and never
+touches the tree. `scripts/publish-release.mjs` cuts the release after
+`deploy.sh` and before the ledger step: only a live build is published, and
+a commit that already has a release (re-run, rollback) is re-pointed as
+`latest` with its assets untouched, so `released_at` keeps saying when that
+build was first published. The stamp formula lives once, in
+`scripts/build-id.mjs`: `deploy.sh` seds it into the tree and the manifest
+carries it as `version`, and an updater compares the two strings verbatim.
+**Reproducible means the clock cannot reach the bytes**: stamp and zip
+mtimes are the commit's, and the two deliberate exceptions are
+`released_at` (the soak clock — it must say when the release was
+*published*) and `public/releases.json` (written from the ledger plus the
+commits since the `released` tag, which moves after every deploy). Two
+hashes per asset: `sha256` is download integrity, `cfhash` is wrangler's
+`blake3(base64 + ext)[:32]` that Cloudflare's upload session keys on, so the
+updater never computes it on the edge. A commit that needs a human at every
+instance says so with a `Requires-Attention: <why>` trailer, the same shape
+as `Release-Note:`; the manifest carries every such commit in history
+(`attention`), not just this release's, so an instance that skipped the
+middle release still sees it. The manifest's fields are a **stated
+contract** pinned by `scripts/test-release-manifest.mjs` — exact field set
+and types, hashes re-derived from the zip, two packagings of the same tree
+hashing the same, and seeded violations each caught — and
+`test-deploy-policy.mjs` refuses a `deploy.yml` that stops publishing or
+publishes before the deploy. `artwork/icon-source.png` moved out of
+`public/` for this: it is `make-icons.mjs`'s input, nothing fetched it, and
+it was 2.9 MB of every upload.
+
 ### CI flake policy
 
 A red suite is judged before it is retried. The one shape so far judged
