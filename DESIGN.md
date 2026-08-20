@@ -301,6 +301,20 @@ it recurs often enough to be worth fixing, the fix is a `waitFor` on the
 scroll position rather than a retry — a retry would hide a real page-turn
 regression behind the same green.
 
+The third shape was fixed rather than retried: the **first browser suite in
+the run** dying at `launch()` with `browser never came up`, after exactly
+the 20 s `cdp-client.mjs` allows, while every later suite's launch in the
+same run is fine. Chrome's first start on a fresh runner is a cold binary
+on a shared box. Measured 2026-08-20 on ubuntu-24.04 image 20260816:
+`auth-e2e` took 13–18 s on eight green runs (8.6 s on the previous image),
+33.8 s on one, then failed twice in a row on an identical commit. A longer
+deadline would mean editing the vendored client, and a retry would hide a
+real launch regression, so `scripts/run-ci-tests.mjs` now runs
+`scripts/warm-browser.mjs` beside the dev-server boot — same binary, same
+flags, throwaway profile — and reports it as a `browser-warmup` row with
+the cold-start time and the browser that answered. A red `browser-warmup`
+row means no browser suite could have passed; read it before any of them.
+
 ### Data migrations
 
 Data migrations are one-off dispatch workflows, not app code. There is

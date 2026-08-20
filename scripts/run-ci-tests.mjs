@@ -77,6 +77,33 @@ if (!(await alive())) {
   server.stderr.on("data", (chunk) => { serverOutput += chunk; });
 }
 
+// Chrome's cold start is paid here, beside the server boot, instead of
+// inside the first browser suite's 20 s launch budget — see warm-browser.mjs
+// for the measurements that made this necessary. Reported as a row of its
+// own so the artifact carries how long it took and which browser answered.
+const warmStarted = Date.now();
+let warmOutput = "";
+const warm = spawn("node", ["scripts/warm-browser.mjs"], { stdio: ["ignore", "pipe", "pipe"] });
+warm.stdout.on("data", (chunk) => { warmOutput += chunk; });
+warm.stderr.on("data", (chunk) => { warmOutput += chunk; });
+const warmExit = new Promise((resolve) => warm.on("exit", resolve));
+async function settleWarmup() {
+  const code = await Promise.race([
+    warmExit, new Promise((resolve) => setTimeout(() => resolve(null), 120000)),
+  ]);
+  if (code === null) warm.kill("SIGKILL");
+  writeFileSync(path.join(logs, "browser-warmup.log"), warmOutput);
+  const entry = {
+    name: "browser-warmup",
+    status: code === 0 ? "passed" : "failed",
+    exitCode: code,
+    durationMs: Date.now() - warmStarted,
+    reason: code === 0 ? null : warmOutput.trim().split("\n").filter(Boolean).slice(-3).join(" | ") || "warm-up hung — killed",
+  };
+  results.push(entry);
+  console.log(`${entry.status === "passed" ? "PASS" : "FAIL"} browser-warmup (${entry.durationMs} ms) ${warmOutput.trim().split("\n")[0] ?? ""}`);
+}
+
 // pure-node suites run while the server boots
 run("renovate-policy", ["node", "scripts/test-renovate-policy.mjs"]);
 run("deploy-policy", ["node", "scripts/test-deploy-policy.mjs"]);
@@ -88,6 +115,10 @@ run("wasm-frontend", ["node", "scripts/test-wasm-frontend.mjs"]);
 run("matcha-fst", ["node", "scripts/test-matcha-fst.mjs"]);
 run("worker-pool", ["node", "scripts/test-worker-pool.mjs"]);
 run("push-crypto", ["node", "scripts/test-push-crypto.mjs"]);
+
+// before the first suite that launches a browser, whichever that turns out
+// to be — the vertical/bg/tts suites run even when the server never came up
+await settleWarmup();
 
 try {
   let ready = false;
