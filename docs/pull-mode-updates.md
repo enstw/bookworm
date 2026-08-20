@@ -38,7 +38,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-15 · the rules for when an install may happen | 3 | done — decision + lock; wired by PM-08 |
 | PM-08 · the panel and the policy | 3 | done — panel + cron split; armed by the owner's token |
 | PM-14 · alarm on a silent updater | 3 | done |
-| PM-09 · the owner's phone, and only the owner's | 3 | wip — channel landed, messages pending |
+| PM-09 · the owner's phone, and only the owner's | 3 | done — channel + all four messages |
 | PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | — |
 | PM-16 · updating the updater | 4 | — |
 | PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md` | 4 | — |
@@ -1196,8 +1196,33 @@ can go in.
   `POST /api/admin/owner-test` so the owner can prove the routing from the
   phone in hand. `test:push` pins it with two keys under one user: marking
   the phone rings the phone, the tablet stays quiet, nothing marked sends
-  nothing. The three messages themselves join as PM-07, PM-08 and PM-14
-  create them — each calls `pushOwner()` and nothing else.
+  nothing.
+- **All four messages landed, 2026-08-21.** 新版本已上線 broadcasts from
+  `announceSelf` (with the cron); updater-silent from `alarmSilentUpdater`
+  (PM-14). The last two — waiting-for-you and failed-and-rolled-back — went
+  in here, both the reader reading a row the updater wrote and pushing once:
+  - *waiting-for-you.* The updater's `runInstall` records its `decide()`
+    verdict in `updater_status.notify_version` — the version set only on a
+    NOTIFY (notify mode, or a requires-attention downgrade of automatic),
+    cleared on every other action, with `notify_attention` to word it. The
+    reader's `notifyWaiting` pushes the owner once per waiting version
+    (`notify_sent_for` dedupes), and `/admin` shows the 待您決定 line so an
+    instance with no device flagged still says why nothing moved.
+  - *failed-and-rolled-back.* `alarmFailedInstall` reads the guarded
+    install's outcome (PM-07) and pushes once per attempt whose result was
+    not `ok` — `rolled-back` or `failed` — deduped on `last_install_at`
+    (`install_alarm_for`). An `ok` install stays silent; 新版本已上線 is its
+    broadcast.
+  - Four columns carry it (`notify_version`, `notify_attention`,
+    `notify_sent_for`, `install_alarm_for`), added additively to
+    `updater_status` — in `schema.sql` for a fresh install and in
+    `deploy.sh`'s guarded ALTERs for upstream's own live D1.
+  - Proven on a throwaway D1 (`pm09-e2e`): `schema.sql` creates the four
+    columns; three ticks of each sender ring exactly once; a newer waiting
+    version and a newer failed attempt each ring once more; the owner's
+    decision (which clears `notify_version`) and an `ok` install both fall
+    silent. The shipped predicates and the exact reader/updater SQL ran
+    against real D1; the throwaway was deleted.
 - Done when: an install reaches every subscriber while a rolled-back
   install reaches only the owner's devices; with no device flagged, neither
   the owner-only messages nor a fallback broadcast goes out, and `/admin`

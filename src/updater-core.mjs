@@ -537,6 +537,21 @@ async function clearInstallNow(env) {
   await env.DB.prepare("UPDATE updater_policy SET install_now_version = '', install_now_at = 0 WHERE id = 1").run();
 }
 
+// Record the decision so the READER's cron can raise the waiting-for-you push
+// (PM-09) — the updater holds no VAPID key and never pushes; it writes this
+// row and the reader reads it ("the reader sends, the updater only records").
+// Only a NOTIFY decision is the owner's to make, so only that writes a version
+// here; every other action (install, skip, refuse) clears it, so a version the
+// owner already decided or that has since installed stops being "waiting".
+// notify_attention rides along so the reader can word the push: a
+// requires-attention release needs a human at the instance (a new secret, a
+// non-additive migration), a plain notify only wants the install-now button.
+async function recordDecision(env, { action, version, attention }) {
+  await env.DB.prepare(
+    "UPDATE updater_status SET notify_version = ?, notify_attention = ? WHERE id = 1",
+  ).bind(action === "notify" ? version : "", action === "notify" && attention ? 1 : 0).run();
+}
+
 // The install half of the cron, run after a successful check. Reads the
 // running version through the reader (the service binding), the policy and
 // last install from D1, asks decide(), and — only if it says install —
@@ -563,6 +578,10 @@ export async function runInstall({ env, manifest, now, deps = {} }) {
     policy, manifest, runningVersion: running, updaterVersion: UPDATER_VERSION,
     lastInstall, installNow: policy.installNowVersion || null, now,
   });
+  // record the verdict for the reader's waiting-for-you push (PM-09): a notify
+  // sets the pending version, anything else clears it. Written for every
+  // action, so an install or a policy change retires a stale notify.
+  await recordDecision(env, { action: d.action, version: manifest.version, attention: !!manifest.requiresAttention });
   if (d.action !== "install") return { armed: true, action: d.action, reason: d.reason };
 
   // one at a time: a held lock means an install is already running (or an

@@ -154,7 +154,20 @@ CREATE TABLE IF NOT EXISTS updater_status (
   -- about (PM-14, R10): the reader watches this table because a dead updater
   -- cannot report its own death, and this column makes the alarm fire once
   -- per stall rather than every minute the updater stays quiet.
-  silent_alarm_for     INTEGER NOT NULL DEFAULT 0
+  silent_alarm_for     INTEGER NOT NULL DEFAULT 0,
+  -- the waiting-for-you push (PM-09). The updater writes notify_version when
+  -- decide() will not install a release without the owner (notify mode, or a
+  -- requires-attention downgrade); notify_attention is 1 when a human is
+  -- needed at the instance. The reader pushes the owner and records the
+  -- version it rang in notify_sent_for, so a version waiting across ticks
+  -- rings once. Added after this table first shipped — see the ALTERs below.
+  notify_version       TEXT    NOT NULL DEFAULT '',
+  notify_attention     INTEGER NOT NULL DEFAULT 0,
+  notify_sent_for      TEXT    NOT NULL DEFAULT '',
+  -- the install-failed push (PM-09): the last_install_at the reader last rang
+  -- the owner about, so a 'rolled-back' or 'failed' install rings once, not
+  -- every tick it stands on the panel.
+  install_alarm_for    INTEGER NOT NULL DEFAULT 0
 );
 
 -- The update policy (PM-08), set from /admin by the owner and read by the

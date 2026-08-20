@@ -121,7 +121,11 @@ for col in \
   "last_install_result TEXT NOT NULL DEFAULT ''" \
   "last_install_detail TEXT NOT NULL DEFAULT ''" \
   "updater_version INTEGER NOT NULL DEFAULT 0" \
-  "silent_alarm_for INTEGER NOT NULL DEFAULT 0"; do
+  "silent_alarm_for INTEGER NOT NULL DEFAULT 0" \
+  "notify_version TEXT NOT NULL DEFAULT ''" \
+  "notify_attention INTEGER NOT NULL DEFAULT 0" \
+  "notify_sent_for TEXT NOT NULL DEFAULT ''" \
+  "install_alarm_for INTEGER NOT NULL DEFAULT 0"; do
   name=${col%% *}
   if grep -q "\"${name}\"" <<<"$UCOLS"; then
     echo "    (${name} already present)"

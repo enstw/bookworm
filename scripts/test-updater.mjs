@@ -12,7 +12,7 @@ import { zipSync } from "fflate";
 import { checkOnce, d1Store, UPDATER_VERSION, verifyBundle, buildMetadata, install,
   ensureHealthKey, healthCheck, currentVersionId, rollbackTo, installWithRollback,
   decide, acquireInstallLock, releaseInstallLock, runInstall } from "../src/updater-core.mjs";
-import { readPanel, setPolicy, queueInstallNow, shouldAlarm, isStale, SILENT_THRESHOLD_MS } from "../src/update-panel.mjs";
+import { readPanel, setPolicy, queueInstallNow, shouldAlarm, shouldNotifyWaiting, shouldAnnounceInstall, isStale, SILENT_THRESHOLD_MS } from "../src/update-panel.mjs";
 import { runMigrations } from "../src/updater-core.mjs";
 import { parseMigrations, isAdditive } from "../src/migrations.mjs";
 
@@ -418,6 +418,7 @@ function cronDb(state) {
         if (/INSERT INTO readers/.test(sql)) { state.readerKey = args[0]; return { meta: { changes: 1 } }; }
         if (/UPDATE updater_status SET last_install_at/.test(sql)) { state.recorded = { at: args[0], version: args[1], result: args[2] }; return { meta: { changes: 1 } }; }
         if (/UPDATE updater_policy SET install_now_version = ''/.test(sql)) { state.policy.install_now_version = ""; state.clearedNow = true; return { meta: { changes: 1 } }; }
+        if (/UPDATE updater_status SET notify_version/.test(sql)) { state.notify = { version: args[0], attention: args[1] }; return { meta: { changes: 1 } }; }
         return { meta: { changes: 0 } };
       },
     };
@@ -689,6 +690,65 @@ function panelDb(state) {
   await install({ manifest, cf: cfLogged, script: "bookworm", fetchFn, db });
   out.migBeforeSwap = order.includes("migrate") && order.includes("put") && order.indexOf("migrate") < order.indexOf("put")
     ? "ok (migration ran before the PUT)" : `FAIL ${JSON.stringify(order)}`;
+}
+
+// ---- the owner's other two pushes (PM-09) -------------------------------
+
+// 30. runInstall records the NOTIFY verdict for the reader to push, and clears
+// it on any other action — the updater writes, it never pushes
+{
+  // notify mode: decide → notify, notify_version set, attention 0, no install
+  const nState = { policy: { mode: "notify", soak_days: 0, install_now_version: "" }, lastInstall: {}, lock: { held_at: 0 }, readerKey: "hk" };
+  let installed = false;
+  const nDeps = { cf: async () => ({}), fetchReader: readerAt("old · x"), install: async () => { installed = true; return {}; } };
+  const rn = await runInstall({ env: { DB: cronDb(nState), CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" }, manifest: MAN, now: 2_000_000_000_000, deps: nDeps });
+  const notifyOk = rn.action === "notify" && !installed && nState.notify?.version === "new · x" && nState.notify.attention === 0;
+
+  // automatic + requiresAttention: decide downgrades to notify, attention 1
+  const aState = { policy: { mode: "automatic", soak_days: 0, install_now_version: "" }, lastInstall: {}, lock: { held_at: 0 }, readerKey: "hk" };
+  const ra = await runInstall({ env: { DB: cronDb(aState), CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" }, manifest: { ...MAN, requiresAttention: true }, now: 2_000_000_000_000, deps: { cf: async () => ({}), fetchReader: readerAt("old · x"), install: async () => ({}) } });
+  const attnOk = ra.action === "notify" && aState.notify?.version === "new · x" && aState.notify.attention === 1;
+
+  // an INSTALL decision clears any pending notify (version "", attention 0)
+  const iState = { policy: { mode: "automatic", soak_days: 0, install_now_version: "new · x" }, lastInstall: {}, lock: { held_at: 0 }, readerKey: "hk" };
+  await runInstall({ env: { DB: cronDb(iState), CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" }, manifest: MAN, now: 2_000_000_000_000, deps: { cf: async () => ({}), fetchReader: readerAt("old · x"), install: async (o) => { await o.recordOutcome({ at: o.now, version: o.manifest.version, outcome: "ok", detail: "" }); return { outcome: "ok" }; } } });
+  const clearOk = iState.notify?.version === "" && iState.notify.attention === 0;
+
+  out.cronRecordsNotify = notifyOk && attnOk && clearOk
+    ? "ok (notify sets version+attention; install clears it; never pushes)"
+    : `FAIL notify=${JSON.stringify(nState.notify)} attn=${JSON.stringify(aState.notify)} clear=${JSON.stringify(iState.notify)} installed=${installed}`;
+}
+
+// 31. the reader's send-once predicates: waiting-for-you and install-failed
+{
+  const waitCases = [
+    ["nothing waiting", { notifyVersion: "", notifySentFor: "" }, false],
+    ["waiting, not yet sent", { notifyVersion: "v2", notifySentFor: "" }, true],
+    ["already sent this version", { notifyVersion: "v2", notifySentFor: "v2" }, false],
+    ["a new version now waits", { notifyVersion: "v3", notifySentFor: "v2" }, true],
+  ];
+  const instCases = [
+    ["fresh install, nothing recorded", { result: "", installAt: 0, installAlarmFor: 0 }, false],
+    ["ok install", { result: "ok", installAt: 500, installAlarmFor: 0 }, false],
+    ["rolled-back, not yet rung", { result: "rolled-back", installAt: 500, installAlarmFor: 0 }, true],
+    ["failed, not yet rung", { result: "failed", installAt: 500, installAlarmFor: 0 }, true],
+    ["already rung this attempt", { result: "rolled-back", installAt: 500, installAlarmFor: 500 }, false],
+    ["a newer attempt failed", { result: "failed", installAt: 700, installAlarmFor: 500 }, true],
+  ];
+  const wBad = waitCases.filter(([, i, w]) => shouldNotifyWaiting(i) !== w).map(([n]) => n);
+  const iBad = instCases.filter(([, i, w]) => shouldAnnounceInstall(i) !== w).map(([n]) => n);
+  out.senderPredicates = wBad.length === 0 && iBad.length === 0
+    ? "ok (waiting rings once per version; install-failed once per non-ok attempt)"
+    : `FAIL waiting=[${wBad.join(", ")}] install=[${iBad.join(", ")}]`;
+}
+
+// 32. readPanel exposes the waiting state so /admin says why nothing installed
+{
+  const waitRow = { last_check_at: Date.now(), last_check_ok: 1, updater_version: 1, notify_version: "v9 · x", notify_attention: 1 };
+  const pWait = await readPanel({ DB: panelDb({ status: waitRow, policy: null }) }, "v8 · x");
+  const pNone = await readPanel({ DB: panelDb({ status: { last_check_at: Date.now(), notify_version: "" }, policy: null }) }, "v8 · x");
+  out.panelWaiting = pWait.waiting.version === "v9 · x" && pWait.waiting.attention === true && pNone.waiting.version === "" && pNone.waiting.attention === false
+    ? "ok (waiting version + attention surfaced; empty when none)" : `FAIL ${JSON.stringify({ w: pWait.waiting, n: pNone.waiting })}`;
 }
 
 console.log(JSON.stringify(out, null, 2));

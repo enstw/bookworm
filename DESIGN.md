@@ -287,8 +287,15 @@ the deploy of 34606e8, schedule created 16:26:57Z, first tick recorded
 16:47:27Z), and `wrangler deploy` re-PUTs the schedule on every deploy, so
 whether an unchanged schedule re-propagates is the next thing to measure
 (`announced_builds.created_at` against the deploy log). The same
-tick is where the pull-mode plan's owner-only messages and silent-updater
-alarm will live — the reader is the one Worker that holds the VAPID pair.
+tick fires the pull-mode plan's four update messages — the reader is the
+one Worker that holds the VAPID pair, so it sends and the updater only
+records (PM-09). 新版本已上線 broadcasts from `announceSelf`; three go only
+to keys marked 管理者, through `pushOwner`: waiting-for-you (`notifyWaiting`
+reads the updater's `decide()` verdict in `updater_status.notify_version`),
+failed-and-rolled-back (`alarmFailedInstall` reads the guarded install's
+outcome), and the silent-updater alarm (`alarmSilentUpdater`, PM-14). Each
+dedupes on a `*_for` column so a state that stands for many ticks rings
+once.
 Locally, `pnpm run dev` runs `wrangler dev --test-scheduled`, which exposes
 the tick as `GET /cdn-cgi/handler/scheduled?cron=…` (answering a bare
 `ok`); that is how `test:push` drives it. Not the older `/__scheduled`:

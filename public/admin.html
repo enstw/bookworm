@@ -1338,6 +1338,10 @@
         ...(d.stale ? [el("div", { class: "msg err", text: t("up.silent") })] : []),
         upRow(t("up.running"), d.running || "dev"),
         upRow(t("up.upstream"), upToDate ? t("up.current") : (d.upstream.version || t("up.unknown"))),
+        // PM-09: a release the updater will not take without you — shown here so
+        // an instance with no owner device flagged still says why nothing moved
+        ...(d.waiting.version && d.waiting.version !== d.running
+          ? [upRow(t("up.waiting"), d.waiting.version + (d.waiting.attention ? " — " + t("up.waitAttention") : ""), true)] : []),
         upRow(t("up.lastCheck"),
           d.lastCheck.at ? when(d.lastCheck.at) + (d.lastCheck.ok ? "" : " — " + d.lastCheck.detail) : t("up.never"),
           (d.lastCheck.at && !d.lastCheck.ok) || d.stale),
