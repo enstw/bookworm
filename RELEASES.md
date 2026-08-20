@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-21 — `dc2562d8ae9a`
+
+- updater: the reader raises the alarm when the updater goes silent (`dc2562d`)
+
 ## 2026-08-21 — `39342806147d`
 
 - updater: wire the cron to install by policy — armed by the owner's token (`3934280`)
