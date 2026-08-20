@@ -1334,11 +1334,13 @@
       const when = (ms) => ms ? new Date(ms).toLocaleString() : t("up.never");
       const upToDate = d.upstream.version && d.upstream.version === d.running;
       panel.replaceChildren(
+        // R10: a silent updater is warned about, loudly, above everything else
+        ...(d.stale ? [el("div", { class: "msg err", text: t("up.silent") })] : []),
         upRow(t("up.running"), d.running || "dev"),
         upRow(t("up.upstream"), upToDate ? t("up.current") : (d.upstream.version || t("up.unknown"))),
         upRow(t("up.lastCheck"),
           d.lastCheck.at ? when(d.lastCheck.at) + (d.lastCheck.ok ? "" : " — " + d.lastCheck.detail) : t("up.never"),
-          d.lastCheck.at && !d.lastCheck.ok),
+          (d.lastCheck.at && !d.lastCheck.ok) || d.stale),
         upRow(t("up.updaterVer"), d.updaterVersion ? "v" + d.updaterVersion : "—"),
         upRow(t("up.lastInstall"),
           d.lastInstall.at ? `${d.lastInstall.version} · ${d.lastInstall.result}${d.lastInstall.detail ? " — " + d.lastInstall.detail : ""}` : t("up.never"),

@@ -12,7 +12,7 @@ import { zipSync } from "fflate";
 import { checkOnce, d1Store, UPDATER_VERSION, verifyBundle, buildMetadata, install,
   ensureHealthKey, healthCheck, currentVersionId, rollbackTo, installWithRollback,
   decide, acquireInstallLock, releaseInstallLock, runInstall } from "../src/updater-core.mjs";
-import { readPanel, setPolicy, queueInstallNow } from "../src/update-panel.mjs";
+import { readPanel, setPolicy, queueInstallNow, shouldAlarm, isStale, SILENT_THRESHOLD_MS } from "../src/update-panel.mjs";
 
 const out = {};
 const eq = (name, actual, expected) => {
@@ -596,6 +596,36 @@ function panelDb(state) {
   out.panelInstallNow = q1.ok && q1.version === "9a · x" && seen.policy.install_now_version === "9a · x" && seen.policy.install_now_at === 999 &&
     q2.ok === false && /no upstream/.test(q2.error)
     ? "ok (queues the seen version; refuses when none seen)" : `FAIL ${JSON.stringify({ q1, q2, policy: seen.policy })}`;
+}
+
+// ---- the silent-updater alarm (PM-14, R10) ------------------------------
+
+// 25. shouldAlarm fires once per stall, never for a never-checked updater
+{
+  const now = 2_000_000_000_000;
+  const stale = now - SILENT_THRESHOLD_MS - 1;   // just past the threshold
+  const fresh = now - 60_000;                     // a minute ago
+  const cases = [
+    ["never checked", { lastCheckAt: 0, silentAlarmFor: 0, now }, false],
+    ["fresh", { lastCheckAt: fresh, silentAlarmFor: 0, now }, false],
+    ["stale, not yet alarmed", { lastCheckAt: stale, silentAlarmFor: 0, now }, true],
+    ["stale, already alarmed for this stall", { lastCheckAt: stale, silentAlarmFor: stale, now }, false],
+    ["recovered then stalled at a new value", { lastCheckAt: stale, silentAlarmFor: stale - 999, now }, true],
+  ];
+  const bad = cases.filter(([, input, want]) => shouldAlarm(input) !== want).map(([n]) => n);
+  out.shouldAlarm = bad.length === 0 && isStale(stale, now) && !isStale(fresh, now) && !isStale(0, now)
+    ? "ok (once per stall; silent when never checked or fresh)" : `FAIL ${bad.join(", ")}`;
+}
+
+// 26. readPanel exposes the stale flag the panel warns on
+{
+  const staleRow = { last_check_at: 1000, last_check_ok: 1, updater_version: 1 };
+  const pStale = await readPanel({ DB: panelDb({ status: staleRow, policy: null }) }, "b · x");
+  const freshRow = { last_check_at: Date.now(), last_check_ok: 1, updater_version: 1 };
+  const pFresh = await readPanel({ DB: panelDb({ status: freshRow, policy: null }) }, "b · x");
+  const pNone = await readPanel({ DB: panelDb({ status: null, policy: null }) }, "b · x");
+  out.panelStale = pStale.stale === true && pFresh.stale === false && pNone.stale === false
+    ? "ok (old last-check stale; fresh and never-checked not)" : `FAIL ${JSON.stringify({ s: pStale.stale, f: pFresh.stale, n: pNone.stale })}`;
 }
 
 console.log(JSON.stringify(out, null, 2));

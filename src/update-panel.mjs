@@ -9,6 +9,25 @@
 
 const MODES = new Set(["automatic", "notify", "pinned"]);
 
+// A cron-only Worker fails silently — an expired token, a revoked credential,
+// a cron that stopped firing all look identical from outside: a timestamp in
+// D1 stops moving (R10). The reader watches that timestamp, because a dead
+// updater cannot report its own death. Past this threshold — a few times the
+// updater's ~15 min check interval — the panel warns and the owner is pushed.
+export const SILENT_THRESHOLD_MS = 60 * 60 * 1000;
+
+// Stale for the panel: it has checked before (a fresh install with no updater
+// leaves this 0 and must not nag) and has not checked within the threshold.
+export const isStale = (lastCheckAt, now) => lastCheckAt > 0 && now - lastCheckAt > SILENT_THRESHOLD_MS;
+
+// Should the reader's cron fire the owner alarm this tick? Only when stale AND
+// it has not already alarmed for THIS stall (silent_alarm_for holds the
+// last_check_at it last alarmed about). When the updater recovers, last_check_at
+// moves; a later stall at a new value alarms again, an unmoving one does not.
+export function shouldAlarm({ lastCheckAt, silentAlarmFor, now }) {
+  return isStale(lastCheckAt, now) && silentAlarmFor !== lastCheckAt;
+}
+
 // The panel object: running version (the reader's own BUILD), what the updater
 // last saw of upstream, when it last checked, the policy, the updater's own
 // version (so a minUpdaterVersion refusal names a number the owner can look
@@ -25,6 +44,8 @@ export async function readPanel(env, build) {
     updaterVersion: s.updater_version ?? 0,
     upstream: { version: s.upstream_version ?? "", releasedAt: s.upstream_released_at ?? "" },
     lastCheck: { at: s.last_check_at ?? 0, ok: (s.last_check_ok ?? 0) === 1, detail: s.detail ?? "" },
+    // the updater has gone silent past the threshold (R10); the panel warns
+    stale: isStale(s.last_check_at ?? 0, Date.now()),
     lastInstall: {
       at: s.last_install_at ?? 0, version: s.last_install_version ?? "",
       result: s.last_install_result ?? "", detail: s.last_install_detail ?? "",
