@@ -9,6 +9,11 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-20 — `7d885c2aea31`
+
+- fix: date a build by its commit, not by the clock it deployed on (`7d885c2`)
+- docs: the 12 MB first install does not fit in 10 ms, so it moves to PM-10 (`4049633`)
+
 ## 2026-08-20 — `7815ef0be0b8`
 
 - docs: auto-merge is on, so nobody has to catch the green window (`7815ef0`)
