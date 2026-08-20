@@ -8,7 +8,7 @@ import { RESERVED_SLUGS, SLUG_RE } from "../public/split-core.mjs";
 import { PACK_NAMES } from "../public/vendor/wasmtts/pack-manifest.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
 import { vapidPublicKey, sendPush, b64u } from "./push.js";
-import { readPanel, setPolicy, queueInstallNow, shouldAlarm } from "./update-panel.mjs";
+import { readPanel, setPolicy, queueInstallNow, shouldAlarm, shouldNotifyWaiting, shouldAnnounceInstall } from "./update-panel.mjs";
 
 function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
@@ -95,6 +95,8 @@ export default {
   async scheduled(controller, env, ctx) {
     await announceSelf(env, ctx);
     await alarmSilentUpdater(env, ctx);
+    await notifyWaiting(env, ctx);
+    await alarmFailedInstall(env, ctx);
   },
 };
 
@@ -117,6 +119,53 @@ async function alarmSilentUpdater(env, ctx) {
   const hours = Math.max(1, Math.round((now - row.last_check_at) / 3600000));
   await pushOwner(env, ctx, "更新器失聯", {
     title: "更新器失聯", body: `更新器已約 ${hours} 小時沒有回報，請到 /admin 檢查。`, url: "/admin",
+  });
+}
+
+// Waiting-for-you (PM-09, the second owner-only push). The updater writes
+// notify_version when its decide() will not install a release without the
+// owner — notify mode, or a requires-attention release automatic mode refuses
+// to take on its own. The reader watches that column (a dead-or-unarmed
+// updater simply never sets it, and nothing rings) and pushes the owner ONCE
+// per waiting version; notify_sent_for records what it last rang so the same
+// version across ticks stays quiet. notify_attention words it: a release that
+// needs a human at the instance versus one the install-now button clears.
+async function notifyWaiting(env, ctx) {
+  const row = await env.DB.prepare(
+    "SELECT notify_version, notify_attention, notify_sent_for FROM updater_status WHERE id = 1").first();
+  if (!row) return;
+  if (!shouldNotifyWaiting({ notifyVersion: row.notify_version, notifySentFor: row.notify_sent_for })) return;
+  // recorded before the push, so a second tick or a push failure does not
+  // double-ring; the panel's own 待您決定 line is the durable signal either way
+  await env.DB.prepare("UPDATE updater_status SET notify_sent_for = ? WHERE id = 1")
+    .bind(row.notify_version).run();
+  const body = row.notify_attention
+    ? `有新版本 ${row.notify_version} 需要您先處理才能安裝（可能要新增密鑰），請到 /admin。`
+    : `有新版本 ${row.notify_version} 等您決定是否安裝，請到 /admin。`;
+  await pushOwner(env, ctx, "待您決定", { title: "有新版本待您決定", body, url: "/admin" });
+}
+
+// Install-failed (PM-09, the third owner-only push). The updater's guarded
+// install (PM-07) records its outcome in updater_status: 'ok', 'rolled-back'
+// (the previous version was put back) or 'failed' (the install could not
+// proceed, the site unharmed). The reader pushes the owner once per non-ok
+// attempt — install_alarm_for holds the last_install_at it already rang, so a
+// bad install rings once and every 'ok' stays silent (新版本已上線 is that
+// one's broadcast, from announceSelf). A rolled-back install still stands on
+// the panel; the push is the nudge, the panel is the record.
+async function alarmFailedInstall(env, ctx) {
+  const row = await env.DB.prepare(
+    "SELECT last_install_at, last_install_version, last_install_result, install_alarm_for FROM updater_status WHERE id = 1").first();
+  if (!row) return;
+  if (!shouldAnnounceInstall({ result: row.last_install_result, installAt: row.last_install_at, installAlarmFor: row.install_alarm_for })) return;
+  await env.DB.prepare("UPDATE updater_status SET install_alarm_for = ? WHERE id = 1")
+    .bind(row.last_install_at).run();
+  const rolled = row.last_install_result === "rolled-back";
+  const body = rolled
+    ? `安裝 ${row.last_install_version} 失敗，已回復前一版。到 /admin 查看原因。`
+    : `安裝 ${row.last_install_version} 未成功（網站未受影響）。到 /admin 查看原因。`;
+  await pushOwner(env, ctx, rolled ? "安裝已回復" : "安裝未成功", {
+    title: rolled ? "更新失敗，已回復" : "更新未成功", body, url: "/admin",
   });
 }
 

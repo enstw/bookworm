@@ -28,6 +28,27 @@ export function shouldAlarm({ lastCheckAt, silentAlarmFor, now }) {
   return isStale(lastCheckAt, now) && silentAlarmFor !== lastCheckAt;
 }
 
+// Should the reader's cron raise the waiting-for-you push this tick (PM-09)?
+// The updater writes notify_version when its decide() lands on NOTIFY — a
+// release it will not install without the owner (notify mode, or a
+// requires-attention downgrade) — and '' on every other decision. The reader
+// pushes the owner ONCE per waiting version (notify_sent_for holds the last it
+// pushed), so a version waiting across many ticks rings once and the owner's
+// own decision, which moves notify_version, is what lets the next one ring.
+export function shouldNotifyWaiting({ notifyVersion, notifySentFor }) {
+  return !!notifyVersion && notifyVersion !== notifySentFor;
+}
+
+// Should the reader's cron raise the install-failed push this tick (PM-09)?
+// Fires once per install attempt whose guarded outcome (PM-07) was not 'ok' —
+// 'rolled-back' (the previous version was put back) or 'failed' (the install
+// could not proceed, the site unharmed). install_alarm_for holds the
+// last_install_at already pushed, so a bad install rings once and a fresh
+// install (at 0, result '') never does.
+export function shouldAnnounceInstall({ result, installAt, installAlarmFor }) {
+  return (result === "rolled-back" || result === "failed") && installAt > 0 && installAlarmFor !== installAt;
+}
+
 // The panel object: running version (the reader's own BUILD), what the updater
 // last saw of upstream, when it last checked, the policy, the updater's own
 // version (so a minUpdaterVersion refusal names a number the owner can look
@@ -46,6 +67,11 @@ export async function readPanel(env, build) {
     lastCheck: { at: s.last_check_at ?? 0, ok: (s.last_check_ok ?? 0) === 1, detail: s.detail ?? "" },
     // the updater has gone silent past the threshold (R10); the panel warns
     stale: isStale(s.last_check_at ?? 0, Date.now()),
+    // the owner's decision is pending on this version — notify mode, or a
+    // requires-attention downgrade of automatic (PM-09). The reader pushes it
+    // and the panel shows it, so an instance with no owner device flagged
+    // still says why nothing installed.
+    waiting: { version: s.notify_version ?? "", attention: (s.notify_attention ?? 0) === 1 },
     lastInstall: {
       at: s.last_install_at ?? 0, version: s.last_install_version ?? "",
       result: s.last_install_result ?? "", detail: s.last_install_detail ?? "",
