@@ -3,6 +3,14 @@
 # stopped BEFORE it reaches main, not after — the deploy gate then re-runs
 # the suite on the merged result as the last line of defence.
 #
+# A markdown-only PR skips the suite, on the same paths deploy.yml already
+# ignores. The skipping is done with step conditions rather than a
+# paths-ignore filter on purpose: a filtered-out workflow never reports, and
+# a required check that never reports leaves the PR blocked forever. So the
+# job always runs and always reports; only the expensive steps drop out.
+# Anything the classifier cannot read — a workflow_dispatch, a missing
+# parent — falls through to the full suite, because unknown means run it.
+#
 # Two triggers, one job: pull_request covers PRs pushed by people; PRs whose
 # branch was pushed with GITHUB_TOKEN (the release ledger PR, the renovate
 # roll-up) never fire pull_request — the same recursion guard the ledger
@@ -41,17 +49,44 @@ jobs:
         with:
           # this job runs the PR's code; leave no token on disk for it
           persist-credentials: false
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+          # two commits, so the merge commit's parents are both present and
+          # the classifier below can diff without a credentialled fetch
+          fetch-depth: 2
+      - name: Classify the diff
+        id: scope
+        if: github.event_name == 'pull_request'
+        run: |
+          # HEAD is the PR's merge commit, so HEAD^1 is main and the two-dot
+          # diff is exactly what this PR adds to it. Every path that leaves
+          # docs_only unset runs the suite.
+          base=$(git rev-parse --verify --quiet 'HEAD^1') || exit 0
+          changed=$(git diff --name-only "$base" HEAD)
+          # an empty list means the diff failed to say anything, not that a
+          # PR changed nothing — either way the suite is the safe answer
+          [ -n "$changed" ] || exit 0
+          if printf '%s\n' "$changed" |
+               grep -qvE '(\.md|^\.github/renovate\.json5)$'; then
+            exit 0
+          fi
+          echo 'docs_only=true' >> "$GITHUB_OUTPUT"
+          echo 'Docs-only diff — the desktop suite was skipped.' \
+            >> "$GITHUB_STEP_SUMMARY"
+      - if: steps.scope.outputs.docs_only != 'true'
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 11.21.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - if: steps.scope.outputs.docs_only != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.18.0
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - if: steps.scope.outputs.docs_only != 'true'
+        run: pnpm install --frozen-lockfile
       - name: ffmpeg for the tts-stream fixture
+        if: steps.scope.outputs.docs_only != 'true'
         run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - name: Scaffold .dev.vars and the local D1 schema
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           {
             printf 'ADMIN_TOKEN=%s\n' "$ADMIN_TOKEN"
@@ -60,8 +95,9 @@ jobs:
           } > .dev.vars
           pnpm run db:init:local
       - name: Run the test gate
+        if: steps.scope.outputs.docs_only != 'true'
         run: node scripts/run-ci-tests.mjs
-      - if: always()
+      - if: always() && steps.scope.outputs.docs_only != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: candidate-gate-report
