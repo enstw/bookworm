@@ -658,14 +658,30 @@ can go in.
 ### Phase 1 — upstream starts shipping a product
 
 **PM-01 · publish the artifact and its manifest**
-- Touches: `.github/workflows/deploy.yml`, new packaging script
+- Touches: `.github/workflows/deploy.yml`, `scripts/deploy.sh`,
+  `scripts/release-notes.mjs`, new packaging script
 - Why: nothing produces a deployable bundle today — the bundler's output is
   uploaded and discarded in one motion. The manifest carries the asset
   hashes, the binding shape, the assets config and the migrations.
 - Also cuts the GitHub release the artifact rides on: `deploy.yml` marks a
   deploy with a tag and a ledger today, and creates no release for the app.
 - Also drop `icons/icon-source.png` from what gets served — it is the input
-  to `scripts/make-icons.mjs` and nothing fetches it.
+  to `scripts/make-icons.mjs` and nothing fetches it. It is also 2.9 MB of
+  the 12.1, so the artifact leaves at **41 files, 9.7 MB**. R8's bench was
+  taken on the 42, and its verdict does not move: rescaled, the same one
+  pass is ~7.5 ms against a 10 ms budget, still with the manifest, the
+  bodies and the responses unpaid for.
+- **Reproducible means the clock cannot reach the bytes — and today it does,
+  twice.** `deploy.sh` stamps `BUILD` into `public/app.js` from
+  `date +'%Y-%m-%d %H:%M'`, so the same commit deployed a minute later is a
+  different asset with a different hash; and `release-notes.mjs:113` dates
+  the pending release from `new Date()`, which ships inside
+  `public/releases.json`. Both want one fix — take the time from the commit
+  being deployed, not from the wall — and it closes a latent bug on the way:
+  `gen-release-notes.mjs` runs before the deploy and `update-releases.mjs`
+  after it, so a deploy straddling midnight in Asia/Taipei already ships a
+  `releases.json` dated a day off its own ledger entry. The comment claiming
+  they cannot disagree is counting on the deploy being fast.
 - Done when: a deploy leaves behind a release whose manifest lists every
   asset with its sha256, and a clean checkout of the same commit reproduces
   those hashes — an artifact nobody can re-derive is not one anybody can
