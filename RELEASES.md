@@ -9,6 +9,11 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-21 — `6dfc97702cd6`
+
+- updater: stand up bookworm-updater, cron-only, and let it check upstream (`6dfc977`)
+- docs: a cron added for the first time took 20 minutes to start firing (`390e6f6`)
+
 ## 2026-08-21 — `34606e8a6c13`
 
 - push: the reader announces itself from its own cron, and the handshake goes (`34606e8`)
