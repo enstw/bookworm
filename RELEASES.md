@@ -9,6 +9,11 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-21 — `34606e8a6c13`
+
+- push: the reader announces itself from its own cron, and the handshake goes (`34606e8`)
+- docs: the first real release reproduced across machines, releases.json excepted (`bc326d4`)
+
 ## 2026-08-20 — `998cb631281c`
 
 > blake3-wasm 2.1.5
