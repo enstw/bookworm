@@ -106,7 +106,8 @@ export async function checkOnce({ upstreamUrl, store, now, fetchFn = fetch }) {
     upstream_released_at: typeof manifest.released_at === "string" ? manifest.released_at : "",
     detail: "",
   });
-  return { ok: true, version: manifest.version };
+  // the manifest rides back so the cron can decide without re-fetching it
+  return { ok: true, version: manifest.version, manifest };
 }
 
 // ---- the install path (PM-05) -------------------------------------------
@@ -464,4 +465,93 @@ export async function acquireInstallLock(env, holder, now, staleMs = 15 * 60 * 1
 }
 export async function releaseInstallLock(env) {
   await env.DB.prepare("UPDATE install_lock SET held_at = 0, holder = '' WHERE id = 1").run();
+}
+
+// ---- the armed cron loop (PM-08's cron split) ---------------------------
+//
+// check → decide → install → verify → roll back, one at a time. Wired into
+// the scheduled handler, but ARMED only when the Cloudflare token is present:
+// an unarmed updater (no CF_API_TOKEN) runs the check and stops here, which is
+// the production state until the owner sets the secret. A token that can
+// rewrite the reader must not arrive before the health check and rollback
+// that protect it — those (PM-07) are in, so this is the moment it can.
+
+// The Cloudflare API bound to the updater's token and account. Path is
+// relative to /accounts/{id}; bearer overrides the token for asset uploads
+// (they carry the session's own JWT). Same shape install()/rollback expect.
+export function cfFor(env) {
+  return async (path, init = {}, bearer = env.CF_API_TOKEN) => {
+    const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}${path}`, {
+      ...init, headers: { authorization: `Bearer ${bearer}`, ...(init.headers ?? {}) },
+    });
+    const text = await res.text();
+    let j = {}; try { j = JSON.parse(text); } catch { /* non-JSON error body */ }
+    if (!res.ok || j.success === false)
+      throw new Error(`${init.method ?? "GET"} ${path} → ${res.status} ${JSON.stringify(j.errors ?? text).slice(0, 200)}`);
+    return j.result ?? {};
+  };
+}
+
+async function readPolicy(env) {
+  const p = await env.DB.prepare(
+    "SELECT mode, soak_days, install_now_version FROM updater_policy WHERE id = 1").first();
+  return { mode: p?.mode || "automatic", soakDays: p?.soak_days ?? 2, installNowVersion: p?.install_now_version || "" };
+}
+async function readLastInstall(env) {
+  const s = await env.DB.prepare(
+    "SELECT last_install_version, last_install_result FROM updater_status WHERE id = 1").first();
+  return { version: s?.last_install_version ?? "", result: s?.last_install_result ?? "" };
+}
+async function recordInstall(env, o) {
+  await env.DB.prepare(
+    "UPDATE updater_status SET last_install_at = ?, last_install_version = ?, last_install_result = ?, last_install_detail = ? WHERE id = 1",
+  ).bind(o.at, o.version, o.outcome, o.detail ?? "").run();
+}
+async function clearInstallNow(env) {
+  await env.DB.prepare("UPDATE updater_policy SET install_now_version = '', install_now_at = 0 WHERE id = 1").run();
+}
+
+// The install half of the cron, run after a successful check. Reads the
+// running version through the reader (the service binding), the policy and
+// last install from D1, asks decide(), and — only if it says install —
+// takes the lock and runs the guarded install. Returns a small verdict for a
+// log; the outcome itself is recorded to updater_status for the panel.
+export async function runInstall({ env, manifest, now, deps = {} }) {
+  // ARMED gate: no token, no install. This is what keeps the whole machine
+  // inert until the owner opts in, even with everything else in place.
+  if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID) return { armed: false };
+  const cf = deps.cf ?? cfFor(env);
+  const fetchReader = deps.fetchReader ?? readerVia(env);
+  const installFn = deps.install ?? installWithRollback;
+  const script = env.READER_SCRIPT || "bookworm";
+
+  let running = "";
+  try {
+    const r = await fetchReader("/api/version", { headers: { "cache-control": "no-cache" } });
+    running = r.ok ? ((await r.json())?.build ?? "") : "";
+  } catch { /* running unknown → decide treats it as not-up-to-date */ }
+
+  const policy = await readPolicy(env);
+  const lastInstall = await readLastInstall(env);
+  const d = decide({
+    policy, manifest, runningVersion: running, updaterVersion: UPDATER_VERSION,
+    lastInstall, installNow: policy.installNowVersion || null, now,
+  });
+  if (d.action !== "install") return { armed: true, action: d.action, reason: d.reason };
+
+  // one at a time: a held lock means an install is already running (or an
+  // overrunning one) — skip this tick rather than interleave
+  if (!(await acquireInstallLock(env, `cron-${now}`, now))) return { armed: true, action: "locked" };
+  try {
+    const readerKey = await ensureHealthKey(env);
+    const result = await installFn({
+      manifest, cf, script, fetchReader, readerKey, now,
+      recordOutcome: (o) => recordInstall(env, o),
+    });
+    // a satisfied install-now must not re-fire every tick
+    if (policy.installNowVersion === manifest.version) await clearInstallNow(env);
+    return { armed: true, action: "install", outcome: result.outcome };
+  } finally {
+    await releaseInstallLock(env);
+  }
 }

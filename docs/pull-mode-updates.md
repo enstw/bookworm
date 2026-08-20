@@ -36,7 +36,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-06 · migrations before the swap, additive-only | 2 | — |
 | PM-07 · health check and automatic rollback | 3 | done — built and proven; armed by PM-15 |
 | PM-15 · the rules for when an install may happen | 3 | done — decision + lock; wired by PM-08 |
-| PM-08 · the panel and the policy | 3 | wip — panel landed; cron split is the arming step |
+| PM-08 · the panel and the policy | 3 | done — panel + cron split; armed by the owner's token |
 | PM-14 · alarm on a silent updater | 3 | — |
 | PM-09 · the owner's phone, and only the owner's | 3 | wip — channel landed, messages pending |
 | PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | — |
@@ -1111,12 +1111,26 @@ can go in.
   three functions and the panel routes are gated + exercised end to end
   through the reader (401 bare, policy round-trip, install-now queued, 400 on
   bad input). Default shipped: automatic, 2 days.
-- **Remaining: the cron split — the arming step.** The updater's
-  `scheduled` handler still only checks; wiring it to read the policy, call
-  `decide()`, and run `installWithRollback()` under the lock is what finally
-  executes the loop, and it is gated on the owner's `UPDATER_CF_API_TOKEN`.
-  Held as its own change so the panel can be seen and the cron cadence agreed
-  before anything installs itself.
+- **Cron split landed, 2026-08-21 — the machine is wired.** The updater's
+  `scheduled` handler checks, then calls `runInstall()` (`updater-core.mjs`):
+  it reads the running version through the reader (the service binding), the
+  policy and last install from D1, asks `decide()`, and — only on "install" —
+  takes the lock and runs `installWithRollback()`, recording the outcome for
+  the panel and clearing a satisfied install-now. `runInstall()` is **armed
+  only when `CF_API_TOKEN` is present**: without it the install half returns
+  at once, which is the production state. `deploy.sh` pushes `CF_API_TOKEN`
+  and `CF_ACCOUNT_ID` (the latter defaulting to the deploy's own account) only
+  behind `UPDATER_CF_API_TOKEN`, so **setting that one repo secret is the
+  owner's whole opt-in**. `test-updater.mjs` covers the gate (no token →
+  nothing installs) and the glue (installs on "install", skips on "skip",
+  skips a held lock, clears install-now, releases the lock). Verified live
+  unarmed: with `UPSTREAM_URL` set and no token, a tick recorded the check
+  (`upstream_version`, `updater_version`) and installed nothing.
+- One transport is unproven-live by choice: the health check reaches the
+  reader through the `READER` service binding, exercised in production only
+  once armed. It is a standard binding, deployed and confirmed present, and
+  the first armed run is caught by the rollback if it is wrong — which is what
+  the rollback is for.
 
 **PM-14 · alarm on a silent updater**
 - Why: R10. A cron-only Worker fails invisibly, and stale data on the panel

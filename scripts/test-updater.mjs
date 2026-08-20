@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { zipSync } from "fflate";
 import { checkOnce, d1Store, UPDATER_VERSION, verifyBundle, buildMetadata, install,
   ensureHealthKey, healthCheck, currentVersionId, rollbackTo, installWithRollback,
-  decide, acquireInstallLock, releaseInstallLock } from "../src/updater-core.mjs";
+  decide, acquireInstallLock, releaseInstallLock, runInstall } from "../src/updater-core.mjs";
 import { readPanel, setPolicy, queueInstallNow } from "../src/update-panel.mjs";
 
 const out = {};
@@ -55,7 +55,7 @@ const NOW = 1_700_000_000_000;
   const fetchFn = fakeFetch(jsonResponse(200, MANIFEST));
   const r = await checkOnce({ upstreamUrl: "https://example.invalid/releases/latest/download/", store, now: NOW, fetchFn });
   const row = store.get();
-  eq("goodResult", r, { ok: true, version: MANIFEST.version });
+  eq("goodResult", { ok: r.ok, version: r.version, hasManifest: r.manifest?.version === MANIFEST.version }, { ok: true, version: MANIFEST.version, hasManifest: true });
   eq("goodRow", {
     at: row.last_check_at, ok: row.last_check_ok,
     v: row.upstream_version, ra: row.upstream_released_at, detail: row.detail,
@@ -277,13 +277,21 @@ const READER = { bindings: [{ type: "secret_text", name: "ADMIN_TOKEN" }, { type
     ? "ok (a dropped secret throws)" : `FAIL ${threw}`;
 }
 
-// 14. install() is built but NOT wired into the cron — the credential and the
-// trigger wait for the safety net (PM-07 rollback, PM-15 policy). The entry's
-// scheduled handler must still call only checkOnce.
+// 14. the cron wires check → runInstall, but runInstall is ARMED only with a
+// token: no CF_API_TOKEN, no install, whatever the policy says
 {
   const entry = readFileSync(new URL("../src/updater.js", import.meta.url), "utf8");
-  out.installNotArmed = /checkOnce\(/.test(entry) && !/\binstall\(/.test(entry)
-    ? "ok (cron checks only; install not auto-invoked)" : "FAIL the cron calls install()";
+  const wired = /checkOnce\(/.test(entry) && /runInstall\(/.test(entry);
+  // a fresh manifest, a reader on the old version, automatic policy soaked —
+  // decide() would say install, but an unarmed env must not
+  const manifest = { version: "new · x", released_at: "2020-01-01T00:00:00Z", requiresAttention: false, minUpdaterVersion: 1, bundle: {}, assets: [], bindings: [] };
+  let installed = false;
+  const deps = { cf: async () => ({}), fetchReader: async () => ({ ok: true, status: 200, json: async () => ({ build: "old · x" }) }), install: async () => { installed = true; return { outcome: "ok" }; } };
+  const dbUnarmed = { prepare: () => ({ bind() { return this; }, async first() { return { mode: "automatic", soak_days: 0 }; }, async run() {} }) };
+  const r = await runInstall({ env: { DB: dbUnarmed }, manifest, now: 2_000_000_000_000, deps });
+  out.cronArmedGate = wired && r.armed === false && installed === false
+    ? "ok (cron calls runInstall; no token → armed false, nothing installed)"
+    : `FAIL wired=${wired} ${JSON.stringify(r)} installed=${installed}`;
 }
 
 // ---- health check + rollback (PM-07) ------------------------------------
@@ -383,6 +391,67 @@ const runRB = async (opts) => {
     ? "ok (broken release rolled back, v1 serving again)" : `FAIL ${JSON.stringify(b.r)} events=${b.events}`;
   out.rollbackInstallThrew = c.r.outcome === "failed" && c.events.length === 0 && /boom/.test(c.rec.detail) ? "ok (failed, site unharmed, no rollback)" : `FAIL ${JSON.stringify(c.r)}`;
   out.rollbackNoOscillate = d.r.outcome === "failed" && d.events.length === 0 ? "ok (already broken: no pointless rollback)" : `FAIL ${JSON.stringify(d.r)} events=${d.events}`;
+}
+
+// 18b. runInstall armed — decide says install → lock, installWithRollback,
+// clear install-now, release; decide says skip → nothing; lock held → skip
+function cronDb(state) {
+  return { prepare(sql) {
+    let args = [];
+    const self = {
+      bind(...a) { args = a; return self; },
+      async first() {
+        if (/FROM updater_policy/.test(sql)) return state.policy;
+        if (/last_install_version, last_install_result FROM updater_status/.test(sql)) return state.lastInstall;
+        if (/SELECT key FROM readers/.test(sql)) return state.readerKey ? { key: state.readerKey } : null;
+        return null;
+      },
+      async run() {
+        if (/UPDATE install_lock SET held_at = \?, holder/.test(sql)) {
+          const [now, , stale] = args;
+          if (state.lock.held_at === 0 || state.lock.held_at < stale) { state.lock.held_at = now; return { meta: { changes: 1 } }; }
+          return { meta: { changes: 0 } };
+        }
+        if (/UPDATE install_lock SET held_at = 0/.test(sql)) { state.lock.held_at = 0; state.released = true; return { meta: { changes: 1 } }; }
+        if (/INSERT INTO readers/.test(sql)) { state.readerKey = args[0]; return { meta: { changes: 1 } }; }
+        if (/UPDATE updater_status SET last_install_at/.test(sql)) { state.recorded = { at: args[0], version: args[1], result: args[2] }; return { meta: { changes: 1 } }; }
+        if (/UPDATE updater_policy SET install_now_version = ''/.test(sql)) { state.policy.install_now_version = ""; state.clearedNow = true; return { meta: { changes: 1 } }; }
+        return { meta: { changes: 0 } };
+      },
+    };
+    return self;
+  } };
+}
+const MAN = { version: "new · x", released_at: "2020-01-01T00:00:00Z", requiresAttention: false, minUpdaterVersion: 1, bundle: {}, assets: [], bindings: [] };
+const readerAt = (build) => async () => ({ ok: true, status: 200, json: async () => ({ build }) });
+{
+  // (a) automatic + soaked → installs, records, clears a matching install-now, releases the lock
+  const state = { policy: { mode: "automatic", soak_days: 0, install_now_version: "new · x" }, lastInstall: {}, lock: { held_at: 0 }, readerKey: "hk" };
+  let got = null;
+  // the fake stands in for installWithRollback, so it drives recordOutcome the
+  // way the real one does — that is the wiring runInstall is responsible for
+  const deps = { cf: async () => ({}), fetchReader: readerAt("old · x"), install: async (o) => { got = o; await o.recordOutcome({ at: o.now, version: o.manifest.version, outcome: "ok", detail: "" }); return { outcome: "ok" }; } };
+  const r = await runInstall({ env: { DB: cronDb(state), CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" }, manifest: MAN, now: 2_000_000_000_000, deps });
+  out.cronInstalls = r.armed && r.action === "install" && r.outcome === "ok" &&
+    got?.manifest === MAN && got.readerKey === "hk" && got.script === "bookworm" &&
+    state.recorded?.result === "ok" && state.clearedNow === true && state.lock.held_at === 0 && state.released
+    ? "ok (installs, records, clears install-now, releases the lock)" : `FAIL ${JSON.stringify(r)} got=${!!got} rec=${JSON.stringify(state.recorded)} cleared=${state.clearedNow}`;
+}
+{
+  // (b) pinned → decide skips, nothing installs, lock never taken
+  const state = { policy: { mode: "pinned", soak_days: 0, install_now_version: "" }, lastInstall: {}, lock: { held_at: 0 }, readerKey: "hk" };
+  let installed = false;
+  const r = await runInstall({ env: { DB: cronDb(state), CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" }, manifest: MAN, now: 2_000_000_000_000, deps: { cf: async () => ({}), fetchReader: readerAt("old · x"), install: async () => { installed = true; return {}; } } });
+  out.cronSkips = r.armed && r.action === "skip" && /pinned/.test(r.reason) && !installed && state.lock.held_at === 0
+    ? "ok (pinned: skipped, nothing installed, lock untouched)" : `FAIL ${JSON.stringify(r)} installed=${installed}`;
+}
+{
+  // (c) lock already held → skip this tick
+  const state = { policy: { mode: "automatic", soak_days: 0, install_now_version: "" }, lastInstall: {}, lock: { held_at: 1_999_999_999_999 }, readerKey: "hk" };
+  let installed = false;
+  const r = await runInstall({ env: { DB: cronDb(state), CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" }, manifest: MAN, now: 2_000_000_000_000, deps: { cf: async () => ({}), fetchReader: readerAt("old · x"), install: async () => { installed = true; return {}; } } });
+  out.cronLocked = r.armed && r.action === "locked" && !installed
+    ? "ok (a held lock skips the tick)" : `FAIL ${JSON.stringify(r)} installed=${installed}`;
 }
 
 // 19. the service binding the health check reaches the reader through
