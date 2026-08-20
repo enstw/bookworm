@@ -189,10 +189,15 @@ fi
 # auto-install with no rollback is exactly the risk the split defends against,
 # so the token stays out until the thing that catches a bad release is in.
 if [[ -n "${UPDATER_CF_API_TOKEN:-}" ]]; then
-  echo "==> pushing CF_API_TOKEN secret to bookworm-updater"
+  echo "==> arming bookworm-updater (CF_API_TOKEN + CF_ACCOUNT_ID)"
   printf '%s' "$UPDATER_CF_API_TOKEN" | $UPDATER secret put CF_API_TOKEN
+  # the account the token acts on — not secret, but instance-specific, so it
+  # travels as a secret beside the token. Defaults to the account this deploy
+  # already runs against (the reader and updater share it).
+  printf '%s' "${UPDATER_CF_ACCOUNT_ID:-$CLOUDFLARE_ACCOUNT_ID}" | $UPDATER secret put CF_ACCOUNT_ID
+  echo "    (armed — the updater will now install by policy; watch /admin 更新)"
 else
-  echo "    (UPDATER_CF_API_TOKEN not set — the install path stays unarmed until PM-07/PM-15)"
+  echo "    (UPDATER_CF_API_TOKEN not set — the updater checks but never installs)"
 fi
 
 # optional: Web Push (新書通知) — without the key the feature just reports

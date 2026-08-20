@@ -579,21 +579,28 @@ together (PM-00 fact 4), nothing kept on the instance. The outcome (`ok`,
 `rolled-back`, `failed`) lands in `updater_status` for the panel (PM-08), a
 rolled-back one included.
 
-`install()`/`installWithRollback()` are **built and proven but not armed**:
-the `scheduled` handler still only checks, the Cloudflare token is not on the
-production updater (`deploy.sh` pushes it only when `UPDATER_CF_API_TOKEN` is
-set), and nothing calls the install loop automatically. The credential and the
-trigger arrive with PM-15's policy — never before the safety net that catches
-a bad release. Both proven live against throwaway targets: the shipped
-`install()` took the real published release (42 assets, 7.6 MB, ~15 s) with
-every binding and secret surviving; the shipped `installWithRollback()`
-installed a deliberately broken release (its `/api/version` answered while
-`/api/books` 500'd — the exact failure `BUILD`-only checks miss), detected it,
-and put the previous version back serving, then kept a good one.
-`scripts/test-updater.mjs` pins every piece against fakes — verify, metadata,
-the single-asset refusal, the dropped-secret throw, the health-check verdicts,
-the deployments API, key minting, and the whole rollback decision matrix
-including the no-oscillation guard.
+The whole loop is **wired but gated on a token the owner sets**. The
+`scheduled` handler checks every interval and then calls `runInstall()`,
+which returns at once unless `CF_API_TOKEN` (and `CF_ACCOUNT_ID`) are on the
+updater — so the machine is complete and inert until the owner arms it, and
+arming is the single act of setting `UPDATER_CF_API_TOKEN` (`deploy.sh` pushes
+both secrets, the account id defaulting to the one the deploy already uses).
+Armed, `runInstall()` reads the running version through the reader, the policy
+and last install from D1, asks `decide()`, and — only on "install" — takes the
+lock and runs `installWithRollback()`, recording the outcome and clearing a
+satisfied install-now. The credential arrives with the safety net, never
+before it: the token that can rewrite the reader is placed only once the
+health check and rollback that catch a bad release are in. Every piece is
+proven live against throwaway targets — `install()` took the real published
+release (42 assets, 7.6 MB, ~15 s) with every binding and secret surviving;
+`installWithRollback()` installed a deliberately broken release (its
+`/api/version` answered while `/api/books` 500'd) and put the previous version
+back — and `scripts/test-updater.mjs` pins every piece against fakes: verify,
+metadata, the single-asset refusal, the dropped-secret throw, the health-check
+verdicts, the deployments API, key minting, the rollback matrix with its
+no-oscillation guard, and the armed cron loop's own gate (no token → nothing
+installs) and glue (installs on "install", skips on "skip", skips a held
+lock).
 
 **When an install may happen** (PM-15, `decide()`) is the decision layer, kept
 separate from how (PM-05) and did-it-work (PM-07): three modes — **automatic**
@@ -613,8 +620,9 @@ passed in — so the table test covers the whole matrix; it decides only, and
 `install_lock` in D1: `acquireInstallLock()` is a conditional `UPDATE` whose
 row-count is the verdict (atomic in the database, not a read-then-write race),
 and a lock older than the stale window is reclaimed so a died-mid-install
-isolate cannot wedge the updater. Still not armed — nothing calls `decide()`
-yet; PM-08 wires it into the cron and stores the policy it reads.
+isolate cannot wedge the updater. `decide()` is called by PM-08's
+`runInstall()` in the cron; the policy it reads is stored by the `/admin`
+panel.
 
 ## Reader frontend
 
