@@ -11,7 +11,7 @@
     "split": "node scripts/split-book.mjs",
     "publish-book": "node scripts/publish-book.mjs",
     "package": "node scripts/vendor.mjs && node scripts/package-release.mjs out/release",
-    "test": "node scripts/test-renovate-policy.mjs && node scripts/test-deploy-policy.mjs && node scripts/test-shell-policy.mjs && node scripts/vendor.mjs && node scripts/test-slug.mjs && node scripts/test-split-core.mjs && node scripts/test-release-notes.mjs && node scripts/test-release-manifest.mjs && node scripts/test-wasm-frontend.mjs && node scripts/test-matcha-fst.mjs && node scripts/test-worker-pool.mjs && node scripts/test-push-crypto.mjs && node scripts/test-auth-e2e.mjs && node scripts/test-push-api-e2e.mjs && node scripts/test-shelf-admin-e2e.mjs && node scripts/test-sync-e2e.mjs && node scripts/test-vertical-e2e.mjs && node scripts/test-bg-e2e.mjs && node scripts/test-testlog-e2e.mjs && node scripts/test-tts-stream-e2e.mjs && node scripts/test-tts-stream-e2e.mjs chain",
+    "test": "node scripts/test-renovate-policy.mjs && node scripts/test-deploy-policy.mjs && node scripts/test-shell-policy.mjs && node scripts/vendor.mjs && node scripts/test-slug.mjs && node scripts/test-split-core.mjs && node scripts/test-release-notes.mjs && node scripts/test-release-manifest.mjs && node scripts/test-updater.mjs && node scripts/test-wasm-frontend.mjs && node scripts/test-matcha-fst.mjs && node scripts/test-worker-pool.mjs && node scripts/test-push-crypto.mjs && node scripts/test-auth-e2e.mjs && node scripts/test-push-api-e2e.mjs && node scripts/test-shelf-admin-e2e.mjs && node scripts/test-sync-e2e.mjs && node scripts/test-vertical-e2e.mjs && node scripts/test-bg-e2e.mjs && node scripts/test-testlog-e2e.mjs && node scripts/test-tts-stream-e2e.mjs && node scripts/test-tts-stream-e2e.mjs chain",
     "test:ci-policy": "node scripts/test-renovate-policy.mjs && node scripts/test-deploy-policy.mjs",
     "test:push": "node scripts/test-push-crypto.mjs && node scripts/test-push-api-e2e.mjs",
     "test:tts": "node scripts/test-tts-core.mjs",
@@ -27,6 +27,7 @@
     "test:slug": "node scripts/test-slug.mjs",
     "test:relnotes": "node scripts/test-release-notes.mjs",
     "test:release": "node scripts/test-release-manifest.mjs",
+    "test:updater": "node scripts/test-updater.mjs",
     "test:offline": "node scripts/test-offline-e2e.mjs"
   },
   "devDependencies": {

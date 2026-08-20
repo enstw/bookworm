@@ -10,3 +10,9 @@ ADMIN_TOKEN=dev-token
 # with the key — push stays disabled until both are set, so an install
 # always announces itself under its own contact.
 # VAPID_SUBJECT=mailto:you@example.com
+
+# Where bookworm-updater looks for releases (PM-04). It reads
+# <UPSTREAM_URL>/manifest.json every check interval; without it the updater
+# does nothing. Not read by the reader Worker — set it on the updater with:
+# wrangler secret put UPSTREAM_URL --config wrangler.updater.jsonc
+# UPSTREAM_URL=https://github.com/<owner>/<repo>/releases/latest/download/

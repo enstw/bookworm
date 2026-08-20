@@ -29,19 +29,23 @@ if ! $W d1 list --json | grep -q '"name": *"bookworm"'; then
 fi
 DB_ID=$($W d1 list --json | python3 -c \
   'import json,sys; print(next(d["uuid"] for d in json.load(sys.stdin) if d["name"]=="bookworm"))')
-# Point wrangler.jsonc at THIS account's database. The id is committed, so a
-# fresh clone carries the original author's — rewrite whatever is there, not
-# just the placeholder, or every self-install would stop at the check below.
+# Point both Worker configs at THIS account's database — the reader and the
+# updater bind the same D1 (that shared binding is what carries the updater's
+# report to /admin). The id is committed, so a fresh clone carries the
+# original author's — rewrite whatever is there, not just the placeholder, or
+# every self-install would stop at the check below.
 # portable in-place sed (BSD sed needs -i '', GNU sed needs -i without arg)
-if ! grep -q "\"database_id\": \"${DB_ID}\"" wrangler.jsonc; then
-  sed -i.bak -E "s/(\"database_id\"): *\"[^\"]*\"/\1: \"${DB_ID}\"/" wrangler.jsonc
-  rm -f wrangler.jsonc.bak
-  echo "    (rewrote database_id in wrangler.jsonc — commit it to keep diffs quiet)"
-fi
-grep -q "\"database_id\": \"${DB_ID}\"" wrangler.jsonc || {
-  echo "error: wrangler.jsonc does not carry database_id ${DB_ID}" >&2
-  exit 1
-}
+for CONFIG in wrangler.jsonc wrangler.updater.jsonc; do
+  if ! grep -q "\"database_id\": \"${DB_ID}\"" "$CONFIG"; then
+    sed -i.bak -E "s/(\"database_id\"): *\"[^\"]*\"/\1: \"${DB_ID}\"/" "$CONFIG"
+    rm -f "${CONFIG}.bak"
+    echo "    (rewrote database_id in ${CONFIG} — commit it to keep diffs quiet)"
+  fi
+  grep -q "\"database_id\": \"${DB_ID}\"" "$CONFIG" || {
+    echo "error: ${CONFIG} does not carry database_id ${DB_ID}" >&2
+    exit 1
+  }
+done
 echo "    database_id = ${DB_ID}"
 
 echo "==> ensuring R2 bucket 'bookworm-books'"
@@ -136,6 +140,25 @@ URL=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' <<<"$DEPLOY_OUT" | head -1)
 
 echo "==> pushing ADMIN_TOKEN secret"
 printf '%s' "$ADMIN_TOKEN" | $W secret put ADMIN_TOKEN
+
+# The second Worker (docs/pull-mode-updates.md, PM-04): cron-only, no fetch
+# handler, binds the same D1. It is deployed here so the two-Worker topology
+# exists on every instance from the first deploy. UPDATER=pnpm exec wrangler
+# --config wrangler.updater.jsonc targets it for both deploy and secrets.
+UPDATER="$W --config wrangler.updater.jsonc"
+echo "==> deploying bookworm-updater"
+$UPDATER deploy >/dev/null
+# UPSTREAM_URL is the updater's whole configuration for now (the Cloudflare
+# API token that rewrites the reader arrives with the install path, PM-05).
+# Without it the updater's cron records "UPSTREAM_URL 未設定" and does
+# nothing — the same graceful-off shape as VAPID below, so a deploy that has
+# not been told where upstream is stays inert rather than failing.
+if [[ -n "${UPSTREAM_URL:-}" ]]; then
+  echo "==> pushing UPSTREAM_URL secret to bookworm-updater"
+  printf '%s' "$UPSTREAM_URL" | $UPDATER secret put UPSTREAM_URL
+else
+  echo "    (UPSTREAM_URL not set — the updater checks nothing until it is)"
+fi
 
 # optional: Web Push (新書通知) — without the key the feature just reports
 # "push not configured" and everything else works

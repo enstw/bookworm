@@ -1,0 +1,30 @@
+{
+  // bookworm-updater: the second Worker (docs/pull-mode-updates.md, "What an
+  // instance looks like"). Cron-only — no `assets`, no routes, no fetch
+  // handler in src/updater.js — so nothing outside Cloudflare can reach it.
+  // Deployed by scripts/deploy.sh alongside the reader, against the same
+  // account and the same D1.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bookworm-updater",
+  "main": "src/updater.js",
+  "compatibility_date": "2026-06-01",
+  // PM-05's asset upload base64-encodes with Buffer, which needs this; set
+  // now so the install path is a pure logic addition with no runtime change.
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bookworm",
+      // The SAME database the reader binds — the updater writes status where
+      // /admin reads it. Account-specific: scripts/deploy.sh rewrites this to
+      // the account's own id, the same as it does for wrangler.jsonc.
+      "database_id": "7d14d581-406b-40fd-bd3e-94078ebd50d8"
+    }
+  ],
+  // The check interval (the plan's "Checking and installing run at different
+  // rates"): ~15 min, read-only, too cheap to ration. PM-08 splits this into
+  // a check cadence and a policy-driven install; until then the cron only
+  // checks.
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "observability": { "enabled": true }
+}
