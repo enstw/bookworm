@@ -591,6 +591,16 @@ and upstream's `requiresAttention` flag — not eliminated.
 
 Ticket ids are stable; `needs` is a hard ordering.
 
+**How this lands.** Not one PR per ticket. The ruleset guards `main` and
+nothing else, so a long-lived `pull-mode` branch can take ticket-sized
+commits directly and a PR goes up only at a phase boundary — which is
+already where `needs` stops binding. Six gates instead of seventeen, and
+the history loses nothing, because a rebase-merge carries the commits
+through intact. The cost is one rebase per phase: `main` moves on its own
+whenever a deploy lands a release ledger, the required check is strict, and
+a phase PR that sat through a deploy has to be brought up to date before it
+can go in.
+
 ### Phase 0 — the spike that can kill this
 
 **PM-00 · prove a Worker can install 12 MB of assets**
@@ -614,6 +624,10 @@ Ticket ids are stable; `needs` is a hard ordering.
 - Needs from outside the repo, which no clone carries: a Cloudflare account
   to burn and an API token for it. Everything else this plan needs is in the
   tree.
+- No PR, and no branch. The spike is a throwaway Worker on an account that
+  gets deleted after it; what comes back is numbers, not code. They arrive
+  as one commit against this document, and the gate has nothing to say
+  about them.
 
 ### Phase 1 — upstream starts shipping a product
 
