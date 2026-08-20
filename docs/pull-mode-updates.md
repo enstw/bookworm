@@ -551,14 +551,37 @@ numbers, because when it goes wrong, *what version is upstream* is a lie.
 ### To be measured, not assumed
 
 **R8 · can a Worker finish the first install at all?** 42 files, 12 MB,
-base64-inflated, against the free plan's 50-subrequest ceiling and whatever
-CPU and wall-clock a scheduled invocation actually gets. 42 against 50 is
-not headroom, it is a coincidence — if the upload session costs one
-subrequest per file this fails on arithmetic alone, before any limit that
-needs measuring. Ordinary updates
-touch a handful of files and are clearly fine; **the 12 MB first install is
-the open question, and it can invalidate the design.** Phase 0 exists for
-exactly this.
+base64-inflated, against a free plan whose published numbers are no longer
+a guess: 50 external subrequests per invocation, 1,000 to bound services,
+15 minutes of wall clock, 128 MB of memory, and **10 ms of CPU — the same
+10 ms for a Cron Trigger as for an HTTP request.**
+
+Subrequests turn out not to be the ceiling. The upload session batches:
+`POST …/assets-upload-session` answers with `buckets` of hashes, each
+bucket ships in one `POST /workers/assets/upload?base64=true`, and the
+whole install is *B*+2 calls rather than 44. Files whose hash the account
+already holds are left out of `buckets` altogether, which is why ordinary
+updates were never the worry.
+
+That batching is not ours to rely on, though. Wrangler's uploader reads
+`wrangler_single_asset_uploads` out of the session's own JWT
+(`wrangler-dist/cli.js:142613`) and, when the server sets it, uploads one
+file per request to `/workers/assets/upload/{hash}`. That is the
+one-subrequest-per-file case restored — server-side, unannounced, and with
+42 files it breaks 50. What R8 has to ask is no longer whether a file costs
+a subrequest, but what turns that mode on.
+
+**The ceiling that is left is the 10 ms.** Waiting on the network is not
+billed, but inflating 12 MB into ~16 MB of base64 is, and so is any hashing
+the manifest wants. Neither obviously fits. Two things already in this plan
+soften it: upstream computes the asset hashes and ships them in the
+manifest (PM-01), so the updater hashes nothing; and the 12 MB first
+install belongs to the one-shot bootstrap (PM-10), where a human and a
+laptop are present by definition, leaving the updater the incremental
+updates it was always going to be fine at. **The 12 MB first install is
+still the open question** — but if 10 ms cannot carry it, the fallback
+PM-00 already names stops being a contingency and becomes the design.
+Phase 0 exists for exactly this.
 
 **R9 · one release, N sites down.** A green release can still break every
 instance at once. Mitigated by jitter on the cron, a minimum-age policy,
@@ -571,9 +594,11 @@ Ticket ids are stable; `needs` is a hard ordering.
 ### Phase 0 — the spike that can kill this
 
 **PM-00 · prove a Worker can install 12 MB of assets**
-- Why: R8. Every other ticket assumes this works. Find out before building
-  anything on top of it — including how many subrequests an upload session
-  actually costs and what a scheduled invocation gets to spend.
+- Why: R8. Every other ticket assumes this works. The published limits have
+  already narrowed it: an upload session batches into buckets, so subrequests
+  are not the ceiling and **the 10 ms of CPU a scheduled invocation gets
+  is** — with a second question behind it, what makes the API fall back to
+  one file per request.
 - Answer R4's open fact on the same trip: **does `keep_bindings` compose
   with an assets-upload token in one PUT?** The decision that the updater
   holds no reader secret rests entirely on it. If they do not compose, R4
@@ -582,8 +607,10 @@ Ticket ids are stable; `needs` is a hard ordering.
   older one, and do assets travel back with it? That decides whether
   rollback is three API calls or a second copy of the bundle.
 - Done when: a throwaway Worker has uploaded the real `public/` to a real
-  account, with the measured numbers written down. If it cannot, the answer
-  is a bootstrap-assisted first install, and the plan below changes shape.
+  account, with the measured numbers written down — CPU milliseconds burnt,
+  how many buckets came back, and whether the session's JWT carried
+  `wrangler_single_asset_uploads`. If it cannot, the answer is a
+  bootstrap-assisted first install, and the plan below changes shape.
 - Needs from outside the repo, which no clone carries: a Cloudflare account
   to burn and an API token for it. Everything else this plan needs is in the
   tree.
