@@ -27,7 +27,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 
 | Ticket | Phase | State |
 |---|---|---|
-| PM-00 · prove a Worker can install 12 MB of assets | 0 | wip |
+| PM-00 · prove a Worker can install 12 MB of assets | 0 | done |
 | PM-01 · publish the artifact and its manifest | 1 | wip |
 | PM-02 · the manifest becomes a stated contract | 1 | — |
 | PM-03 · a release can demand a human | 1 | — |
@@ -143,7 +143,8 @@ that never change: `fonts/ENSFont.woff2` is 6.2 MB, `icons/icon-source.png`
 `app.js` (104 KB), `sw.js`, `app.css`, `i18n.js`.
 
 Cloudflare's upload session takes a manifest and answers with the files it
-is missing, so **the first install moves 12 MB and a typical update moves
+is missing — missing from *this script's* store, PM-00 measured, not the
+account's — so **the first install moves 12 MB and a typical update moves
 about 200 KB**. Sizing the design around 12 MB per update would have been
 sizing it around the wrong number.
 
@@ -161,7 +162,9 @@ that publishes them, described by a manifest:
   "version":     "9a3855f · 2026-08-19 15:53",  // the reader's BUILD, verbatim
   "released_at": "2026-08-19T15:53:00+08:00",   // the soak clock, see below
   "worker":  { "path": "worker.js", "sha256": "…" },
-  "assets":  [ { "path": "/app.js", "sha256": "…", "size": 106496 }, … ],
+  // cfhash is what the upload session keys on: blake3(base64(bytes)+ext),
+  // 32 hex — not sha256. Shipped so the updater never computes it (PM-00).
+  "assets":  [ { "path": "/app.js", "sha256": "…", "cfhash": "…", "size": 106496 }, … ],
   "bundle":  { "url": "…/bookworm-9a3855f.zip", "sha256": "…" },
 
   // the artifact declares the SHAPE of what it needs; the instance owns the
@@ -496,12 +499,13 @@ an option dismissed without its case stated gets proposed again:
   dashboard slip, a Cloudflare-side incident, a future code path that
   forgets to pass the flag. For those the recovery is the bootstrap
   (PM-10), and the owner is present by definition. Accepted.
-- **Independence from a platform feature.** This is the serious one, and it
-  is unmeasured. `keep_bindings` has to compose with the assets-upload
-  token in the *same* PUT, and nothing in this tree proves it does.
-  Mirroring leans only on setting bindings, which is the most basic thing
-  the API does. PM-00 measures it; **if the two do not compose, this
-  decision inverts** and the updater mirrors after all.
+- **Independence from a platform feature.** This was the serious one, and
+  it is now measured: `keep_bindings` composes with the assets-upload
+  token in the *same* PUT (PM-00, fact 1). A PUT naming only the assets
+  binding left D1, R2, the secrets and a plain var bound, live, and
+  readable by the new code. Mirroring leans only on setting bindings, the
+  most basic thing the API does, and that is no longer an advantage over a
+  thing proven to work. The decision stands.
 - **Knowing the deployed binding set rather than trusting it.**
   Neutralised. `GET /workers/scripts/{name}/secrets` returns secret
   *names*, so the updater can assert after every PUT that `ADMIN_TOKEN` and
@@ -599,10 +603,20 @@ are present by definition, and the updater owns the incremental updates it
 was always going to be fine at — ~200 KB and a handful of files, three
 orders of magnitude inside the same budget.
 
-PM-00 still runs, but it confirms rather than discovers, and what it is
-really there for is the two facts no proxy can supply: whether
-`keep_bindings` composes with the assets-upload token, and what turns
-`wrangler_single_asset_uploads` on.
+PM-00 ran, and the real hardware corrected the proxy in both directions.
+One pass of sha256 + `Buffer` base64 over the full artifact costs ≈18 ms on
+the edge core, about 2× the M2's 9.4 — and the 10 ms is **not a
+per-invocation cap**. It is a sustained rate with a burst budget of roughly
+two seconds of CPU that refills over minutes: every Worker-side install and
+every burn ran past 10 ms and completed, a 4-file update cost 22–26 ms, the
+full 12.6 MB install completed at an estimated 0.2–0.3 s, and only once
+the budget was spent did invocations die — at exactly 10.0 ms. The numbers
+and their provenance are under PM-00. The conclusion above survives on a
+different footing: the first install no longer *cannot* run in the updater,
+it *should not*, because it would rest on enforcement behaviour Cloudflare
+does not document and a budget one slow `unzipSync` (≈150 ms) eats a
+tenth of. PM-10 keeps it, and the updater keeps the ~200 KB path it runs
+three orders of magnitude inside.
 
 **R9 · one release, N sites down.** A green release can still break every
 instance at once. Mitigated by jitter on the cron, a minimum-age policy,
@@ -654,6 +668,94 @@ can go in.
   gets deleted after it; what comes back is numbers, not code. They arrive
   as one commit against this document, and the gate has nothing to say
   about them.
+- **Measured, 2026-08-20.** On the production account rather than a burner
+  — throwaway scripts `pm00-target`, `pm00-spike`, `pm00-probe`, a D1 and
+  an R2 bucket, all deleted after — with raw API calls shaped like wrangler
+  4.120's uploader, and CPU read from `workersInvocationsAdaptive`.
+
+  | first install, laptop → `pm00-target` | |
+  |---|---|
+  | manifest | 42 files, 12,663,040 B |
+  | upload session | 3 buckets × 14 files, all 42 asked for, 2.0 s |
+  | bucket uploads, base64 multipart | 3.9 s + 3.3 s + 6.7 s |
+  | script PUT with the completion JWT | 1.0 s; live from outside ~3 s later |
+  | whole install | 17 s wall |
+
+  | the typical update, 4 files / 172,903 B | laptop | from the Worker |
+  |---|---|---|
+  | session asks for | the 4 changed files, 3 buckets (2+1+1) | same |
+  | session → PUT returned | 5.7 s | 4.6 s |
+  | external API calls | 5 | 5 — session, 3 buckets, PUT |
+  | CPU | — | **22–26 ms**, completed |
+
+  The facts, in the order the ticket asked for them:
+  1. **`keep_bindings` composes with the assets-upload token.** A PUT whose
+     `bindings` named only `ASSETS`, with `keep_bindings: ["secret_text",
+     "d1", "r2_bucket", "plain_text"]` and the session's completion JWT,
+     left all six bindings in place: `GET …/settings` listed them, the new
+     code read `ADMIN_TOKEN` and queried D1, and served the new `app.js`
+     beside the untouched font. R4 stands. A code-only release needs no
+     session at all — `keep_assets: true` plus `keep_bindings` redeployed
+     the spike with its assets intact.
+  2. **The server turns `wrangler_single_asset_uploads` on, per account.**
+     The session JWT carries `use_sql: true, edge_kv: false,
+     bulk_upload_from_worker: false, wrangler_single_asset_uploads: false`,
+     a `manifest_id`, the account id and a one-hour `exp`; the completion
+     JWT carries no feature claims. Single-asset mode is the `edge_kv`
+     storage backend's upload path and nothing the client sends selects it.
+     The updater reads the claim and **refuses** when it is true — 42
+     single uploads would breach the 50-subrequest cap. `bulk_upload_from_worker:
+     false` did not stop bulk uploads from the Worker.
+  3. **The 10 ms is a sustained rate with a burst budget, not a cap.**
+     Every Worker-side install and burn ran past 10 ms and completed —
+     eleven sampled invocations totalling 1.1 s of CPU inside 80 s — until
+     an 863 ms one was killed (`exceededResources`); from then on every
+     invocation died at exactly 10.0 ms, a 24 ms one included. Nine minutes
+     later ≈1.8 s ran again before the kill returned. Budget ≈ 2 s,
+     refilling over minutes; observed, not documented. The 10.0 ms kill
+     point is also what says the account is on the free tier.
+  4. **Rollback is one call and carries the assets** (PM-07). `GET
+     …/versions` listed both versions; `POST …/deployments` with the older
+     `version_id` at 100 % returned in 0.9 s, and 13 s later the edge served
+     the old `BUILD` *and the old `app.js` bytes*. No second copy of the
+     bundle is needed.
+
+  CPU on the real hardware, per invocation over the 10.9 MB zip of all 42
+  files (each row includes ≈18 ms to read the zip from the assets binding):
+
+  | | ms |
+  |---|---|
+  | fflate `unzipSync`, ×1 / ×2 | 149 / 203 |
+  | `crypto.subtle.digest('SHA-256')`, ×1 | 24 |
+  | `Buffer` base64, ×1 | 31 |
+  | chunked `btoa`, ×1 | 92 |
+  | sha256 + `Buffer` base64, ×1 / ×4 / ×16 | 31 / 70 / 319 |
+  | sha256 + `Buffer` base64, ×64 | killed at 863 |
+
+  One pass over the artifact is ≈18 ms against the M2's 9.4, and `btoa`
+  costs ~5× `Buffer`, not 20×. Inflating the zip is the expensive step —
+  130–150 ms, more than hashing and encoding together — which is the
+  argument for publishing the files individually beside the zip, so an
+  update fetches the four it needs and inflates nothing. The full 12.6 MB
+  install from the Worker completed on a fresh budget: 8.0 s wall, 3
+  buckets, 5 API calls; analytics did not sample its row, and the burns
+  bound it near 0.2–0.3 s.
+
+  Three things the spike was not asked and answered anyway:
+  - **The asset store is per script.** A session for a fresh script name
+    asked for all 42 files the account already held. The bootstrap always
+    moves the full 12 MB (PM-10); the per-update saving is real only
+    against the script's own previous version.
+  - **A Worker cannot fetch another Worker over `workers.dev`**: error 1042
+    — HTTP 404, body `error code: 1042` — for 12 s of polling, while the
+    same Worker reached the production custom domain in 186 ms. PM-07's
+    health check goes through the instance's custom domain or a service
+    binding to the reader; `workers.dev` is not a usable instance URL.
+  - **The session manifest's hash is not sha256.** wrangler hashes
+    `blake3(base64(bytes) + extension)` and keeps 32 hex characters
+    (`wrangler-dist/cli.js:155999`). PM-01 ships it in the manifest as
+    `cfhash`, beside the sha256, so the updater never computes blake3 —
+    12 MB of it is CPU nobody has measured.
 
 ### Phase 1 — upstream starts shipping a product
 
@@ -663,7 +765,9 @@ can go in.
   script
 - Why: nothing produces a deployable bundle today — the bundler's output is
   uploaded and discarded in one motion. The manifest carries the asset
-  hashes, the binding shape, the assets config and the migrations.
+  hashes — the sha256 the updater verifies *and* the `cfhash` the upload
+  session keys on (PM-00) — the binding shape, the assets config and the
+  migrations.
 - Also cuts the GitHub release the artifact rides on: `deploy.yml` marks a
   deploy with a tag and a ledger today, and creates no release for the app.
 - Also drop `icons/icon-source.png` from what gets served — it is the input
@@ -734,9 +838,18 @@ can go in.
   config applied from the manifest (R6). `https://`-only, enforcing the
   trust anchor. This is the updater's incremental path only — the 12 MB
   first install is PM-10's, per R8.
-- Base64 with `Buffer`, never chunked `btoa`. Same bytes, 20× the CPU, and
-  the budget is 10 ms — the bench is under R8. A future reviewer will find
-  the `btoa` form more idiomatic, which is why the reason is written down.
+- Base64 with `Buffer`, never chunked `btoa`. Same bytes, 5× the CPU on the
+  edge core (20× on the laptop) — the numbers are under PM-00. A future
+  reviewer will find the `btoa` form more idiomatic, which is why the
+  reason is written down.
+- The session JWT's claims are read before anything is uploaded, and
+  `wrangler_single_asset_uploads: true` is a refusal with a reason on the
+  panel, not a fallback (PM-00, fact 2). A release that changes no asset
+  skips the session: `keep_assets: true`.
+- Five API calls per update — session, the buckets, the PUT — and a CPU
+  cost of 22–26 ms measured, which runs on the burst budget rather than
+  inside the nominal 10 ms; a once-a-day invocation three orders of
+  magnitude under the budget is the margin this path lives on.
 - Done when: an instance has taken a real upstream release end to end, and
   a test asserts against `GET /workers/scripts/{name}/secrets` that every
   binding and secret *name* the reader held before the PUT is still bound
@@ -778,14 +891,21 @@ can go in.
   and carries no admin power if it leaks.
 - The updater also needs the instance's own public URL to check it at all —
   the third and last value in its configuration, beside the two secrets.
-  It is instance-specific, so the manifest cannot carry it.
+  It is instance-specific, so the manifest cannot carry it. It cannot be a
+  `workers.dev` hostname: a Worker fetching another Worker there gets error
+  1042 (PM-00). Either the instance has a custom domain, or the updater
+  carries a service binding to the reader and checks through that — a
+  binding shape, so it belongs in the updater's own configuration, not the
+  manifest.
 - Includes the pre-install baseline: a rollback decision compares against
   the state before the install, or an already-broken site oscillates.
-- Open: *what puts the previous version back*. Cloudflare's version
-  rollback restores script and assets together and costs the instance no
-  storage; keeping the previous bundle in the instance's own R2 depends on
-  no plan feature but re-runs the very install path that may be what broke.
-  PM-00 measures which is available before this is written.
+- *What puts the previous version back* is Cloudflare's own version
+  rollback — measured on the free tier (PM-00, fact 4): one `POST
+  …/deployments` naming the previous `version_id`, script and assets
+  restored together, the old bytes serving 13 s later, no storage on the
+  instance's side. Keeping the previous bundle in the instance's R2 would
+  have re-run the very install path that may be what broke; it is not
+  needed.
 - Done when: a deliberately broken release installs, fails the check, and
   the site is serving the previous version again with the failure on the
   panel — with nobody touching it.
@@ -853,10 +973,13 @@ can go in.
   and set secrets the first time, and no Worker can do that before it
   exists. A single local command is the honest answer: one-time friction
   traded against permanent friction.
-- It also owns the first install of `public/`, which R8 measured out of a
-  scheduled invocation's CPU budget. That is not extra scope: the bootstrap
-  is already the one moment a human and a laptop are present, and it is
-  already placing the Workers those assets belong to.
+- It also owns the first install of `public/`, which R8 keeps out of the
+  updater — not because it cannot run there (PM-00 ran it), but because it
+  would lean on an undocumented burst allowance. That is not extra scope:
+  the bootstrap is already the one moment a human and a laptop are present,
+  and it is already placing the Workers those assets belong to. The store
+  is per script, so this install always moves the full 12 MB; from a laptop
+  it took 17 s.
 - Done when: an empty Cloudflare account becomes a working instance — two
   Workers, D1, R2, the secrets, a first reader key, and `public/` served —
   from one command, with no fork and no clone of this repo.
