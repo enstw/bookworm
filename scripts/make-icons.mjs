@@ -1,9 +1,13 @@
-// Generates the committed PWA icons from public/icons/icon-source.png.
+// Generates the committed PWA icons from artwork/icon-source.png.
 //
 // The source artwork is Bookworm's green library dragon, generated with the
 // imagegen skill to echo .github/banner.png. Keep the source file so a future
 // resize never falls back to the platform-dependent 📖 emoji this script used
-// to render through Chromium.
+// to render through Chromium. It lives OUTSIDE public/ on purpose: nothing
+// fetches it, and at 2.9 MB it was a quarter of every deploy's upload and of
+// the release artifact (package-release.mjs). Moved rather than listed in an
+// .assetsignore, because wrangler serves the directory wholesale and an
+// ignore file would put the exclusion in two places that drift.
 //
 // Requires ffmpeg (already needed by the TTS streaming test):
 //
@@ -16,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "public", "icons");
-const SOURCE = join(OUT, "icon-source.png");
+const SOURCE = join(ROOT, "artwork", "icon-source.png");
 
 if (!existsSync(SOURCE)) {
   console.error(`missing source artwork: ${SOURCE}`);

@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ledgerHistory, pendingRelease } from "./release-notes.mjs";
+import { attentionHistory, ledgerHistory, pendingRelease, renderEntry } from "./release-notes.mjs";
 
 const repo = mkdtempSync(join(tmpdir(), "bw-relnotes-"));
 const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
@@ -111,6 +111,24 @@ try {
   write("e.txt", "x");
   commit("reader: dated\n\nRelease-Note: x", "2020-01-02T23:30:00+00:00");
   eq("dateFromCommitNotClock", pendingRelease(repo).date, "2020-01-03");
+
+  // the entry text is one function for both the ledger and the release body
+  const dated = pendingRelease(repo);
+  eq("renderEntry", renderEntry(dated),
+    `## 2020-01-03 — \`${dated.build}\`\n\n> x\n\n- reader: dated (\`${dated.commits[0].split(" ")[0]}\`)\n`);
+
+  // Requires-Attention: the whole history, oldest first, each entry dated
+  // by its own commit's stamp — an instance that skipped the middle release
+  // must still see it. The indented-example rule applies here too.
+  write("f.txt", "x");
+  commit("worker: needs a new secret\n\nRequires-Attention: set NEW_SECRET before installing\n\nCo-Authored-By: Someone <s@example.com>",
+    "2020-02-01T04:00:00+00:00");
+  write("g.txt", "x");
+  commit("docs: explain attention\n\n    Requires-Attention: NOT-A-REAL-ONE\n");
+  const att = attentionHistory(repo);
+  eq("attentionReasons", att.map((a) => a.reason), ["set NEW_SECRET before installing"]);
+  eq("attentionStamp", att[0]?.version, `${git("rev-parse", "--short", "HEAD~1")} · 2020-02-01 12:00`);
+  eq("attentionCommit", att[0]?.commit, git("rev-parse", "--short", "HEAD~1"));
 } finally {
   rmSync(repo, { recursive: true, force: true });
 }

@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      blake3-wasm:
+        specifier: 2.1.5
+        version: 2.1.5
       fflate:
         specifier: 0.8.3
         version: 0.8.3

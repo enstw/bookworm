@@ -115,15 +115,13 @@ echo "==> stamping build version into app.js and worker.js"
 # worker carries the same stamp so /api/version can tell a running shell that
 # a newer one exists.
 if git diff --quiet -- public/app.js src/worker.js 2>/dev/null; then
-  # Asia/Taipei: the stamp is read off the shelf by a reader whose day is +8 —
-  # a bare UTC date can point at yesterday's deploy. The time comes from the
-  # COMMIT, not from the clock: this string is baked into public/app.js, which
-  # ships as an asset, so a wall clock would give the same commit a different
-  # hash every minute and no one could re-derive the artifact from the source.
+  # The one formula lives in scripts/build-id.mjs (commit time, Asia/Taipei —
+  # the why is there). The release manifest's `version` comes from the same
+  # function, and an updater compares the two strings verbatim, so a second
+  # formula here would be a fleet-wide "update available" that never clears.
   # Announcements do not notice — announceBuild keys its exactly-once record on
   # the short SHA alone (src/worker.js), never on this timestamp.
-  BUILD_ID="$(git rev-parse --short HEAD) · $(TZ=Asia/Taipei git log -1 \
-    --format=%cd --date=format-local:'%Y-%m-%d %H:%M')"
+  BUILD_ID="$(node scripts/build-id.mjs)"
   sed -i.bak "s/^const BUILD = \"dev\"/const BUILD = \"${BUILD_ID}\"/" public/app.js src/worker.js
   rm -f public/app.js.bak src/worker.js.bak
   trap 'git checkout -- public/app.js src/worker.js' EXIT

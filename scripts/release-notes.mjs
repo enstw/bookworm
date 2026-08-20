@@ -124,6 +124,56 @@ export function pendingRelease(cwd = root) {
   };
 }
 
+// One ledger entry, as text: the reader's `> ` lines, then the commit ledger.
+// RELEASES.md and the GitHub release body (package-release.mjs) both print
+// it, so the two can never word the same release differently.
+export function renderEntry(release) {
+  const items = release.commits.map((l) => {
+    const [sha, ...subject] = l.split(" ");
+    return `- ${subject.join(" ")} (\`${sha}\`)`;
+  });
+  const notes = release.notes.map((n) => `> ${n}`);
+  return `## ${release.date} — \`${release.build}\`\n\n` +
+    (notes.length ? `${notes.join("\n")}\n\n` : "") +
+    `${items.join("\n")}\n`;
+}
+
+// Every commit in history that demanded a human at each instance — the
+// `Requires-Attention: <why>` trailer, written by whoever ships a change no
+// updater can take on its own (a new secret, a non-additive migration). The
+// WHOLE history, not the pending range: an instance that skipped several
+// releases must still see the one in the middle that needed it, so the
+// manifest carries them all and the updater compares each entry's version
+// string against its own BUILD. Same column-0 rule as Release-Note, for the
+// same reason. Oldest first.
+export function attentionHistory(cwd = root) {
+  const git = gitIn(cwd);
+  const log = orNull(git)("log", "--reverse", "--format=%h%x1f%B%x1e") ?? "";
+  const out = [];
+  for (const record of log.split("\x1e")) {
+    const [sha, body] = record.trim().split("\x1f");
+    if (!sha || body === undefined) continue;
+    for (const line of body.split("\n")) {
+      const m = line.match(/^Requires-Attention:[ \t]*(.+?)\s*$/);
+      if (m) out.push({ commit: sha, version: stampOf(git, sha), reason: m[1] });
+    }
+  }
+  return out;
+}
+
+// The build stamp of a commit, in the form deploy.sh and /api/version use —
+// the same computation as scripts/build-id.mjs, reached through git alone so
+// a synthetic test repo can exercise it.
+function stampOf(git, sha) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Taipei", hourCycle: "h23",
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    }).formatToParts(new Date(git("log", "-1", "--format=%cI", sha))).map((p) => [p.type, p.value]),
+  );
+  return `${git("rev-parse", "--short", sha)} · ${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
 // Past releases, read back out of the ledger. Reader notes are the `> ` lines
 // under a heading — one place they are both human-legible in the file and
 // machine-legible here, so the shipped JSON needs no second source of truth.
