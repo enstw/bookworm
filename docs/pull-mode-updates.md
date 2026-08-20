@@ -99,6 +99,13 @@ likely place for a hole, so it is the worst possible home for a credential
 that can rewrite the Worker. The updater has no fetch handler at all:
 nothing outside Cloudflare can invoke it.
 
+This pillar is about the Cloudflare token alone. It says nothing about
+`ADMIN_TOKEN` or the VAPID pair: those stay in the reader under any design,
+because the reader is what serves `/admin` and sends push. The split does
+not move them, and copying them into the updater would not move them
+either. Why the updater nevertheless gets no copy is a separate argument,
+and it is not a security one — see R4.
+
 **It must survive a brick.** If the updater lived inside the reader and a
 bad release killed the reader, the updater would die with it and there
 would be nothing left to roll back *with*. Separated, the updater is
@@ -106,8 +113,10 @@ untouched by whatever it just installed, and can put the previous version
 back.
 
 **It barely changes.** The updater does not follow the reader's feature
-work. Keeping it small and stable makes "update the updater" a rare,
-deliberate act rather than a weekly event.
+work, and under R4's decision it does not follow the reader's *secret*
+surface either — a mirrored secret set would mean every new reader secret
+is also a change to the updater. Keeping it small and stable makes "update
+the updater" a rare, deliberate act rather than a weekly event.
 
 ## One update, end to end
 
@@ -119,10 +128,10 @@ flowchart TD
   V -->|yes| D["download bundle · verify each file's sha256<br/>against the manifest"]
   D --> MIG["run migrations — additive only,<br/>BEFORE the script swap"]
   MIG --> A["assets upload session → send only<br/>the files Cloudflare says it lacks"]
-  A --> P["PUT script: bundle + bindings + assets token"]
-  P --> H{"health check<br/>/api/version, /api/books"}
-  H -->|green| OK["announce 新版本已上線 · record"]
-  H -->|red| RB["roll back to the previous version<br/>· push the failure to the phone"]
+  A --> P["PUT script: bundle + binding shapes<br/>+ keep_bindings + assets token"]
+  P --> H{"poll /api/version until<br/>the new BUILD answers"}
+  H -->|green| OK["record 'installed' in D1 — the reader's<br/>own cron announces 新版本已上線"]
+  H -->|red| RB["roll back · record the failure<br/>for the reader to push"]
 ```
 
 ### Why the asset step is smaller than it sounds
@@ -216,7 +225,7 @@ Where each knob lives:
 
 | Setting | Home | Who can change it |
 |---|---|---|
-| `UPSTREAM_URL`, `CF_API_TOKEN` | updater's Worker secrets | the Cloudflare account holder |
+| `UPSTREAM_URL`, `CF_API_TOKEN`, the instance's own URL — no reader secret (R4) | updater's Worker secrets | the Cloudflare account holder |
 | policy: auto / notify-only / pinned / minimum age | D1 | `/admin` (admin token) |
 | update history and status | D1 | read-only display |
 
@@ -366,6 +375,36 @@ looks identical to a quiet one is the same defect as R10, one screen over.
 One flag serves all three messages, so this is not machinery built for a
 single notification.
 
+### The reader sends, the updater only records
+
+All four messages are sent by the **reader** Worker, off a cron of its own,
+reading rows the updater wrote. The updater holds no VAPID key and never
+pushes.
+
+This is not a preference. R10's message — *the updater has not reported in
+N days* — cannot come from the updater, because a dead updater cannot
+report its own death. Something else has to watch that timestamp, and the
+only other thing on the account is the reader, which already holds the
+VAPID pair. Once the reader is the sender for one of the four, making it
+the sender for all four costs nothing and keeps R4's decision intact.
+
+It is also the pattern the design already chose for the install button
+(*An install button, without giving the updater a door*), pointed the other
+way: one Worker writes a row, the other acts on it, and neither can call
+the other.
+
+And it deletes machinery rather than adding it. `announceBuild` carries a
+`?build=` parameter and a 30-second retry today for one reason: an
+*external* caller fires it and the edge may still be serving the previous
+isolate, which would announce its own stamp, find it already recorded and
+report success (`src/worker.js:900`, measured on the deploy of e96279f). A
+reader that announces itself from its own cron is by definition the new
+version, so the staleness dance is not ported into the updater — it goes
+away.
+
+The cost is one `scheduled` handler on the reader. No new credential
+anywhere.
+
 ## Risks
 
 ### Fatal — the design is not defensible without these
@@ -388,9 +427,41 @@ check plus automatic rollback is what spends it.
 
 **R4 · bindings and secrets wiped on upload.** The script upload API
 replaces the binding set wholesale. One omission unbinds D1 or R2, or
-clears `ADMIN_TOKEN` and locks the owner out of their own `/admin`. The
-updater must rebuild the complete set from values it holds, or use the
-API's keep-bindings path — and this needs a test that fails loudly.
+clears `ADMIN_TOKEN` and locks the owner out of their own `/admin`.
+
+**Decided: `keep_bindings`.** The upload sends the binding *shapes* the
+manifest declares, plus `keep_bindings: ["secret_text", "secret_key"]`, and
+Cloudflare keeps what is already on the script. The updater therefore holds
+**no reader secret at all**: `CF_API_TOKEN`, `UPSTREAM_URL` and the
+instance's own URL (PM-07) are its entire configuration.
+
+The reason is **not** that this is safer against an attacker. It is not.
+`ADMIN_TOKEN` is *derivable* from `CF_API_TOKEN`: whoever can rewrite the
+Worker can rewrite it to print its own secrets, or simply delete the check
+at `src/worker.js:972`. Handing a weaker capability to a principal that
+already holds the stronger one widens nothing, and R1 already concedes that
+an updater compromise loses everything. The only security difference is
+second-order — reading a secret you hold is silent, while deriving one
+means a new version, a changed `BUILD` stamp and an audit-log entry.
+
+The reason is that mirroring invents two failures in *ordinary* operation:
+
+- **Rotation reverts silently.** Change `ADMIN_TOKEN` on the reader, forget
+  the updater's copy, and the next release re-installs the old value. The
+  rotation appears to succeed and then un-happens days later, with nothing
+  in the system saying so.
+- **This risk becomes live on every update instead of impossible.**
+  Mirroring re-asserts the whole secret set from the updater's copy on
+  every PUT, so a copy that is empty, wrong, or one rotation stale destroys
+  the live secrets. `keep_bindings` cannot destroy what it never sends.
+
+Accepted in exchange, and real: the updater cannot supply a **new** secret
+that a release needs — which is exactly what `requiresAttention` is for —
+and it cannot repair a secret set that some other accident cleared. The
+recovery path for a cleared secret is the bootstrap (PM-10), not the
+updater. A test that fails loudly if any PUT drops a binding is still
+required; it is now asserting something the API is supposed to guarantee,
+which is the cheap kind of test to keep.
 
 **R5 · migration ordering.** New code needing a new column requires the
 migration to land *before* the script swap; a failed swap then leaves old
@@ -481,9 +552,13 @@ Ticket ids are stable; `needs` is a hard ordering.
 - Done when: the reader Worker holds no Cloudflare credential.
 
 **PM-05 · the install path**
-- Why: manifest → verify → upload session → script PUT, with the binding
-  set rebuilt from instance-held values (R4) and the assets config applied
-  from the manifest (R6). `https://`-only, enforcing the trust anchor.
+- Why: manifest → verify → upload session → script PUT, sending the binding
+  shapes the manifest declares plus `keep_bindings` (R4), with the assets
+  config applied from the manifest (R6). `https://`-only, enforcing the
+  trust anchor.
+- Done when: an instance has taken a real upstream release end to end, and
+  a test asserts that every binding and secret the reader held before the
+  PUT is still bound after it — the loud failure R4 asks for.
 - Needs: PM-00, PM-01, PM-04
 
 **PM-06 · migrations before the swap, additive-only**
@@ -494,8 +569,25 @@ Ticket ids are stable; `needs` is a hard ordering.
 
 **PM-07 · health check and automatic rollback**
 - Why: R3. Spends what the split bought.
+- The check is `/api/version` **polled** until the new `BUILD` answers, not
+  the two-route check sketched earlier: `/api/books` is 401 without an admin
+  Bearer or a reader key, and after R4 the updater holds neither. Polling is
+  required regardless — the edge can still serve the previous version
+  seconds after the PUT returns (`src/worker.js:900`), so a check that runs
+  immediately reads the old worker and calls it green.
+- The updater also needs the instance's own public URL to check it at all —
+  the third and last value in its configuration, beside the two secrets.
+  It is instance-specific, so the manifest cannot carry it.
 - Includes the pre-install baseline: a rollback decision compares against
   the state before the install, or an already-broken site oscillates.
+- Open: *what puts the previous version back*. Cloudflare's version
+  rollback restores script and assets together and costs the instance no
+  storage; keeping the previous bundle in the instance's own R2 depends on
+  no plan feature but re-runs the very install path that may be what broke.
+  PM-00 measures which is available before this is written.
+- Done when: a deliberately broken release installs, fails the check, and
+  the site is serving the previous version again with the failure on the
+  panel — with nobody touching it.
 - Needs: PM-05
 
 **PM-15 · the rules for when an install may happen**
@@ -517,11 +609,19 @@ Ticket ids are stable; `needs` is a hard ordering.
   install, and queues an "install now" request through D1 rather than
   opening a callable surface on the updater.
 - Ships the default: automatic, after 2 days.
+- Done when: the panel's running version, upstream version, last-check time
+  and last-install outcome all come from D1 rows the updater wrote, and the
+  reader Worker makes no outbound request to upstream on any code path.
 
 **PM-14 · alarm on a silent updater**
 - Why: R10. A cron-only Worker fails invisibly, and stale data on the panel
   is indistinguishable from fresh data. `/admin` warns past a staleness
   threshold, and the owner gets told.
+- The alarm cannot originate in the updater — a dead updater cannot report
+  its own death. The reader raises it, which is what makes the reader the
+  sender for the other three messages too.
+- Done when: an updater stopped by hand produces a warning on the panel and
+  a push to the owner, within a few times the check interval.
 - Needs: PM-08
 
 **PM-09 · the owner's phone, and only the owner's**
@@ -529,7 +629,14 @@ Ticket ids are stable; `needs` is a hard ordering.
   messages are the owner's business, not every reader's. Adds
   `readers.is_owner` and routes the waiting-for-you, failed-and-rolled-back
   and updater-silent pushes to it; 新版本已上線 stays a broadcast.
+- All four are sent by the reader off its own cron, from rows the updater
+  wrote (see *The reader sends, the updater only records*). The updater
+  holds no VAPID key and never pushes.
 - With no device flagged, nothing is sent, and `/admin` says that plainly.
+- Done when: an install reaches every subscriber while a rolled-back
+  install reaches only the owner's devices; with no device flagged, neither
+  the owner-only messages nor a fallback broadcast goes out, and `/admin`
+  says why.
 - Needs: PM-08
 
 ### Phase 4 — bootstrap and docs
