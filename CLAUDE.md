@@ -4,4 +4,4 @@ The contextual instructions for AI agents working in this repository are in [DES
 
 Read `DESIGN.md` for project overview, architecture, conventions, and commands.
 
-To install or deploy a fork, follow [INSTALLATION.md](./INSTALLATION.md) — an install manual written to be executed by an agent.
+To install an instance, follow [INSTALLATION.md](./INSTALLATION.md) — an install manual written to be executed by an agent.

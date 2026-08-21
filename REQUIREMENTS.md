@@ -106,7 +106,7 @@ row on `/admin`. Ids asserted by clients are never trusted — the v1 model
 enumeration) was accepted for a trusted circle and retired when the repo
 went public. Cloudflare Access was considered and rejected: its redirect
 auth breaks the installed-PWA offline machinery and cannot ship with a
-self-hosted fork.
+self-hosted instance.
 
 **NFR-4 · No lock-in of content.** Original `.txt` files are kept by the
 owner (optionally archived in a GitHub release); everything in R2/D1 is
