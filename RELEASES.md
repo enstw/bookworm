@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-21 — `c92cadfacb87`
+
+- bootstrap: pin the updater's install target, and prove the fleet with two (`c92cadf`)
+
 ## 2026-08-21 — `c907f0efc579`
 
 - docs: absorb the pull-mode plan into DESIGN, delete the plan doc (`c907f0e`)
