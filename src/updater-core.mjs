@@ -213,33 +213,21 @@ const listSecrets = async (cf, script) =>
 // every binding and secret that was on the script before the PUT is still
 // there after it. Throws before the PUT on any verify/claim failure, so a bad
 // release never reaches the swap; throws after it if anything was dropped.
-export async function install({ manifest, cf, script, fetchFn = fetch, db }) {
-  // the R4 baseline: what is bound before the swap
-  const [preBindings, preSecrets] = await Promise.all([listBindings(cf, script), listSecrets(cf, script)]);
-
-  // download and verify BEFORE touching the script
-  const res = await fetchFn(manifest.bundle.url, { cache: "no-store", redirect: "follow" });
-  if (!res.ok) throw new Error(`bundle HTTP ${res.status}`);
-  const files = await verifyBundle(manifest, new Uint8Array(await res.arrayBuffer()));
-
-  // the upload session: Cloudflare answers with only the file hashes it lacks
-  // from THIS script's store (PM-00), so a code-only release uploads nothing
+// Push a release's assets to a script's asset store and return the completion
+// token the script PUT must carry. Shared by the update path (install) and the
+// first install (bootstrap, PM-10): the upload session lists only the hashes
+// the store lacks, so an update ships the few changed files and a fresh script
+// ships all 42 — the same B+2 calls either way (PM-00). base64 via Buffer,
+// never chunked btoa (5× the edge CPU, PM-00). Refuses the one-file-per-request
+// mode a server-set wrangler_single_asset_uploads would force (PM-00 fact 2).
+export async function uploadAssets({ cf, script, manifest, files }) {
   const session = await cf(`/workers/scripts/${script}/assets-upload-session`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ manifest: Object.fromEntries(manifest.assets.map((a) => [a.path, { hash: a.cfhash, size: a.size }])) }),
   });
-  // read the session JWT's claims before uploading anything. When the server
-  // sets wrangler_single_asset_uploads it wants one file per request, which
-  // breaks the 50-subrequest budget at 42 files — a refusal with a reason,
-  // not a fallback (PM-00 fact 2). It is a per-account server-side claim, so
-  // it can only be discovered here, at run time.
   const claims = decodeJwt(session.jwt);
   if (claims.wrangler_single_asset_uploads)
     throw new Error("upstream session set wrangler_single_asset_uploads; refusing (see PM-00)");
-
-  // upload each bucket, base64 via Buffer — never chunked btoa, which costs 5×
-  // the CPU on the edge core (PM-00). The last response carries the
-  // completion token; an empty bucket list leaves it as the session JWT.
   const byHash = new Map(manifest.assets.map((a) => [a.cfhash, a]));
   let completion = session.jwt, uploaded = 0;
   for (const bucket of session.buckets ?? []) {
@@ -255,6 +243,21 @@ export async function install({ manifest, cf, script, fetchFn = fetch, db }) {
     const r = await cf(`/workers/assets/upload?base64=true`, { method: "POST", body: fd }, session.jwt);
     if (r.jwt) completion = r.jwt;
   }
+  return { completion, uploaded, buckets: (session.buckets ?? []).length };
+}
+
+export async function install({ manifest, cf, script, fetchFn = fetch, db }) {
+  // the R4 baseline: what is bound before the swap
+  const [preBindings, preSecrets] = await Promise.all([listBindings(cf, script), listSecrets(cf, script)]);
+
+  // download and verify BEFORE touching the script
+  const res = await fetchFn(manifest.bundle.url, { cache: "no-store", redirect: "follow" });
+  if (!res.ok) throw new Error(`bundle HTTP ${res.status}`);
+  const files = await verifyBundle(manifest, new Uint8Array(await res.arrayBuffer()));
+
+  // upload the assets, then swap: the session lists only the hashes this
+  // script's store lacks, so a code-only release ships nothing (PM-00)
+  const { completion, uploaded, buckets } = await uploadAssets({ cf, script, manifest, files });
 
   // migrations BEFORE the swap (R5): the new code needs its columns present,
   // and additive-only means the old code survives them if the swap rolls back.
@@ -285,7 +288,7 @@ export async function install({ manifest, cf, script, fetchFn = fetch, db }) {
   return {
     version: manifest.version,
     uploaded,
-    buckets: (session.buckets ?? []).length,
+    buckets,
     keptBindings: keepBindings,
     secretsHeld: postSecrets.map((s) => s.name),
   };

@@ -39,7 +39,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-08 · the panel and the policy | 3 | done — panel + cron split; armed by the owner's token |
 | PM-14 · alarm on a silent updater | 3 | done |
 | PM-09 · the owner's phone, and only the owner's | 3 | done — channel + all four messages |
-| PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | — |
+| PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | done — one file, proven live |
 | PM-16 · updating the updater | 4 | — |
 | PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md` | 4 | — |
 | PM-12 · DESIGN.md absorbs the decisions; this document goes away | 4 | — |
@@ -1247,6 +1247,32 @@ can go in.
 - Done when: an empty Cloudflare account becomes a working instance — two
   Workers, D1, R2, the secrets, a first reader key, and `public/` served —
   from one command, with no fork and no clone of this repo.
+- **Landed, 2026-08-21.** `src/bootstrap-core.mjs` is the orchestration —
+  find-or-create D1 and R2, apply `schema.sql`, upload the reader (its `public/`
+  from the published release bundle, verified) with FULL bindings and no
+  `keep_bindings`, set `ADMIN_TOKEN` + the VAPID pair, enable the workers.dev
+  subdomain, place the cron-only updater with its D1 + `READER` service binding
+  and `UPSTREAM_URL` **but no `CF_API_TOKEN`** (it comes up unarmed), and mint
+  the owner's first key. Idempotent for PM-16's re-run: an existing D1, bucket
+  and owner key are reused, not clobbered. A just-created D1 lags before it is
+  bindable (Cloudflare 10021), so the script PUT retries that transient.
+- The delivery is the plan's "one command, no clone": `package-release.mjs`
+  esbuild-bundles `scripts/bootstrap.mjs` into ONE self-contained file (fflate
+  inlined, only `node:` builtins external) with `schema.sql` and the bundled
+  updater baked in, and `publish-release.mjs` attaches it to every release. The
+  owner downloads that file and runs it with three env vars — the reader
+  manifest is fetched from `UPSTREAM_URL` at run time, so the 12 MB `public/`
+  never rides in the bootstrap. The reader release manifest/zip are UNCHANGED —
+  the bootstrap is its own asset, so PM-01's strict contract is untouched.
+- Measured live: the **shipped** bootstrap stood up a throwaway instance
+  (`pm10-*`, then the packaged file itself as `pm10b-*`) from the real
+  published release — D1/R2 created, schema applied, reader serving
+  `/index.html` and answering `/api/version`, `/api/books` `{books:[]}` with
+  the minted owner key and `401` without, updater present with cron `*/15` and
+  secrets `[UPSTREAM_URL]` only — in **~27 s**, then torn down; the account was
+  left with only its production resources. `scripts/test-bootstrap.mjs` pins the
+  orchestration against fakes (fresh account, unarmed updater, idempotent
+  re-run, the 10021 retry, and that `schema.sql` still splits clean).
 
 **PM-16 · updating the updater**
 - Why: `minUpdaterVersion` can refuse a release outright (*Three

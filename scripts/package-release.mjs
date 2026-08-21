@@ -58,6 +58,7 @@ import { hash as blake3 } from "blake3-wasm";
 import { buildId, root } from "./build-id.mjs";
 import { attentionHistory, pendingRelease, renderEntry } from "./release-notes.mjs";
 import { parseMigrations, isAdditive } from "../src/migrations.mjs";
+import { createRequire } from "node:module";
 
 // Bumped by hand when the install contract changes in a way an older updater
 // cannot follow (PM-16); an updater below this number refuses the release
@@ -117,6 +118,50 @@ export function repoFromGit(cwd = root) {
   const m = url.match(/github\.com[:/]([^/]+\/[^/.]+)(?:\.git)?$/);
   if (!m) throw new Error(`cannot read owner/name out of origin (${url}); pass --repo`);
   return m[1];
+}
+
+// The self-contained bootstrap asset (PM-10). One file the owner downloads from
+// the release and runs to stand up a whole instance — so it bakes in what a
+// clone would read from the tree: schema.sql and the updater's bundled source,
+// plus the two crons and the updater's compat flags. esbuild inlines fflate (the
+// only dependency in the path) so `node bootstrap.mjs` needs nothing installed.
+// The updater is bundled the same wrangler dry-run the reader uses; it carries
+// no BUILD stamp (only UPDATER_VERSION), so it is reproducible from source with
+// no staging. Written to <outDir>/bootstrap.mjs.
+function buildBootstrap({ outDir, cwd }) {
+  const require = createRequire(import.meta.url);
+  const esbuild = require(createRequire(require.resolve("wrangler/package.json")).resolve("esbuild"));
+
+  const upd = mkdtempSync(join(tmpdir(), "bookworm-boot-upd-"));
+  try {
+    execFileSync("pnpm", ["exec", "wrangler", "deploy", "--dry-run", "--outdir", upd, "--config", "wrangler.updater.jsonc"], {
+      cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, CI: "true", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" },
+    });
+    const updaterSource = readFileSync(join(upd, "updater.js"), "utf8");
+    const reader = readWranglerConfig(cwd);
+    const updater = JSON.parse(readFileSync(join(cwd, "wrangler.updater.jsonc"), "utf8").replace(/^\s*\/\/.*$/gm, ""));
+    const payload = {
+      schema: readFileSync(join(cwd, "schema.sql"), "utf8"),
+      updaterSource,
+      readerCrons: reader.triggers?.crons ?? [],
+      updaterCrons: updater.triggers?.crons ?? [],
+      updaterFlags: updater.compatibility_flags ?? ["nodejs_compat"],
+    };
+    // the entry imports the library form and hands it the baked payload; esbuild
+    // follows the import into src/ and bundles the whole thing to one file
+    const entry = join(upd, "entry.mjs");
+    writeFileSync(entry,
+      `import { runBootstrap } from ${JSON.stringify(join(cwd, "scripts", "bootstrap.mjs"))};\n` +
+      `runBootstrap(${JSON.stringify(payload)});\n`);
+    esbuild.buildSync({
+      entryPoints: [entry], outfile: join(outDir, "bootstrap.mjs"),
+      bundle: true, format: "esm", platform: "node", target: "node20", legalComments: "none",
+    });
+    return { updaterBytes: Buffer.byteLength(updaterSource), size: statSync(join(outDir, "bootstrap.mjs")).size };
+  } finally {
+    rmSync(upd, { recursive: true, force: true });
+  }
 }
 
 export function packageRelease({ outDir, repo, cwd = root }) {
@@ -198,6 +243,8 @@ export function packageRelease({ outDir, repo, cwd = root }) {
     writeFileSync(join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
     writeFileSync(join(outDir, zipName), zip);
     writeFileSync(join(outDir, "notes.md"), renderEntry(pending));
+    // the one-shot bootstrap, published beside the manifest (PM-10)
+    buildBootstrap({ outDir, cwd });
     return manifest;
   } finally {
     rmSync(stage, { recursive: true, force: true });
