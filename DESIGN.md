@@ -307,7 +307,7 @@ ticked, with a green status.
 
 Every deploy also publishes what it deployed, as a GitHub release per
 commit (`release-<sha>`: `manifest.json` + `bookworm-<sha>.zip`), because
-the pull-mode design (`docs/pull-mode-updates.md`) has every instance's
+the pull-mode design has every instance's
 updater poll `releases/latest/download/manifest.json`. `scripts/package-
 release.mjs` builds it from a **staging copy** of `src/` and `public/` —
 stamps the copies, runs wrangler's `--dry-run --outdir` bundler on them (the
@@ -522,7 +522,7 @@ buffer a copy through `arrayBuffer()` so it holds one connection, not two.
 
 ### The second Worker: bookworm-updater
 
-An instance is two Workers on one account (`docs/pull-mode-updates.md`).
+An instance is two Workers on one account.
 `bookworm` is everything above — public routes, uploads, `/admin`, the
 reader cron. `bookworm-updater` (`src/updater.js`, `wrangler.updater.jsonc`)
 is **cron-only: no fetch handler, no route**, so nothing outside Cloudflare
@@ -552,6 +552,19 @@ does not even do that. `checkOnce` takes a store and a fetch seam, so
 `scripts/test-updater.mjs` exercises it with no account; `scripts/deploy.sh`
 deploys it beside the reader (`--config wrangler.updater.jsonc`) and rewrites
 its `database_id` the same way.
+
+**Trust is TLS, not a signature.** The manifest and bundle are trusted because
+they came over `https://` from the release host, and nothing else — there is no
+code signature. A signature would be checked by the updater's own verification
+code, which is itself part of what a release replaces (R2), and R1 already
+concedes that whoever can rewrite the reader Worker has already won; a signature
+checked by replaceable code guards against nothing that model does not already
+give away. So a malicious or broken release is unrecoverable **by update** — a
+one-way door — and the mitigations are placed elsewhere: the health check and
+automatic rollback catch a release that breaks *this* instance (R3), and the
+minimum-age soak plus upstream's zero-soak canary catch one that breaks the
+fleet, before most instances ever fetch it (R9). Neither eliminates the risk;
+they are what a design with no diff-review and no signature can still afford.
 
 **The install path** (PM-05, `install()` in `updater-core.mjs`) is the
 updater's one risky act: download the release bundle, `sha256`-verify every
@@ -1020,8 +1033,8 @@ tree, so the repo never grows a second, diverging install path.
   keeps solely in the updater. The mode/soak controls write `updater_policy`
   (`POST …/update/policy`), and 立即安裝 queues the request in D1
   (`…/update/install-now`) for the updater to pick up on its next check —
-  never a call into the updater, which has no door (the plan's "An install
-  button, without giving the updater a door"). Absent an updater the panel
+  never a call into the updater, which has no door (an install
+  button, without giving the updater a door). Absent an updater the panel
   reads "never checked" and does no harm. A **silent updater** is warned about
   (PM-14, R10): a cron-only Worker fails invisibly — token expired, cron
   stopped, all identical from outside — so the reader's own cron
@@ -1435,10 +1448,6 @@ page instead of hiding it.
 - Playback speed control (`audio.playbackRate`) in the player bar.
 - File the iOS scrollBy-doubles bug at bugs.webkit.org (the on-device
   matrix evidence is in the owner's archive; low priority).
-- Pull-mode updates: one upstream, many self-hosted instances — an instance
-  is a Cloudflare account rather than a fork, and a cron-only second Worker
-  installs the releases it decides to take. Plan, trust model and risks in
-  `docs/pull-mode-updates.md`.
 
 ## Code conventions
 

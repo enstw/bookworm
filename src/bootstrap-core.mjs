@@ -16,7 +16,7 @@
 // one-time credential — the owner can delete it the moment the bootstrap
 // returns, and deliberately does NOT install it as the updater's CF_API_TOKEN.
 // The instance comes up UNARMED (no automatic updates) until the owner sets
-// that secret themselves (the plan's arming step).
+// that secret themselves (the design's arming step).
 //
 // Idempotent by construction, because PM-16 re-runs it to replace the updater
 // in place: find-or-create for D1/R2, CREATE IF NOT EXISTS schema, and a reader
@@ -187,7 +187,7 @@ export async function bootstrap({
 
     // the reader bundle — from the published release, verified against its
     // manifest before a byte of it is uploaded (download integrity; TLS to
-    // upstream is the trust anchor, the plan's trust section)
+    // upstream is the trust anchor, the design's trust section)
     const res = await fetchFn(readerManifest.bundle.url, { cache: "no-store", redirect: "follow" });
     if (!res.ok) throw new Error(`reader bundle HTTP ${res.status}`);
     const files = await verifyBundle(readerManifest, new Uint8Array(await res.arrayBuffer()));

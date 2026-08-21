@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The release manifest as a stated contract (PM-02 in docs/pull-mode-updates.md).
+// The release manifest as a stated contract (PM-02).
 //
 // N instances will read manifest.json unattended, each through an updater
 // written against the table below. A field that is dropped, renamed or

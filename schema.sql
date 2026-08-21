@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS announced_builds (
 -- The updater's report to the reader, one row (id = 1). bookworm-updater is
 -- cron-only and holds the one trust relationship with upstream; it writes
 -- here what it last saw, and /admin reads it (never contacting upstream
--- itself — see docs/pull-mode-updates.md, "What /admin shows"). Both Workers
+-- itself — see DESIGN.md). Both Workers
 -- bind the same D1, which is what carries the report across the split.
 -- last_check_ok distinguishes fresh data from stale: on a failed check only
 -- last_check_at/ok/detail move, so upstream_version keeps the last known-good

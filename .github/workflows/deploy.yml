@@ -157,7 +157,7 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           VAPID_PRIVATE_JWK: ${{ secrets.VAPID_PRIVATE_JWK }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
-      # The release artifact (docs/pull-mode-updates.md, PM-01): the bundle
+      # The release artifact (DESIGN.md, PM-01): the bundle
       # an instance's updater installs, plus the manifest that describes it,
       # as a GitHub release per deploy — `releases/latest/download/` is what
       # every instance polls. After deploy.sh, so only a build that is live
