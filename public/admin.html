@@ -1338,6 +1338,14 @@
         ...(d.stale ? [el("div", { class: "msg err", text: t("up.silent") })] : []),
         upRow(t("up.running"), d.running || "dev"),
         upRow(t("up.upstream"), upToDate ? t("up.current") : (d.upstream.version || t("up.unknown"))),
+        // which feed this machine follows — display only; changing it is an
+        // owner act with Cloudflare credentials, never this page (R1). An
+        // older updater never wrote the url: show — rather than a false alarm.
+        ...(d.upstream.url
+          ? [upRow(t("up.source"), d.upstream.url.replace(/^https:\/\//, "").replace(/\/releases\/latest\/download\/?$/, ""))]
+          : /未設定/.test(d.lastCheck.detail)
+            ? [el("div", { class: "msg err", text: t("up.sourceUnset") })]
+            : [upRow(t("up.source"), "—")]),
         // PM-09: a release the updater will not take without you — shown here so
         // an instance with no owner device flagged still says why nothing moved
         ...(d.waiting.version && d.waiting.version !== d.running

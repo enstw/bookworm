@@ -546,7 +546,14 @@ What landed in PM-04 is the split plus the read-only half of the cron: every
 enforced (TLS is the whole trust anchor), `cache: "no-store"` because
 `latest/download` is a stable URL with changing contents — and writes what it
 saw to the single `updater_status` row, where `/admin` will read it (PM-08)
-without ever contacting upstream itself. A failed check keeps the last
+without ever contacting upstream itself. The configured `upstream_url` rides
+every write — success and failure — so the panel can name the feed this
+machine follows in plain language, or warn loudly when none is set (the
+orphan state is a warning, not a detail string). Display-only, on purpose:
+if `/admin` could *set* upstream, a stolen `ADMIN_TOKEN` would become code
+execution — point the feed anywhere, install now — so changing it stays an
+owner act with Cloudflare credentials (bootstrap re-run or a deploy
+dispatch), never the panel (R1). A failed check keeps the last
 known-good `upstream_version` and only moves `last_check_at`/`ok`/`detail`, so
 a transient outage reads as "checked N ago, failed" rather than erasing the
 version. It installs nothing — the upload path, the token and the panel are

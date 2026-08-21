@@ -78,6 +78,16 @@ else
   echo "    added"
 fi
 
+echo "==> ensuring updater_status.upstream_url column"
+COLS=$($W d1 execute bookworm --remote --json --command "PRAGMA table_info(updater_status)")
+if grep -q '"upstream_url"' <<<"$COLS"; then
+  echo "    (already present)"
+else
+  $W d1 execute bookworm --remote --command \
+    "ALTER TABLE updater_status ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''"
+  echo "    added"
+fi
+
 echo "==> ensuring books.chapter_chars column"
 if grep -q '"chapter_chars"' <<<"$COLS"; then
   echo "    (already present)"
