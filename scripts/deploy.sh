@@ -78,22 +78,25 @@ else
   echo "    added"
 fi
 
-echo "==> ensuring updater_status.upstream_url column"
-COLS=$($W d1 execute bookworm --remote --json --command "PRAGMA table_info(updater_status)")
-if grep -q '"upstream_url"' <<<"$COLS"; then
-  echo "    (already present)"
-else
-  $W d1 execute bookworm --remote --command \
-    "ALTER TABLE updater_status ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''"
-  echo "    added"
-fi
-
 echo "==> ensuring books.chapter_chars column"
 if grep -q '"chapter_chars"' <<<"$COLS"; then
   echo "    (already present)"
 else
   $W d1 execute bookworm --remote --command \
     "ALTER TABLE books ADD COLUMN chapter_chars TEXT NOT NULL DEFAULT ''"
+  echo "    added"
+fi
+
+# AFTER the books blocks: chapter_chars above reuses the books COLS probe, so
+# nothing may sit between them and clobber it (this block did once — the
+# 2026-08-21 dispatch failed on exactly that). Own variable, own probe.
+echo "==> ensuring updater_status.upstream_url column"
+UCOLS=$($W d1 execute bookworm --remote --json --command "PRAGMA table_info(updater_status)")
+if grep -q '"upstream_url"' <<<"$UCOLS"; then
+  echo "    (already present)"
+else
+  $W d1 execute bookworm --remote --command \
+    "ALTER TABLE updater_status ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''"
   echo "    added"
 fi
 
