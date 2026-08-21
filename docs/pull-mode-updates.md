@@ -40,7 +40,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-14 · alarm on a silent updater | 3 | done |
 | PM-09 · the owner's phone, and only the owner's | 3 | done — channel + all four messages |
 | PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | done — one file, proven live |
-| PM-16 · updating the updater | 4 | — |
+| PM-16 · updating the updater | 4 | done — re-run bootstrap, updater-only |
 | PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md` | 4 | — |
 | PM-12 · DESIGN.md absorbs the decisions; this document goes away | 4 | — |
 | PM-13 · two instances, one real release | 5 | — |
@@ -1288,6 +1288,24 @@ can go in.
 - Done when: an instance refusing a release on `minUpdaterVersion` can be
   brought current with one command, and takes the release it refused.
 - Needs: PM-10
+- **Landed, 2026-08-21.** The remedy is the newest release's `bootstrap.mjs`,
+  re-run in updater-only mode: `BW_MODE=updater node bootstrap.mjs` re-places
+  ONLY the updater (from the source baked into that newer file, which carries
+  the higher `UPDATER_VERSION`) and touches nothing else — no reader, no D1, no
+  R2, no key. Re-run safety is general: a script that already exists is PUT with
+  `keep_bindings` for its secret types and a secret already set is not re-set,
+  so `ADMIN_TOKEN`, the VAPID pair, `UPSTREAM_URL` and — crucially — a
+  `CF_API_TOKEN` the owner armed all survive the swap. An armed updater stays
+  armed; updating it is not a disarm. `decide()` already refuses a release whose
+  `minUpdaterVersion` exceeds the running updater and installs it once the
+  numbers meet (pinned in `test-updater.mjs`), so a bumped updater takes the
+  release it had refused on its next check.
+- Proven live (`pm16-e2e`): a throwaway instance was stood up and its updater
+  armed with a `CF_API_TOKEN`; an updater-only re-run with a changed bundle gave
+  the updater a NEW deployment version (code actually swapped) while its secrets
+  stayed `[CF_API_TOKEN, UPSTREAM_URL]` (still armed), and the reader, its three
+  secrets and the single owner key were all untouched. `test-bootstrap.mjs` pins
+  updater-only isolation and that a full re-run keeps every secret.
 
 **PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md`**
 - Why: both are built end to end on fork + `gh workflow run`. This is a

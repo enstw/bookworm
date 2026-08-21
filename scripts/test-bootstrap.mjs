@@ -36,6 +36,7 @@ function fixture() {
 // `ownerExists` steer the idempotency branches; `putFailFirst` makes the first
 // script PUT answer the transient 10021 so the retry can be observed.
 function fakeCf(opts = {}) {
+  const existing = opts.existing ?? {}; // script name → [secret names] it already holds
   const rec = { d1Created: 0, r2Created: 0, schema: 0, put: {}, secrets: {}, schedules: {}, subdomain: [], insertedKey: null, uploadSession: 0, putAttempts: 0 };
   let putFails = opts.putFailFirst ? 1 : 0;
   const cf = async (path, init = {}) => {
@@ -55,6 +56,15 @@ function fakeCf(opts = {}) {
       if (opts.r2Exists) throw new Error("PUT /r2/buckets → 400 The bucket you tried to create already exists (10004)");
       rec.r2Created++; return {};
     }
+    // does the script exist? (scriptExists → GET /settings)
+    const settings = path.match(/^\/workers\/scripts\/([^/]+)\/settings$/);
+    if (settings && method === "GET") {
+      if (settings[1] in existing) return { bindings: [] };
+      throw new Error("GET /settings → 404 workers.api.error.script_not_found (10007)");
+    }
+    // its existing secrets (listSecretNames → GET /secrets)
+    const secGet = path.match(/^\/workers\/scripts\/([^/]+)\/secrets$/);
+    if (secGet && method === "GET") return (existing[secGet[1]] ?? []).map((name) => ({ name }));
     // assets upload session — empty buckets, so nothing is uploaded and the
     // completion token is the session jwt (a base64url payload verifyBundle-free)
     if (/assets-upload-session$/.test(path)) { rec.uploadSession++; return { jwt: "a.eyJ4IjoxfQ.b", buckets: [] }; }
@@ -165,6 +175,39 @@ const base = (extra = {}) => {
   out.schemaBootstrapSafe = stmts.length > 0 && !compound && stray.length === 0
     ? `ok (${stmts.length} statements split clean; no TRIGGER/VIEW to mangle)`
     : `FAIL compound=${compound} stray=${JSON.stringify(stray)}`;
+}
+
+// 6. update-the-updater (PM-16): only:"updater" touches JUST the updater — no
+// reader PUT, no reader secrets, no subdomain, no key — and keeps the updater's
+// secrets (keep_bindings), so an armed updater stays armed
+{
+  const { cf, rec } = fakeCf({ d1Exists: true, existing: { "bookworm-updater": ["UPSTREAM_URL", "CF_API_TOKEN"] } });
+  const r = await bootstrap({ cf, ...base({ only: "updater" }) });
+  const updater = rec.put["bookworm-updater"];
+  const touchedReader = ("bookworm" in rec.put) || rec.subdomain.length > 0 || rec.insertedKey !== null || rec.r2Created > 0 || rec.schema > 0;
+  out.updaterOnly =
+    !touchedReader && updater && updater.keep_bindings?.includes("secret_text") &&
+    !(rec.secrets["bookworm-updater"] ?? []).includes("UPSTREAM_URL") && // already present → not re-set
+    r.updaterReplaced === true && r.updaterArmed === true && r.mode === "updater"
+    ? "ok (updater-only: reader/D1/R2/key untouched, secrets kept, stays armed)"
+    : `FAIL ${JSON.stringify({ rec, r })}`;
+}
+
+// 7. a full re-run preserves secrets: existing scripts are PUT with
+// keep_bindings and their already-set secrets are not rotated
+{
+  const { cf, rec } = fakeCf({
+    d1Exists: true, r2Exists: true, ownerExists: true,
+    existing: { bookworm: ["ADMIN_TOKEN", "VAPID_PRIVATE_JWK", "VAPID_SUBJECT"], "bookworm-updater": ["UPSTREAM_URL"] },
+  });
+  await bootstrap({ cf, ...base() });
+  out.rerunKeepsSecrets =
+    rec.put.bookworm?.keep_bindings?.includes("secret_text") &&
+    (rec.secrets.bookworm ?? []).length === 0 &&              // no reader secret re-set
+    (rec.secrets["bookworm-updater"] ?? []).length === 0 &&   // UPSTREAM_URL already there
+    rec.insertedKey === null
+    ? "ok (existing scripts keep_bindings; no secret rotated, no key re-minted)"
+    : `FAIL ${JSON.stringify(rec)}`;
 }
 
 console.log(JSON.stringify(out, null, 2));

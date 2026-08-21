@@ -665,7 +665,15 @@ and — deliberately — **no `CF_API_TOKEN`, so the instance comes up unarmed**
 and mint the owner's first key (`is_owner = 1`). It is idempotent, because
 PM-16 re-runs it to replace the updater in place: an existing database, bucket
 and owner key are reused, not clobbered, and a just-created D1 that is not yet
-bindable (Cloudflare 10021) is waited out with a retry on the script PUT.
+bindable (Cloudflare 10021) is waited out with a retry on the script PUT. A
+re-run also keeps secrets: a script that already exists is PUT with
+`keep_bindings` for its secret types and a secret already set is not re-set, so
+`ADMIN_TOKEN`, the VAPID pair, `UPSTREAM_URL` and a `CF_API_TOKEN` the owner
+armed all survive — updating the updater is not a disarm. `BW_MODE=updater`
+narrows a re-run to the updater alone (PM-16), the remedy when a release is
+refused on `minUpdaterVersion`: the newest `bootstrap.mjs` carries a newer
+updater, replaces it in place, and its next check takes the release it had
+refused.
 
 The delivery is one self-contained file. `package-release.mjs` esbuild-bundles
 `scripts/bootstrap.mjs` — fflate inlined, only `node:` builtins external — with
