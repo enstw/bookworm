@@ -9,6 +9,11 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-22 — `eefb3a8ef97e`
+
+- deploy: default UPSTREAM_URL to the clone's own releases feed (`eefb3a8`)
+- docs: README/CLAUDE/REQUIREMENTS — install is the bootstrap, not a fork (`947afaf`)
+
 ## 2026-08-21 — `c92cadfacb87`
 
 - bootstrap: pin the updater's install target, and prove the fleet with two (`c92cadf`)
