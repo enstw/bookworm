@@ -9,6 +9,12 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-22 — `cd19e0801506`
+
+- deploy: move the upstream_url backfill below the books blocks it clobbered (`cd19e08`)
+- admin: name the upstream feed on the update panel, warn loudly when unset (`fdfafa3`)
+- ci: deploy on dispatch only — merging main no longer cuts a release (`7a535e5`)
+
 ## 2026-08-22 — `eefb3a8ef97e`
 
 - deploy: default UPSTREAM_URL to the clone's own releases feed (`eefb3a8`)
