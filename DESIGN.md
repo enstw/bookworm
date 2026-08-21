@@ -57,10 +57,13 @@ suggestion queue before treating them as open.
 
 ## Delivery pipeline
 
-Every push to `main` deploys through GitHub Actions; md-only pushes skip the
-deploy. Work lands only through a PR — the ruleset below rejects direct
-pushes server-side — so the path of a change is: branch → PR → green
-`candidate-gate` → rebase merge → gated deploy → release ledger.
+Merging to `main` does not deploy — cutting a release is a deliberate act:
+dispatch the `deploy` workflow (`gh workflow run deploy.yml`; Renovate's
+weekly roll-up dispatches it itself), and a green gate deploys the host and
+only then publishes the release the fleet pulls. Work lands only through a
+PR — the ruleset below rejects direct pushes server-side — so the path of a
+change is: branch → PR → green `candidate-gate` → rebase merge, and when a
+release is wanted: dispatch → gated deploy → release ledger.
 
 ### Landing a PR
 
@@ -78,9 +81,10 @@ origin/main`, then PR the branch as usual.
 
 Expect the merge to be refused ONCE even on a green gate — "head branch is
 not up to date" or `Required status check "candidate-gate" is expected`.
-That is the ledger race, not a failure: every non-md merge deploys, the
-deploy lands a release-ledger commit on `main` minutes later, and a strict
-required check goes stale the moment the base moves. The recipe: `git fetch
+That is the ledger race, not a failure: a dispatched deploy lands a
+release-ledger commit on `main` minutes later, and a strict required check
+goes stale the moment the base moves — so it bites PRs in flight around a
+dispatch, no longer after every merge. The recipe: `git fetch
 && git rebase origin/main && git push --force-with-lease`, which re-runs the
 gate. Auto-merge survives that push, so there is no green window to catch by
 hand any more — arm it once and the merge fires whenever the re-run lands.
