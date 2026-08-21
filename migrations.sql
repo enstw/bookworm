@@ -11,7 +11,10 @@
 -- INSERT OR IGNORE. Never a DROP, DELETE, UPDATE or rename — a failed swap
 -- leaves the OLD worker facing this schema, and it must survive.
 --
--- Currently empty: the baseline schema.sql is current, so there is nothing to
--- migrate on top of it. A future schema change appends its additive statement
--- here (and, for upstream's own already-live D1, its guarded ALTER in
--- scripts/deploy.sh — the two must agree).
+-- A future schema change appends its additive statement here (and, for
+-- upstream's own already-live D1, its guarded ALTER in scripts/deploy.sh —
+-- the two must agree).
+
+-- /admin names the upstream feed this machine follows (update-panel.mjs);
+-- the updater writes it on every check.
+ALTER TABLE updater_status ADD COLUMN upstream_url TEXT NOT NULL DEFAULT '';

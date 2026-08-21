@@ -63,7 +63,10 @@ export async function readPanel(env, build) {
   return {
     running: build,
     updaterVersion: s.updater_version ?? 0,
-    upstream: { version: s.upstream_version ?? "", releasedAt: s.upstream_released_at ?? "" },
+    // url is display-only: the panel names the feed this machine follows but
+    // can never change it — that stays an owner act with Cloudflare
+    // credentials (R1). An older updater never wrote it; '' means unknown.
+    upstream: { version: s.upstream_version ?? "", releasedAt: s.upstream_released_at ?? "", url: s.upstream_url ?? "" },
     lastCheck: { at: s.last_check_at ?? 0, ok: (s.last_check_ok ?? 0) === 1, detail: s.detail ?? "" },
     // the updater has gone silent past the threshold (R10); the panel warns
     stale: isStale(s.last_check_at ?? 0, Date.now()),

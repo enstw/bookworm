@@ -60,8 +60,8 @@ const NOW = 1_700_000_000_000;
   eq("goodResult", { ok: r.ok, version: r.version, hasManifest: r.manifest?.version === MANIFEST.version }, { ok: true, version: MANIFEST.version, hasManifest: true });
   eq("goodRow", {
     at: row.last_check_at, ok: row.last_check_ok,
-    v: row.upstream_version, ra: row.upstream_released_at, detail: row.detail,
-  }, { at: NOW, ok: 1, v: MANIFEST.version, ra: MANIFEST.released_at, detail: "" });
+    v: row.upstream_version, ra: row.upstream_released_at, detail: row.detail, url: row.upstream_url,
+  }, { at: NOW, ok: 1, v: MANIFEST.version, ra: MANIFEST.released_at, detail: "", url: "https://example.invalid/releases/latest/download/" });
   eq("manifestUrl", fetchFn.calls[0].url, "https://example.invalid/releases/latest/download/manifest.json");
   const init = fetchFn.calls[0].init ?? {};
   out.uncached = init.cache === "no-store" && /no-cache/.test(init.headers?.["cache-control"] ?? "")
@@ -564,11 +564,11 @@ function panelDb(state) {
 // 22. readPanel reflects the updater's D1 rows and never contacts upstream
 {
   const state = {
-    status: { upstream_version: "9a · x", upstream_released_at: "2026-08-19T00:00:00Z", last_check_at: 123, last_check_ok: 1, detail: "", last_install_at: 456, last_install_version: "9a · x", last_install_result: "ok", last_install_detail: "", updater_version: 1 },
+    status: { upstream_version: "9a · x", upstream_released_at: "2026-08-19T00:00:00Z", upstream_url: "https://example.invalid/releases/latest/download/", last_check_at: 123, last_check_ok: 1, detail: "", last_install_at: 456, last_install_version: "9a · x", last_install_result: "ok", last_install_detail: "", updater_version: 1 },
     policy: { mode: "notify", soak_days: 3, install_now_version: "", install_now_at: 0 },
   };
   const d = await readPanel({ DB: panelDb(state) }, "old · x");
-  out.panelRead = d.running === "old · x" && d.upstream.version === "9a · x" && d.lastCheck.ok === true &&
+  out.panelRead = d.running === "old · x" && d.upstream.version === "9a · x" && d.upstream.url === "https://example.invalid/releases/latest/download/" && d.lastCheck.ok === true &&
     d.updaterVersion === 1 && d.policy.mode === "notify" && d.policy.soakDays === 3 && d.lastInstall.result === "ok"
     ? "ok (running, upstream, last-check, updater version, policy, last-install)" : `FAIL ${JSON.stringify(d)}`;
   // a fresh install with no rows → sensible defaults, not a crash

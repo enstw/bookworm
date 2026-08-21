@@ -141,6 +141,10 @@ CREATE TABLE IF NOT EXISTS updater_status (
   last_check_ok        INTEGER NOT NULL DEFAULT 0,
   upstream_version     TEXT    NOT NULL DEFAULT '',
   upstream_released_at TEXT    NOT NULL DEFAULT '',
+  -- the configured upstream feed, written by every check so /admin can name
+  -- the source this machine follows (or warn that none is set). Display-only:
+  -- setting it stays an owner act with Cloudflare credentials, never the panel.
+  upstream_url         TEXT    NOT NULL DEFAULT '',
   detail               TEXT    NOT NULL DEFAULT '',
   last_install_at      INTEGER NOT NULL DEFAULT 0,
   last_install_version TEXT    NOT NULL DEFAULT '',
