@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-21 — `74ef5531f9ee`
+
+- bootstrap: update the updater in place, keeping its secrets (`74ef553`)
+
 ## 2026-08-21 — `cec1243f1fdc`
 
 - bootstrap: a one-shot that stands up an instance from one file (`cec1243`)
