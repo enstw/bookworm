@@ -551,7 +551,12 @@ more than record a version string, and with no `UPSTREAM_URL` secret set it
 does not even do that. `checkOnce` takes a store and a fetch seam, so
 `scripts/test-updater.mjs` exercises it with no account; `scripts/deploy.sh`
 deploys it beside the reader (`--config wrangler.updater.jsonc`) and rewrites
-its `database_id` the same way.
+its `database_id` the same way. The bootstrap sets `UPSTREAM_URL` on every
+instance it creates, which left the repo-backed host the one install nobody
+configures — an orphan whose updater reports "未設定" forever — so
+`deploy.sh` defaults the secret to the clone's own GitHub releases feed,
+derived from `origin` (`https://github.com/OWNER/REPO/releases/latest/download/`);
+the env var overrides, and a non-GitHub origin stays inert as before.
 
 **Trust is TLS, not a signature.** The manifest and bundle are trusted because
 they came over `https://` from the release host, and nothing else — there is no
