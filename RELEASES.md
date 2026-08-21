@@ -9,6 +9,11 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-21 — `c907f0efc579`
+
+- docs: absorb the pull-mode plan into DESIGN, delete the plan doc (`c907f0e`)
+- docs: rewrite INSTALLATION for the bootstrap, drop fork + Actions (`dc3d9e6`)
+
 ## 2026-08-21 — `74ef5531f9ee`
 
 - bootstrap: update the updater in place, keeping its secrets (`74ef553`)
