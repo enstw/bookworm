@@ -1,8 +1,10 @@
-# Push-to-deploy, gated on the desktop test suite: every push to main first
-# runs the pnpm-test chain (scripts/run-ci-tests.mjs — per-suite logs and a
-# report); only a green run reaches scripts/deploy.sh with credentials from
-# repo secrets (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, ADMIN_TOKEN) —
-# no machine needs a local .deploy.env.
+# Dispatch-to-deploy, gated on the desktop test suite: merging to main does
+# NOT deploy — cutting a release is a deliberate act. Dispatch this workflow
+# (`gh workflow run deploy.yml`; Renovate's roll-up dispatches it itself) and
+# the run first runs the pnpm-test chain (scripts/run-ci-tests.mjs — per-suite
+# logs and a report); only a green run reaches scripts/deploy.sh with
+# credentials from repo secrets (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
+# ADMIN_TOKEN) — no machine needs a local .deploy.env.
 #
 # A red run publishes a test-failure-* pre-release whose notes name the
 # failing suite and embed its log tail, then skips the deploy. The e2e
@@ -19,11 +21,6 @@
 name: deploy
 
 on:
-  push:
-    branches: [main]
-    # renovate's own config cannot change a byte the worker serves, and a
-    # roll-up that edits it still touches package.json and deploys normally
-    paths-ignore: ["**.md", ".github/renovate.json5"]
   workflow_dispatch:
 
 concurrency:
