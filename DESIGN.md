@@ -646,6 +646,42 @@ isolate cannot wedge the updater. `decide()` is called by PM-08's
 `runInstall()` in the cron; the policy it reads is stored by the `/admin`
 panel.
 
+### The bootstrap: the first install, from a laptop
+
+An instance is a Cloudflare account with no repo, no clone and no CI, so the
+FIRST install cannot come from the updater — no Worker can create the D1, R2
+and two scripts it has not been placed into yet, and the 12 MB `public/` does
+not fit in a scheduled invocation's CPU budget anyway (R8). That first install
+is a one-shot the owner runs from a laptop. `src/bootstrap-core.mjs` is the
+orchestration over the Cloudflare API: find-or-create the D1 and the R2 bucket,
+apply `schema.sql`, upload the reader (its `public/` unzipped from the release
+bundle the updater would install, verified against the manifest first) with
+FULL bindings — its own D1 id, its bucket, `ASSETS` — and no `keep_bindings`,
+because nothing is there to keep yet; set `ADMIN_TOKEN` and the VAPID pair as
+secrets AFTER the create (so the updater's `keep_bindings` preserves them on
+every later swap); enable the workers.dev subdomain; place the cron-only
+updater with the shared D1 and a `READER` service binding, its `UPSTREAM_URL`
+and — deliberately — **no `CF_API_TOKEN`, so the instance comes up unarmed**;
+and mint the owner's first key (`is_owner = 1`). It is idempotent, because
+PM-16 re-runs it to replace the updater in place: an existing database, bucket
+and owner key are reused, not clobbered, and a just-created D1 that is not yet
+bindable (Cloudflare 10021) is waited out with a retry on the script PUT.
+
+The delivery is one self-contained file. `package-release.mjs` esbuild-bundles
+`scripts/bootstrap.mjs` — fflate inlined, only `node:` builtins external — with
+`schema.sql` and the bundled updater baked in, and `publish-release.mjs`
+attaches that `bootstrap.mjs` to every GitHub release beside `manifest.json`
+and the reader bundle. The owner downloads the one file and runs it with
+`CF_API_TOKEN`, `CF_ACCOUNT_ID` and `UPSTREAM_URL` in the environment (never
+argv); the reader release is fetched from `UPSTREAM_URL` at run time, so the
+12 MB never rides in the bootstrap. The token is the broad, one-time kind that
+can create D1/R2/Workers — deletable the moment it returns — and is a different
+principal from the narrow one that later arms the updater. The reader release
+manifest and zip are untouched by all this: the bootstrap is its own asset, so
+PM-01's strict artifact contract is unchanged. A clone can run the same command
+through `scripts/bootstrap-cli.mjs`, which rebuilds the baked payload from the
+tree, so the repo never grows a second, diverging install path.
+
 ## Reader frontend
 
 - **The paged grid.** Both writing modes page on an integer grid:

@@ -14,7 +14,7 @@
 //   GH_TOKEN=… node scripts/publish-release.mjs out/release
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = process.argv[2];
@@ -40,13 +40,16 @@ if (exists) {
   gh("release", "edit", manifest.tag, "--latest", "--prerelease=false");
   console.log(`✓ ${manifest.tag} already published — re-pointed latest at it, assets untouched`);
 } else {
-  gh("release", "create", manifest.tag,
-    join(dir, "manifest.json"), join(dir, manifest.bundle.file),
+  // the one-shot bootstrap rides along (PM-10): one self-contained file an owner
+  // downloads to stand up a whole instance — no fork, no Actions, no clone
+  const boot = join(dir, "bootstrap.mjs");
+  const assets = [join(dir, "manifest.json"), join(dir, manifest.bundle.file), ...(existsSync(boot) ? [boot] : [])];
+  gh("release", "create", manifest.tag, ...assets,
     "--target", target,
     "--title", manifest.version,
     "--notes-file", join(dir, "notes.md"),
     "--latest");
   console.log(`✓ ${manifest.tag}: manifest.json + ${manifest.bundle.file} (${(manifest.bundle.size / 1048576).toFixed(1)} MB)` +
-    (manifest.requiresAttention ? " — requires attention" : ""));
+    (existsSync(boot) ? " + bootstrap.mjs" : "") + (manifest.requiresAttention ? " — requires attention" : ""));
 }
 console.log(`  https://github.com/${repo}/releases/latest/download/manifest.json`);

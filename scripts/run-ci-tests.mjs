@@ -115,6 +115,7 @@ run("split-core", ["node", "scripts/test-split-core.mjs"]);
 run("release-notes", ["node", "scripts/test-release-notes.mjs"]);
 run("release-manifest", ["node", "scripts/test-release-manifest.mjs"]);
 run("updater", ["node", "scripts/test-updater.mjs"]);
+run("bootstrap", ["node", "scripts/test-bootstrap.mjs"]);
 run("wasm-frontend", ["node", "scripts/test-wasm-frontend.mjs"]);
 run("matcha-fst", ["node", "scripts/test-matcha-fst.mjs"]);
 run("worker-pool", ["node", "scripts/test-worker-pool.mjs"]);
