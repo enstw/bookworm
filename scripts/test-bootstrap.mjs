@@ -119,6 +119,7 @@ const base = (extra = {}) => {
     JSON.stringify(rec.schedules.bookworm) === JSON.stringify(["* * * * *"]) &&
     rec.subdomain.length === 1 &&
     updater.compatibility_flags.includes("nodejs_compat") && updaterBinds.service?.service === "bookworm" && updaterBinds.d1 &&
+    updaterBinds.plain_text?.name === "READER_SCRIPT" && updaterBinds.plain_text?.text === "bookworm" &&
     JSON.stringify(rec.schedules["bookworm-updater"]) === JSON.stringify(["*/15 * * * *"]) &&
     r.keyMinted === true && r.readerKey === "fresh-key" && r.d1Id === "new-d1";
   out.freshAccount = good ? "ok (D1+R2+schema, reader full bindings, secrets, crons, subdomain, updater w/ service binding, key minted)"

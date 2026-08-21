@@ -608,7 +608,10 @@ updater reaches the reader through a **`READER` service binding**, not the
 internet (a Worker fetching its instance over `workers.dev` is error 1042,
 PM-00); it authenticates with a reader key it mints in the `readers` table it
 already writes (shows on `/admin` as the reader `updater`, revocable, no admin
-power). Rollback is Cloudflare's own version rollback — one `POST
+power). The script it *rewrites* is `env.READER_SCRIPT` — the reader's own
+name, set on the updater by the bootstrap so a renamed or throwaway instance
+never targets the wrong Worker; upstream's own updater leaves it unset and
+falls back to `bookworm`. Rollback is Cloudflare's own version rollback — one `POST
 …/deployments` naming the previous `version_id`, script and assets restored
 together (PM-00 fact 4), nothing kept on the instance. The outcome (`ok`,
 `rolled-back`, `failed`) lands in `updater_status` for the panel (PM-08), a
@@ -635,7 +638,12 @@ metadata, the single-asset refusal, the dropped-secret throw, the health-check
 verdicts, the deployments API, key minting, the rollback matrix with its
 no-oscillation guard, and the armed cron loop's own gate (no token → nothing
 installs) and glue (installs on "install", skips on "skip", skips a held
-lock).
+lock). And the fleet behaviour itself was proven with two instances side by
+side (PM-13): both stood up behind a release and armed, one **automatic** and
+one **pinned**, they diverged on their own crons with nobody installing by
+hand — the automatic instance took the release (`37f9ab2` → `c907f0e`) and
+rolled it in clean while the pinned one stayed put, and production was
+untouched.
 
 **When an install may happen** (PM-15, `decide()`) is the decision layer, kept
 separate from how (PM-05) and did-it-work (PM-07): three modes — **automatic**

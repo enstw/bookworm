@@ -233,6 +233,12 @@ export async function bootstrap({
     bindings: [
       { type: "d1", name: "DB", id: d1Id },
       { type: "service", name: "READER", service: names.reader },
+      // WHICH script the updater installs onto. runInstall() falls back to
+      // "bookworm" when unset, which is correct only for the default instance —
+      // an instance under any other name (or a throwaway) MUST carry its own
+      // reader name here, or an armed updater would rewrite the wrong script.
+      // Plain text, re-declared every run, so it needs no keep_bindings.
+      { type: "plain_text", name: "READER_SCRIPT", text: names.reader },
     ],
     ...(updaterExisted ? { keep_bindings: ["secret_text", "secret_key"] } : {}),
     observability: { enabled: true },
