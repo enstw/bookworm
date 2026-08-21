@@ -146,9 +146,10 @@ points at it), choose a `.txt` or `.zip`, inspect the detected chapters, and upl
 conversion, S→T conversion, and splitting all happen in the browser—even on a phone. The same page lists
 every book on the shelf and edits it in place: retitle, re-slug, or delete. Each book is stored under a
 permanent book id, so a new slug only changes the URL—nothing moves, reading positions stay put, and the
-old URL still resolves. GitHub Actions and a CLI are available for huge files and batch work.
+old URL still resolves. A local CLI is available for huge files and batch work.
 
-Deployment takes about fifteen minutes: fork the project, add three secrets, and run one GitHub Action.
+Deployment takes a few minutes: create a Cloudflare account and one API token, then run a `bootstrap.mjs`
+downloaded from the release page — no fork, no clone. After that the machine follows upstream on its own.
 The **[install & operations manual](INSTALLATION.en.md)** is written to be executed by an AI agent —
 hand it to the agent in your terminal and the human does three things in a browser; without an agent,
 the same commands run fine by hand.
