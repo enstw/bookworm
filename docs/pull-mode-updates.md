@@ -41,7 +41,7 @@ States: `—` not started · `wip` in progress · `done` landed · `dropped`
 | PM-09 · the owner's phone, and only the owner's | 3 | done — channel + all four messages |
 | PM-10 · a one-shot bootstrap replaces fork + Actions | 4 | done — one file, proven live |
 | PM-16 · updating the updater | 4 | done — re-run bootstrap, updater-only |
-| PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md` | 4 | — |
+| PM-11 · rewrite `INSTALLATION.md` and `INSTALLATION.en.md` | 4 | done |
 | PM-12 · DESIGN.md absorbs the decisions; this document goes away | 4 | — |
 | PM-13 · two instances, one real release | 5 | — |
 
@@ -1314,6 +1314,16 @@ can go in.
   a fresh account, and no step mentions a fork, `gh workflow run`, or a
   local checkout — the same bar `INSTALLATION.md` is already written to.
 - Needs: PM-10
+- **Landed, 2026-08-21.** Both manuals rewritten to the bootstrap flow: 🧑
+  makes a one-time broad token + copies the Account ID; the agent downloads
+  `bootstrap.mjs` from the latest release and runs it with three env vars;
+  the printed reader URL, owner-key link and `ADMIN_TOKEN` carry the rest. A
+  new *Turning on automatic updates* section arms the updater with a narrow
+  Workers-Scripts-Edit token (and covers `BW_MODE=updater` for PM-16). The
+  install and update paths mention no fork, no `gh workflow`, and no clone;
+  `clone` survives only in the optional CLI-publish and local-dev sections,
+  as before. Maintenance's "update Bookworm" is now "do nothing — the armed
+  updater follows upstream."
 
 **PM-12 · DESIGN.md absorbs the decisions; this document goes away**
 - Why: house rule — decisions worth keeping are distilled into the relevant
