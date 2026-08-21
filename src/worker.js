@@ -969,7 +969,7 @@ function logPush(env, ctx, line) {
 // readers.is_owner, and to nobody else. This is the one sender for every
 // message that is the owner's business rather than every reader's (an
 // update waiting for a decision, an install rolled back, a silent updater —
-// see docs/pull-mode-updates.md, "Who gets told"). With no key flagged it
+// see DESIGN.md). With no key flagged it
 // sends NOTHING, deliberately: falling back to a broadcast would put the
 // owner's business on every reader's lock screen. The silence is not
 // invisible, though — the log line says so, and /admin says so in as many

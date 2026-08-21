@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Build the release artifact — the thing an instance's updater installs
-// (docs/pull-mode-updates.md, "The artifact"). Nothing produced one before:
+// (DESIGN.md). Nothing produced one before:
 // wrangler bundled and uploaded in one motion and the bytes were never kept.
 //
 // Out of one commit, into <outDir>:
@@ -32,7 +32,7 @@
 //
 // Two hashes per asset, on purpose. `sha256` is download integrity — the
 // updater verifies each file against it after unzipping (and it is only
-// that: TLS to upstream is the trust anchor, see the plan's trust section).
+// that: TLS to upstream is the trust anchor, see the design's trust section).
 // `cfhash` is what Cloudflare's assets-upload session keys its manifest on —
 // blake3(base64(bytes) + extension-without-dot), 32 hex, wrangler's own
 // hashFile — shipped so the updater never has to compute it on the edge.

@@ -166,7 +166,7 @@ URL=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' <<<"$DEPLOY_OUT" | head -1)
 echo "==> pushing ADMIN_TOKEN secret"
 printf '%s' "$ADMIN_TOKEN" | $W secret put ADMIN_TOKEN
 
-# The second Worker (docs/pull-mode-updates.md, PM-04): cron-only, no fetch
+# The second Worker (DESIGN.md, PM-04): cron-only, no fetch
 # handler, binds the same D1. It is deployed here so the two-Worker topology
 # exists on every instance from the first deploy. UPDATER=pnpm exec wrangler
 # --config wrangler.updater.jsonc targets it for both deploy and secrets.

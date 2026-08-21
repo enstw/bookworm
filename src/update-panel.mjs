@@ -98,7 +98,7 @@ export async function setPolicy(env, body) {
 
 // Queue the "install now" the notify-mode button needs. It writes the version
 // the updater last saw into D1 and the updater picks it up on its next check —
-// no callable surface is opened on the updater (the plan's "An install button,
+// no callable surface is opened on the updater (the design's "An install button,
 // without giving the updater a door"). Refuses when nothing has been seen yet,
 // so the button cannot queue an empty request.
 export async function queueInstallNow(env, now) {

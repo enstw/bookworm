@@ -1,5 +1,5 @@
 // bookworm-updater: the second Worker on an instance's account (see
-// docs/pull-mode-updates.md, "What an instance looks like"). Cron trigger
+// DESIGN.md). Cron trigger
 // only — NO fetch handler, no route — so nothing outside Cloudflare can invoke
 // it. It is the one thing on the instance that talks to upstream, and under R4
 // it holds no reader secret: its whole configuration is UPSTREAM_URL (this

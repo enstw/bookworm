@@ -1,6 +1,5 @@
 {
-  // bookworm-updater: the second Worker (docs/pull-mode-updates.md, "What an
-  // instance looks like"). Cron-only — no `assets`, no routes, no fetch
+  // bookworm-updater: the second Worker (DESIGN.md). Cron-only — no `assets`, no routes, no fetch
   // handler in src/updater.js — so nothing outside Cloudflare can reach it.
   // Deployed by scripts/deploy.sh alongside the reader, against the same
   // account and the same D1.
@@ -28,7 +27,7 @@
   // An instance with a custom domain could check that URL instead; the binding
   // is the domain-free default.
   "services": [{ "binding": "READER", "service": "bookworm" }],
-  // The check interval (the plan's "Checking and installing run at different
+  // The check interval (the design's "Checking and installing run at different
   // rates"): ~15 min, read-only, too cheap to ration. PM-08 splits this into
   // a check cadence and a policy-driven install; until then the cron only
   // checks.

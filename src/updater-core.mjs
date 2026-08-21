@@ -17,7 +17,7 @@ export const UPDATER_VERSION = 1;
 
 // UPSTREAM_URL is `…/releases/latest/download/` — a stable URL whose contents
 // change every release, so the one manifest we read must never come from cache
-// (the plan's "Where it is published").
+// (the design's "Where it is published").
 function manifestUrl(base) {
   return (base.endsWith("/") ? base : base + "/") + "manifest.json";
 }
@@ -76,7 +76,7 @@ export async function checkOnce({ upstreamUrl, store, now, fetchFn = fetch }) {
   };
 
   if (!upstreamUrl) return fail("UPSTREAM_URL 未設定");
-  // TLS is the entire trust anchor (the plan's trust section), so a non-https
+  // TLS is the entire trust anchor (the design's trust section), so a non-https
   // URL is refused here rather than fetched — the same rule the install path
   // will enforce before it uploads anything.
   if (!upstreamUrl.startsWith("https://")) return fail("UPSTREAM_URL 必須是 https://");
@@ -143,7 +143,7 @@ function decodeJwt(jwt) {
 // Verify a downloaded bundle against its manifest and return the unzipped
 // files. This is download integrity, not source authenticity — it catches a
 // truncated or corrupt release, never proves the manifest genuine (TLS to
-// upstream is the trust anchor, the plan's trust section). Throws on any
+// upstream is the trust anchor, the design's trust section). Throws on any
 // mismatch, before a byte of it reaches the script.
 export async function verifyBundle(manifest, zipBytes) {
   if ((await sha256Hex(zipBytes)) !== manifest.bundle.sha256)
@@ -480,7 +480,7 @@ export function decide({ policy, manifest, runningVersion, updaterVersion, lastI
   return { action: "install", reason: `soak of ${policy.soakDays} day(s) elapsed` };
 }
 
-// One install at a time (the plan's second safeguard): an overrunning cron and
+// One install at a time (the design's second safeguard): an overrunning cron and
 // a queued install-now must not interleave. The lock is one D1 row, seeded by
 // schema.sql; acquire is a conditional UPDATE whose row-count is the verdict,
 // so it is atomic in the database rather than a read-then-write race. A lock
