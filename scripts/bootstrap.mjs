@@ -69,6 +69,10 @@ export async function runBootstrap(payload) {
     d1: process.env.BW_D1_NAME || "bookworm",
     r2: process.env.BW_R2_NAME || "bookworm-books",
   };
+  // BW_MODE=updater is PM-16's update-the-updater: replace only the updater
+  // (the remedy when the running one refused a release on minUpdaterVersion),
+  // leaving the reader, D1, R2 and every secret alone.
+  const only = process.env.BW_MODE === "updater" ? "updater" : "full";
   const cf = makeCf(token, account);
 
   console.error(`==> fetching reader release from ${upstreamUrl}`);
@@ -77,25 +81,32 @@ export async function runBootstrap(payload) {
   const readerManifest = await mres.json();
   console.error(`    ${readerManifest.version} — ${readerManifest.assets.length} assets, ${(readerManifest.bundle.size / 1048576).toFixed(1)} MB`);
 
+  // secrets are a first-install concern; an update-the-updater run touches no
+  // reader secret, so it does not generate any
   const adminToken = process.env.ADMIN_TOKEN || randHex(24);
-  const secrets = {
+  const secrets = only === "updater" ? {} : {
     ADMIN_TOKEN: adminToken,
     VAPID_PRIVATE_JWK: process.env.VAPID_PRIVATE_JWK || await genVapidJwk(),
     VAPID_SUBJECT: process.env.VAPID_SUBJECT || "mailto:owner@example.com",
   };
 
-  console.error("==> bootstrapping");
+  console.error(only === "updater" ? "==> updating the updater" : "==> bootstrapping");
   const r = await bootstrap({
     cf, names, readerManifest,
     schemaStatements: parseMigrations(payload.schema),
     updaterSource: payload.updaterSource,
     readerCrons: payload.readerCrons, updaterCrons: payload.updaterCrons, updaterFlags: payload.updaterFlags,
-    upstreamUrl, secrets, now: Date.now(), log: (...a) => console.error(...a),
+    upstreamUrl, secrets, now: Date.now(), only, log: (...a) => console.error(...a),
   });
 
-  const url = r.readerUrl || `https://${names.reader}.<your-subdomain>.workers.dev`;
-  // stdout carries the durable output (redirectable); the progress above is on stderr
+  // stdout carries the durable output (redirectable); progress above is on stderr
   console.log("");
+  if (only === "updater") {
+    console.log(`updater updated (${readerManifest.version}); it stays ${r.updaterArmed ? "armed" : "unarmed"}.`);
+    console.log("its next check takes the release it had refused, if this bootstrap is current enough.");
+    return r;
+  }
+  const url = r.readerUrl || `https://${names.reader}.<your-subdomain>.workers.dev`;
   console.log("instance is up.");
   console.log(`  reader:       ${url}`);
   console.log(`  admin:        ${url}/admin`);
@@ -104,7 +115,7 @@ export async function runBootstrap(payload) {
   console.log(`  ADMIN_TOKEN:  ${adminToken}   (save to a password manager now — it is not shown again)`);
   console.log("");
   console.log("the updater is UNARMED (no automatic updates). to arm it, set CF_API_TOKEN on");
-  console.log(`bookworm-updater — a token scoped to edit only the ${names.reader} script.`);
+  console.log(`${names.updater} — a token scoped to edit only the ${names.reader} script.`);
   return r;
 }
 

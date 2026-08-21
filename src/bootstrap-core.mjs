@@ -100,6 +100,15 @@ async function putSecret(cf, script, name, text) {
   });
 }
 
+// Does the script already exist? A re-run (PM-16, replacing the updater) must
+// keep the secrets a fresh create sets; a create must not. The settings
+// endpoint answers 404/10007 for a script the account has never seen.
+async function scriptExists(cf, script) {
+  try { await cf(`/workers/scripts/${script}/settings`); return true; }
+  catch (err) { if (/10007|not found|404/i.test(String(err?.message ?? err))) return false; throw err; }
+}
+const listSecretNames = async (cf, script) => (await cf(`/workers/scripts/${script}/secrets`) ?? []).map((s) => s.name);
+
 // Cron triggers are their own endpoint, not script metadata.
 async function putSchedules(cf, script, crons) {
   await cf(`/workers/scripts/${script}/schedules`, {
@@ -152,48 +161,71 @@ async function ensureOwnerKey(cf, d1Id, { now, mintKey, log }) {
 // the reader bundle. Everything else is passed in so scripts/test-bootstrap.mjs
 // can drive it against fakes and pm10-e2e can drive it against a throwaway
 // account with throwaway names.
+// `only: "updater"` is PM-16's update-the-updater: re-place JUST the updater
+// script from a newer bootstrap, leaving the reader, D1, R2 and every secret
+// alone — the remedy for a release the running updater refused on
+// minUpdaterVersion. The default ("full") is PM-10's whole first install.
+//
+// A re-run of either preserves secrets: a script that already exists is PUT
+// with keep_bindings for its secret types (so ADMIN_TOKEN, the VAPID pair,
+// UPSTREAM_URL and — if the owner armed it — CF_API_TOKEN survive the swap,
+// R4), and a secret that is already set is not re-set, so nothing rotates and
+// an armed updater stays armed.
 export async function bootstrap({
   cf, fetchFn = fetch, names, readerManifest, schemaStatements, updaterSource,
   readerCrons, updaterCrons, updaterFlags = ["nodejs_compat"], upstreamUrl,
-  secrets, now = 0, mintKey = () => randHex(16), log,
+  secrets = {}, now = 0, mintKey = () => randHex(16), only = "full", log,
 }) {
-  // 1. the account resources the two scripts bind
+  // the shared D1 both scripts bind — created on a first install, found on a
+  // re-run (never a second database)
   const d1Id = await ensureD1(cf, names.d1, log);
-  await ensureR2(cf, names.r2, log);
-  await applySchema(cf, d1Id, schemaStatements, log);
 
-  // 2. the reader bundle — from the published release, verified against its
-  // manifest before a byte of it is uploaded (download integrity; TLS to
-  // upstream is the trust anchor, the plan's trust section)
-  const res = await fetchFn(readerManifest.bundle.url, { cache: "no-store", redirect: "follow" });
-  if (!res.ok) throw new Error(`reader bundle HTTP ${res.status}`);
-  const files = await verifyBundle(readerManifest, new Uint8Array(await res.arrayBuffer()));
+  let readerUrl = "", uploaded = 0, owner = { key: "", minted: false };
+  if (only !== "updater") {
+    await ensureR2(cf, names.r2, log);
+    await applySchema(cf, d1Id, schemaStatements, log);
 
-  // 3. the reader: upload assets, then create the script with FULL bindings —
-  // its own D1 id and bucket name, the assets token, and nothing kept because
-  // nothing is there yet. Secrets and the cron follow the create.
-  const { completion, uploaded } = await uploadAssets({ cf, script: names.reader, manifest: readerManifest, files });
-  await putScript(cf, names.reader, readerManifest.worker.file, files[readerManifest.worker.file], {
-    main_module: readerManifest.worker.file,
-    compatibility_date: readerManifest.compatibility_date,
-    compatibility_flags: readerManifest.compatibility_flags ?? [],
-    bindings: [
-      { type: "d1", name: "DB", id: d1Id },
-      { type: "r2_bucket", name: "BOOKS", bucket_name: names.r2 },
-      { type: "assets", name: "ASSETS" },
-    ],
-    assets: { jwt: completion, config: readerManifest.assetsConfig },
-    observability: { enabled: true },
-  });
-  for (const [name, text] of Object.entries(secrets)) await putSecret(cf, names.reader, name, text);
-  await putSchedules(cf, names.reader, readerCrons);
-  const readerUrl = await enableSubdomain(cf, names.reader, log);
-  log?.(`  reader ${names.reader} up (${uploaded} assets)`);
+    // the reader bundle — from the published release, verified against its
+    // manifest before a byte of it is uploaded (download integrity; TLS to
+    // upstream is the trust anchor, the plan's trust section)
+    const res = await fetchFn(readerManifest.bundle.url, { cache: "no-store", redirect: "follow" });
+    if (!res.ok) throw new Error(`reader bundle HTTP ${res.status}`);
+    const files = await verifyBundle(readerManifest, new Uint8Array(await res.arrayBuffer()));
 
-  // 4. the updater: the bundled source baked into the bootstrap, its D1 binding
+    // upload assets, then place the reader with FULL bindings — its own D1 id
+    // and bucket name and the assets token. On a first install nothing is kept;
+    // on a re-run its secrets are kept and not re-set.
+    const readerExisted = await scriptExists(cf, names.reader);
+    const { completion, uploaded: u } = await uploadAssets({ cf, script: names.reader, manifest: readerManifest, files });
+    uploaded = u;
+    await putScript(cf, names.reader, readerManifest.worker.file, files[readerManifest.worker.file], {
+      main_module: readerManifest.worker.file,
+      compatibility_date: readerManifest.compatibility_date,
+      compatibility_flags: readerManifest.compatibility_flags ?? [],
+      bindings: [
+        { type: "d1", name: "DB", id: d1Id },
+        { type: "r2_bucket", name: "BOOKS", bucket_name: names.r2 },
+        { type: "assets", name: "ASSETS" },
+      ],
+      ...(readerExisted ? { keep_bindings: ["secret_text", "secret_key"] } : {}),
+      assets: { jwt: completion, config: readerManifest.assetsConfig },
+      observability: { enabled: true },
+    });
+    const have = readerExisted ? await listSecretNames(cf, names.reader) : [];
+    for (const [name, text] of Object.entries(secrets)) if (!have.includes(name)) await putSecret(cf, names.reader, name, text);
+    await putSchedules(cf, names.reader, readerCrons);
+    readerUrl = await enableSubdomain(cf, names.reader, log);
+    log?.(`  reader ${names.reader} up (${uploaded} assets${readerExisted ? ", secrets kept" : ""})`);
+
+    owner = await ensureOwnerKey(cf, d1Id, { now, mintKey, log });
+  }
+
+  // the updater: the bundled source baked into the bootstrap, its D1 binding
   // (the shared row it writes and the reader reads) and the READER service
-  // binding pointed at THIS reader's script name. UPSTREAM_URL is its whole
-  // configuration; CF_API_TOKEN is deliberately absent, so it comes up unarmed.
+  // binding pointed at THIS reader's script name. On a first install UPSTREAM_URL
+  // is set and CF_API_TOKEN deliberately absent (unarmed); on a re-run both are
+  // kept, so updating the updater neither loses its config nor disarms it.
+  const updaterExisted = await scriptExists(cf, names.updater);
   await putScript(cf, names.updater, "updater.js", updaterSource, {
     main_module: "updater.js",
     compatibility_date: readerManifest.compatibility_date,
@@ -202,14 +234,14 @@ export async function bootstrap({
       { type: "d1", name: "DB", id: d1Id },
       { type: "service", name: "READER", service: names.reader },
     ],
+    ...(updaterExisted ? { keep_bindings: ["secret_text", "secret_key"] } : {}),
     observability: { enabled: true },
   });
-  await putSecret(cf, names.updater, "UPSTREAM_URL", upstreamUrl);
+  const updaterHave = updaterExisted ? await listSecretNames(cf, names.updater) : [];
+  if (!updaterHave.includes("UPSTREAM_URL")) await putSecret(cf, names.updater, "UPSTREAM_URL", upstreamUrl);
   await putSchedules(cf, names.updater, updaterCrons);
-  log?.(`  updater ${names.updater} up (unarmed — no CF_API_TOKEN)`);
+  const armed = updaterHave.includes("CF_API_TOKEN");
+  log?.(`  updater ${names.updater} ${updaterExisted ? "replaced" : "up"} (${armed ? "armed — kept CF_API_TOKEN" : "unarmed — no CF_API_TOKEN"})`);
 
-  // 5. the owner's first key
-  const owner = await ensureOwnerKey(cf, d1Id, { now, mintKey, log });
-
-  return { d1Id, readerUrl, readerKey: owner.key, keyMinted: owner.minted, uploaded };
+  return { d1Id, readerUrl, readerKey: owner.key, keyMinted: owner.minted, uploaded, updaterReplaced: updaterExisted, updaterArmed: armed, mode: only };
 }
