@@ -175,14 +175,29 @@ echo "==> deploying bookworm-updater"
 $UPDATER deploy >/dev/null
 # UPSTREAM_URL is the updater's whole configuration for now (the Cloudflare
 # API token that rewrites the reader arrives with the install path, PM-05).
-# Without it the updater's cron records "UPSTREAM_URL 未設定" and does
-# nothing — the same graceful-off shape as VAPID below, so a deploy that has
-# not been told where upstream is stays inert rather than failing.
+# The bootstrap sets it on every instance it creates; this repo-backed deploy
+# is the one install nothing else configures, so when the env leaves it unset,
+# default it to this clone's OWN GitHub releases feed — the exact URL
+# publish-release.mjs publishes to. Without the default the host is an orphan:
+# its updater records "UPSTREAM_URL 未設定" forever and arming it would do
+# nothing. The env var still overrides (a clone that should follow someone
+# else's releases), and if origin is not a GitHub repo the deploy stays inert
+# as before — the same graceful-off shape as VAPID below.
+if [[ -z "${UPSTREAM_URL:-}" ]]; then
+  ORIGIN_URL=$(git remote get-url origin 2>/dev/null || true)
+  REPO_PATH="${ORIGIN_URL%.git}"
+  REPO_PATH="${REPO_PATH#https://github.com/}"
+  REPO_PATH="${REPO_PATH#git@github.com:}"
+  if [[ "$REPO_PATH" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    UPSTREAM_URL="https://github.com/${REPO_PATH}/releases/latest/download/"
+    echo "    (UPSTREAM_URL defaulted from origin: ${UPSTREAM_URL})"
+  fi
+fi
 if [[ -n "${UPSTREAM_URL:-}" ]]; then
   echo "==> pushing UPSTREAM_URL secret to bookworm-updater"
   printf '%s' "$UPSTREAM_URL" | $UPDATER secret put UPSTREAM_URL
 else
-  echo "    (UPSTREAM_URL not set — the updater checks nothing until it is)"
+  echo "    (UPSTREAM_URL not set and origin is not a GitHub repo — the updater checks nothing until it is)"
 fi
 
 # The Cloudflare API token that rewrites the reader (PM-05's install path) —
