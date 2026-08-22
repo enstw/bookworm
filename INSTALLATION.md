@@ -195,7 +195,10 @@ repo 再無關係 — 更新也一樣，見下一節。
 
    或在後台手動：**Workers & Pages → bookworm-updater → Settings → Variables and
    Secrets →** 加 `CF_API_TOKEN`（Secret，貼上那把窄權 token）與 `CF_ACCOUNT_ID`
-   （Secret，貼上 Account ID）。
+   （Secret，貼上 Account ID）。加完**一定要到 Deployments 分頁確認 active 版本是最新
+   的那個**（後台每加一個 secret 就產生一個新版本，但不一定會自動成為 active；實際
+   發生過：active 停在只有 `CF_API_TOKEN` 的版本，更新器於是永遠「沒武裝」，面板只看
+   到「上次安裝：尚無」）。不對就把最新版本 Promote 到 100%。
 
 3. 到 `$URL/admin` 的〈更新〉面板挑安裝原則：**自動（滿 N 天後）**、**只通知我**、或
    **固定不動**。預設是自動、觀察 2 天 — 上游先跑一天當金絲雀，你的機器等版本穩定了

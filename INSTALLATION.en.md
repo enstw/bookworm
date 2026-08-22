@@ -204,7 +204,11 @@ updates, 🧑 give it a **narrow** token:
    ```
 
    Or in the dashboard: **Workers & Pages → bookworm-updater → Settings → Variables and Secrets →** add
-   `CF_API_TOKEN` (Secret, the narrow token) and `CF_ACCOUNT_ID` (Secret, the Account ID).
+   `CF_API_TOKEN` (Secret, the narrow token) and `CF_ACCOUNT_ID` (Secret, the Account ID). Then **check
+   the Deployments tab: the active version must be the newest one.** Every secret you add creates a new
+   version, and it does not always become active — it has happened that the active version was the one
+   holding only `CF_API_TOKEN`, so the updater was never armed and the panel just said "last install:
+   never". If so, promote the newest version to 100%.
 
 3. In the **Updates** panel at `$URL/admin`, pick a policy: **Automatic (after N days)**, **Notify me
    only**, or **Pinned (stay put)**. The default is automatic with a 2-day soak — upstream runs a day
