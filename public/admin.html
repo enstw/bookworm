@@ -42,6 +42,9 @@
     input[type="file"] { width: 100%; }
     .meta-preview { display: flex; gap: 0.8rem; align-items: flex-start; margin: 0.7rem 0; }
     #coverThumb { max-height: 120px; max-width: 96px; border-radius: 4px; }
+    /* the hidden attribute must beat every display: rule below (.btn,
+       .meta-preview, …) or a hidden button simply stays on screen */
+    [hidden] { display: none !important; }
     .btn {
       display: inline-block; margin-top: 0.9rem; padding: 0.55rem 1.2rem;
       border: 1px solid var(--accent); border-radius: 8px; color: var(--accent);
@@ -1331,7 +1334,14 @@
       let d;
       try { d = await api("/api/admin/update", { cache: "no-store" }); }
       catch (err) { return panel.replaceChildren(el("div", { class: "small err", text: err.message })); }
-      const when = (ms) => ms ? new Date(ms).toLocaleString() : t("up.never");
+      // same shape as the version stamps (2026-08-22 23:30), device-local time
+      const when = (ms) => {
+        if (!ms) return t("up.never");
+        const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+          hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+        }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+        return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+      };
       const upToDate = d.upstream.version && d.upstream.version === d.running;
       panel.replaceChildren(
         // R10: a silent updater is warned about, loudly, above everything else
