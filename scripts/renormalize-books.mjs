@@ -15,7 +15,7 @@
 //        [--dry-run] [slug-or-id …]         (token also via BOOKWORM_ADMIN_TOKEN)
 
 import { parseArgs } from "node:util";
-import { normalizeBody, GHOST_CHARS } from "../public/split-core.mjs";
+import { normalizeBody, spaceHeading, spaceHeadingLine, GHOST_CHARS } from "../public/split-core.mjs";
 
 function die(msg) {
   console.error(`error: ${msg}`);
@@ -100,12 +100,18 @@ for (const b of wanted) {
       while (queue.length) {
         const [c, ci] = queue.shift();
         const old = await (await req(`/books/${encodeURIComponent(b.id)}/${encodeURIComponent(c.file)}`)).text();
-        const now = normalizeBody(old);
+        // the heading rule too (spaceHeading): the title in the manifest and
+        // the heading line in the body move together, or the reader shows
+        // the heading twice
+        const now = spaceHeadingLine(normalizeBody(old));
+        const title = spaceHeading(c.title ?? "");
+        const titleChanged = title !== c.title;
+        if (titleChanged) c.title = title;
         now.split("\n").forEach((line, li) => {
           if (line.trim() && !VISIBLE.test(line) && suspicious.length < 20)
             suspicious.push(`ch ${ci + 1} line ${li + 1} (${line.length} chars): ${lineCodepoints(line)}`);
         });
-        if (now === old) continue;
+        if (now === old) { if (titleChanged) { changed++; changedAt.push(ci + 1); } continue; }
         changed++;
         removed += old.length - now.length;
         changedAt.push(ci + 1);

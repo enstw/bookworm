@@ -10,6 +10,27 @@ import { normalizeBody, piecesToEntries } from "../public/split-core.mjs";
 
 const out = {};
 
+// 第N章 run into its name gets an ideographic space; existing gaps normalise
+// to it; a bare number, punctuation or a part marker is left alone
+import { spaceHeading, spaceHeadingLine } from "../public/split-core.mjs";
+{
+  const cases = [
+    ["第三章血戰", "第三章　血戰"],
+    ["第三章 血戰", "第三章　血戰"],
+    ["第三章　血戰", "第三章　血戰"],
+    ["第1章串流", "第1章　串流"],
+    ["第三章", "第三章"],
+    ["第三章：血戰", "第三章：血戰"],
+    ["第三章 (2)", "第三章 (2)"],
+    ["Chapter 3 The Title", "Chapter 3 The Title"],
+    ["序章", "序章"],
+  ];
+  const bad = cases.filter(([a, b]) => spaceHeading(a) !== b).map(([a]) => `${a} → ${spaceHeading(a)}`);
+  const line = spaceHeadingLine("　　第三章血戰\n　　正文。\n");
+  out.spaceHeading = !bad.length && line === "　　第三章　血戰\n　　正文。\n"
+    ? `ok (${cases.length} cases; body heading line spaced, indent kept)` : `FAIL ${JSON.stringify({ bad, line })}`;
+}
+
 out.collapse = normalizeBody("第一段\n\n\n第二段\n\n第三段\n")
   === "第一段\n第二段\n第三段\n"
   ? "ok" : `FAIL ${JSON.stringify(normalizeBody("第一段\n\n\n第二段\n\n第三段\n"))}`;
