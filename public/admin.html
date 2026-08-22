@@ -1387,13 +1387,33 @@
 
     // ---------- 改進建議 ----------
 
+    const fbWhen = (ms) => {
+      if (!ms) return "";
+      const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+        hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+      }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+      return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+    };
     // the same public GET the AI uses — what this list shows is exactly the
     // queue a dev session will read
     async function loadNotes() {
       try {
         const { notes } = await (await fetch("/api/feedback")).json();
-        $("fbList").replaceChildren(...(notes ?? []).map((n) =>
-          el("div", { class: "small muted", text: n.body })));
+        // one line per note: when it was written, the text, and 完成 — the
+        // only way a note leaves the queue (no deploy sweeps it any more)
+        $("fbList").replaceChildren(...(notes ?? []).map((n) => {
+          const done = el("button", { class: "btn small", text: t("fb.done") });
+          done.onclick = async () => {
+            done.disabled = true;
+            try { await api(`/api/admin/feedback/${n.id}`, { method: "DELETE" }); loadNotes(); }
+            catch (err) { $("fbMsg").textContent = err.message; $("fbMsg").className = "msg err"; done.disabled = false; }
+          };
+          return el("div", { class: "book-head" },
+            el("span", { class: "name" },
+              el("span", { class: "small muted", text: fbWhen(n.createdAt) + " " }),
+              el("span", { class: "small", text: n.body })),
+            done);
+        }));
       } catch { /* the queue is still readable via curl; failing here is cosmetic */ }
     }
 

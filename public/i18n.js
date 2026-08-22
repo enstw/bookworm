@@ -378,7 +378,8 @@ const BW_STRINGS = {
 
     // --- 改進建議（在這裡寫，AI 之後不用密鑰就讀得到，部署時清空） ---
     "fb.h": "改進建議",
-    "fb.hint": "隨手記下想改進的地方。AI 開工時會從 GET /api/feedback 讀取（不需密鑰）；建議做完部署上線，這裡就自動清空 — 還讀得到的，就是還沒做的。",
+    "fb.hint": "隨手記下想改進的地方。AI 開工時會從 GET /api/feedback 讀取（不需密鑰）。做好上線後，AI 會回報處理了哪一則，由你按「完成」清掉 — 還留在這裡的，就是還沒做的。",
+    "fb.done": "完成",
     "fb.send": "記下",
     "fb.posted": "✓ 已記下",
   },
@@ -719,7 +720,8 @@ const BW_STRINGS = {
     "up.queued": (v) => `Queued for install: ${v} (the updater takes it on its next check)`,
 
     "fb.h": "Improvement notes",
-    "fb.hint": "Jot down what should improve. The AI reads these from GET /api/feedback (no key needed) when work starts; deploying the fix clears the queue — whatever is still readable is still undone.",
+    "fb.hint": "Jot down what should improve. The AI reads these from GET /api/feedback (no key needed) when work starts. Once a fix is live the AI reports which note it addressed and you press Done to clear it — whatever is still here is still undone.",
+    "fb.done": "Done",
     "fb.send": "Note it",
     "fb.posted": "✓ noted",
   },
