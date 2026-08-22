@@ -174,7 +174,7 @@ this repo — updates included, see the next section.
 
 ## Turning on automatic updates
 
-The installed updater `bookworm-updater` is cron-only and **not yet armed**: every 15 minutes it checks
+The installed updater `bookworm-updater` is cron-only and **not yet armed**: every 5 minutes it checks
 upstream for a new release and writes what it finds to the **Updates** panel in `/admin`, but with no
 token that can rewrite the reader Worker it does not actually install anything. To turn on automatic
 updates, 🧑 give it a **narrow** token:

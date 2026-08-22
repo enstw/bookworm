@@ -28,9 +28,9 @@
   // is the domain-free default.
   "services": [{ "binding": "READER", "service": "bookworm" }],
   // The check interval (the design's "Checking and installing run at different
-  // rates"): ~15 min, read-only, too cheap to ration. PM-08 splits this into
+  // rates"): ~5 min, read-only, too cheap to ration. PM-08 splits this into
   // a check cadence and a policy-driven install; until then the cron only
   // checks.
-  "triggers": { "crons": ["*/15 * * * *"] },
+  "triggers": { "crons": ["*/5 * * * *"] },
   "observability": { "enabled": true }
 }

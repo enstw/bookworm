@@ -13,7 +13,7 @@ const MODES = new Set(["automatic", "notify", "pinned"]);
 // a cron that stopped firing all look identical from outside: a timestamp in
 // D1 stops moving (R10). The reader watches that timestamp, because a dead
 // updater cannot report its own death. Past this threshold — a few times the
-// updater's ~15 min check interval — the panel warns and the owner is pushed.
+// updater's ~5 min check interval — the panel warns and the owner is pushed.
 export const SILENT_THRESHOLD_MS = 60 * 60 * 1000;
 
 // Stale for the panel: it has checked before (a fresh install with no updater

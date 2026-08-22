@@ -562,7 +562,7 @@ of the reader's code (the updater "barely changes", which is what keeps
 "update the updater" a rare act).
 
 What landed in PM-04 is the split plus the read-only half of the cron: every
-~15 min the updater fetches `UPSTREAM_URL`/`manifest.json` — `https://`
+~5 min the updater fetches `UPSTREAM_URL`/`manifest.json` — `https://`
 enforced (TLS is the whole trust anchor), `cache: "no-store"` because
 `latest/download` is a stable URL with changing contents — and writes what it
 saw to the single `updater_status` row, where `/admin` will read it (PM-08)
