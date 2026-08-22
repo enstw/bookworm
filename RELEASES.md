@@ -9,6 +9,11 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-23 — `1323edf7e6bf`
+
+- renormalize: print +N when a rule added characters, not −-N (`1323edf`)
+- split: space a Han chapter number from its name, for the eye and the voice (`3d9f31b`)
+
 ## 2026-08-23 — `78792889cd27`
 
 - updater: check every 5 minutes instead of 15 (`7879288`)
