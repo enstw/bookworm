@@ -13,7 +13,7 @@ import { isAdditive } from "./migrations.mjs";
 // (PM-16); an updater below it refuses rather than half-installs. /admin shows
 // this beside the running and upstream versions (PM-08), so a refusal names a
 // number the owner can look up.
-export const UPDATER_VERSION = 2;
+export const UPDATER_VERSION = 3;
 
 // UPSTREAM_URL is `…/releases/latest/download/` — a stable URL whose contents
 // change every release, so the one manifest we read must never come from cache
@@ -39,8 +39,8 @@ export function d1Store(env) {
       // route — the reader reads it straight out of this row.
       await env.DB.prepare(
         `INSERT INTO updater_status
-           (id, last_check_at, last_check_ok, upstream_version, upstream_released_at, detail, updater_version, upstream_url)
-         VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+           (id, last_check_at, last_check_ok, upstream_version, upstream_released_at, detail, updater_version, upstream_url, armed)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            last_check_at = excluded.last_check_at,
            last_check_ok = excluded.last_check_ok,
@@ -48,11 +48,12 @@ export function d1Store(env) {
            upstream_released_at = excluded.upstream_released_at,
            detail = excluded.detail,
            updater_version = excluded.updater_version,
-           upstream_url = excluded.upstream_url`,
+           upstream_url = excluded.upstream_url,
+           armed = excluded.armed`,
       ).bind(
         row.last_check_at, row.last_check_ok,
         row.upstream_version, row.upstream_released_at, row.detail, UPDATER_VERSION,
-        row.upstream_url ?? "",
+        row.upstream_url ?? "", row.armed ? 1 : 0,
       ).run();
     },
   };
@@ -66,7 +67,7 @@ export function d1Store(env) {
 // failed" rather than erasing what it last saw. `now` and `fetchFn` are
 // parameters so the test can pin the clock and stand in a fake upstream;
 // production passes Date.now() and the global fetch.
-export async function checkOnce({ upstreamUrl, store, now, fetchFn = fetch }) {
+export async function checkOnce({ upstreamUrl, store, now, fetchFn = fetch, armed = false }) {
   const prev = await store.read();
   const keep = {
     upstream_version: prev?.upstream_version ?? "",
@@ -76,7 +77,7 @@ export async function checkOnce({ upstreamUrl, store, now, fetchFn = fetch }) {
   // NAME the feed this machine follows (or say plainly that none is set)
   // without the reader ever holding the config: display-only, R1.
   const fail = async (detail) => {
-    await store.write({ last_check_at: now, last_check_ok: 0, ...keep, detail, upstream_url: upstreamUrl ?? "" });
+    await store.write({ last_check_at: now, last_check_ok: 0, ...keep, detail, upstream_url: upstreamUrl ?? "", armed });
     return { ok: false, detail };
   };
 
@@ -112,6 +113,7 @@ export async function checkOnce({ upstreamUrl, store, now, fetchFn = fetch }) {
     upstream_released_at: typeof manifest.released_at === "string" ? manifest.released_at : "",
     detail: "",
     upstream_url: upstreamUrl,
+    armed,
   });
   // the manifest rides back so the cron can decide without re-fetching it
   return { ok: true, version: manifest.version, manifest };

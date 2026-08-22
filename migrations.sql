@@ -18,3 +18,5 @@
 -- /admin names the upstream feed this machine follows (update-panel.mjs);
 -- the updater writes it on every check.
 ALTER TABLE updater_status ADD COLUMN upstream_url TEXT NOT NULL DEFAULT '';
+-- /admin shows whether the updater is armed; written on every check.
+ALTER TABLE updater_status ADD COLUMN armed INTEGER NOT NULL DEFAULT 0;

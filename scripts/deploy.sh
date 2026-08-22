@@ -99,6 +99,14 @@ else
     "ALTER TABLE updater_status ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''"
   echo "    added"
 fi
+echo "==> ensuring updater_status.armed column"
+if grep -q '"armed"' <<<"$UCOLS"; then
+  echo "    (already present)"
+else
+  $W d1 execute bookworm --remote --command \
+    "ALTER TABLE updater_status ADD COLUMN armed INTEGER NOT NULL DEFAULT 0"
+  echo "    added"
+fi
 
 # the owner-only push channel (readers.is_owner / push_subs.key in
 # schema.sql): both columns have to exist before the worker that reads them

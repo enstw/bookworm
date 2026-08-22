@@ -1,0 +1,183 @@
+# Cut a release WITHOUT touching the host. Dispatch-only. The gate runs the
+# full pnpm-test chain on this commit; a green run packages the reader bundle
+# and publishes it as a GitHub release — `releases/latest/download/` is what
+# every instance's updater polls, upstream's own host included (armed,
+# soak 0: the author is first to install, not pre-deployed). Then the ledger
+# records it. A red run publishes the failure record and ships nothing.
+#
+# This workflow holds NO Cloudflare credential — only the per-job
+# GITHUB_TOKEN — which is the point of splitting it from deploy.yml: the
+# routine act (a release) carries nothing that can touch the account; the
+# rare act (deploy.yml, the repair tool that push-deploys the host) does.
+# What a release gives up is the live probe before publish; what catches a
+# bad one is each instance's own health check + rollback (PM-07), the
+# never-retry rule and the fleet's soak (DESIGN: delivery pipeline).
+# scripts/test-deploy-policy.mjs asserts all of this stays true.
+name: release
+
+on:
+  workflow_dispatch:
+
+# shares deploy.yml's group: a release and a repair must never interleave
+# their ledger commits or fight over the `released` tag
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}
+      BROWSER_BIN: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # the suite runs the pushed code; leave no token on disk for it
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.21.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: ffmpeg for the tts-stream fixture
+        run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Scaffold .dev.vars and the local D1 schema
+        run: |
+          {
+            printf 'ADMIN_TOKEN=%s\n' "$ADMIN_TOKEN"
+            printf "VAPID_PRIVATE_JWK='%s'\n" "$(node scripts/gen-vapid.mjs | head -1 | cut -d= -f2-)"
+            printf 'VAPID_SUBJECT=mailto:ci@bookworm.invalid\n'
+          } > .dev.vars
+          pnpm run db:init:local
+      - name: Run the test gate
+        run: node scripts/run-ci-tests.mjs
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-gate-report
+          path: test-artifacts/
+
+  # Publishes the red-run record WITHOUT checking out or executing any code
+  # from the failed commit: everything it touches comes from the artifact the
+  # test job uploaded, validated against fixed names and a size cap before a
+  # byte of it becomes a public release asset.
+  failure-report:
+    needs: test
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-gate-report
+          path: test-artifacts
+      - name: Publish failed-tests record
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd test-artifacts
+          # fixed names only, and nothing bigger than a log tail has business
+          # being here — refuse the whole upload rather than publish a stray
+          for f in report.json report.md; do
+            [ -f "$f" ] || { echo "missing $f in artifact" >&2; exit 1; }
+          done
+          while IFS= read -r f; do
+            case "$f" in
+              ./report.json|./report.md|./logs/*.log) ;;
+              *) echo "unexpected file in artifact: $f" >&2; exit 1 ;;
+            esac
+          done < <(find . -type f)
+          TOTAL_KB=$(du -sk . | cut -f1)
+          if [ "$TOTAL_KB" -gt 102400 ]; then
+            echo "artifact is ${TOTAL_KB} KB, over the 100 MB cap" >&2
+            exit 1
+          fi
+          gh release create "test-failure-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            report.json \
+            logs/*.log \
+            --target "$GITHUB_SHA" \
+            --title "Failed tests — ${GITHUB_SHA::12}" \
+            --notes-file report.md \
+            --prerelease \
+            -R "$GITHUB_REPOSITORY"
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      # the release ledger goes to main through a PR gated on candidate-gate
+      # (H-03), so this job opens the PR and dispatches the gate
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # update-releases.mjs walks released..HEAD; a shallow clone has
+          # neither the tag nor the history behind it
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.21.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # re-cut the assets release if the wasmtts pin moved ort — before a
+      # bundle that asks for the new filename is out there to be installed
+      - run: node scripts/sync-wasmtts-assets.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # the bundle carries public/releases.json (from the ledger plus the
+      # commits since the `released` tag) and the vendored browser modules;
+      # deploy.sh does both inside a deploy, so here they are explicit
+      - run: node scripts/gen-release-notes.mjs
+      - run: node scripts/vendor.mjs
+      # The release artifact (DESIGN.md, PM-01): the bundle an instance's
+      # updater installs plus the manifest that describes it, from a staging
+      # copy of this commit (package-release.mjs stamps the BUILD itself).
+      # Before the ledger step, which moves the tag the notes are computed from.
+      - name: Publish the release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/package-release.mjs out/release
+          node scripts/publish-release.mjs out/release
+      # Ledger the release exactly as deploy.yml does: prepend what shipped to
+      # RELEASES.md, land it through a gated PR (H-03), move the `released`
+      # tag onto this commit. See deploy.yml for the recursion and race notes.
+      - name: Record the release in RELEASES.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/update-releases.mjs
+          git add RELEASES.md
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: record release ${GITHUB_SHA::12}"
+          git pull --rebase --autostash origin main
+          BRANCH="automation/release-ledger-${GITHUB_RUN_ID}"
+          HEAD_SHA=$(git rev-parse HEAD)
+          git push origin "HEAD:${BRANCH}"
+          gh pr create -R "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+            --title "docs: record release ${GITHUB_SHA::12}" \
+            --body "Automated release ledger for release run ${GITHUB_RUN_ID}; merged by the release workflow once candidate-gate is green."
+          node scripts/wait-candidate-gate.mjs "$HEAD_SHA"
+          gh pr merge "$BRANCH" -R "$GITHUB_REPOSITORY" \
+            --rebase --delete-branch --match-head-commit "$HEAD_SHA"
+          git tag -f released "$GITHUB_SHA"
+          git push -f origin released

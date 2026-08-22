@@ -63,6 +63,9 @@ export async function readPanel(env, build) {
   return {
     running: build,
     updaterVersion: s.updater_version ?? 0,
+    // whether the updater holds its install credential — the owner's arming
+    // step has no other feedback (a typo'd secret is otherwise silent)
+    armed: (s.armed ?? 0) === 1,
     // url is display-only: the panel names the feed this machine follows but
     // can never change it — that stays an owner act with Cloudflare
     // credentials (R1). An older updater never wrote it; '' means unknown.

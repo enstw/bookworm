@@ -137,8 +137,62 @@ export function checkCandidatePolicy(text) {
   return violations;
 }
 
+// The release workflow cuts a release WITHOUT deploying: it is the routine
+// act, so it must hold no Cloudflare credential at all — no repository secret
+// anywhere in the file, no deploy.sh — and still publish strictly after the
+// gate and before the ledger. The test/failure-report jobs live by the same
+// rules as deploy.yml's.
+export function checkReleasePolicy(text) {
+  const violations = [];
+  const { header, jobs } = splitJobs(text);
+  if (/^permissions:/m.test(header)) violations.push("workflow-level permissions block exists; permissions must be per job");
+  for (const job of ["test", "failure-report", "release"]) {
+    if (!(job in jobs)) violations.push(`job ${job} is missing`);
+  }
+  if (/\$\{\{\s*secrets\./.test(text)) violations.push("release workflow references repository secrets");
+  // comments may name deploy.sh (to say why it is NOT here); code may not
+  const code = text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  if (/deploy\.sh/.test(code)) violations.push("release workflow runs deploy.sh");
+  for (const [name, body] of Object.entries(jobs)) {
+    const writes = [...body.matchAll(/^\s+(\w[\w-]*): write\s*$/gm)].map((m) => m[1]);
+    if (!/^\s{4}permissions:\s*$/m.test(body)) { violations.push(`job ${name} has no explicit permissions block`); continue; }
+    if (name === "test") {
+      if (writes.length) violations.push(`test job holds write permissions: ${writes.join(", ")}`);
+      if (!/^\s+contents: read\s*$/m.test(body)) violations.push("test job is missing contents: read");
+      if (!/persist-credentials: false/.test(body)) violations.push("test job checkout persists credentials");
+    } else if (name === "failure-report") {
+      if (writes.join(",") !== "contents") violations.push(`job ${name} must hold exactly contents: write, has: ${writes.join(", ") || "none"}`);
+      if (/actions\/checkout@/.test(body)) violations.push("failure-report checks out repository code");
+      if (/node scripts\//.test(body)) violations.push("failure-report executes repository scripts");
+    } else if (name === "release") {
+      if (writes.sort().join(",") !== "actions,contents,pull-requests") {
+        violations.push(`release job must hold exactly actions/contents/pull-requests write, has: ${writes.join(", ") || "none"}`);
+      }
+    } else if (writes.length) {
+      violations.push(`unexpected job ${name} holds write permissions: ${writes.join(", ")}`);
+    }
+  }
+  const release = jobs.release ?? "";
+  const at = (s) => release.indexOf(s);
+  const packageAt = at("node scripts/package-release.mjs");
+  const publishAt = at("node scripts/publish-release.mjs");
+  const ledgerAt = at("node scripts/update-releases.mjs");
+  if (packageAt === -1) violations.push("release job does not package the release artifact");
+  if (publishAt === -1) violations.push("release job does not publish the release artifact");
+  if (ledgerAt === -1) violations.push("release job does not ledger the release");
+  if (packageAt !== -1 && publishAt !== -1 && ledgerAt !== -1 && !(packageAt < publishAt && publishAt < ledgerAt)) {
+    violations.push("release artifact must be packaged, then published, then ledgered");
+  }
+  if (!/needs: test/.test(release)) violations.push("release job does not wait for the test gate");
+  return violations;
+}
+
 const real = readFileSync(new URL(`../${WORKFLOW}`, import.meta.url), "utf8");
 assert.deepEqual(checkDeployPolicy(real), [], `${WORKFLOW} violates the permission policy`);
+
+const RELEASE = ".github/workflows/release.yml";
+const releaseText = readFileSync(new URL(`../${RELEASE}`, import.meta.url), "utf8");
+assert.deepEqual(checkReleasePolicy(releaseText), [], `${RELEASE} violates the release policy`);
 
 const CANDIDATE = ".github/workflows/candidate.yml";
 const candidate = readFileSync(new URL(`../${CANDIDATE}`, import.meta.url), "utf8");
@@ -178,4 +232,21 @@ for (const [label, mutate] of candidateMutations) {
   assert.notEqual(checkCandidatePolicy(mutated).length, 0, `mutation "${label}" was not caught`);
 }
 
-console.log("✓ deploy.yml + candidate.yml permission policy");
+const releaseMutations = [
+  ["release referencing a repository secret", (t) => t.replace("      ADMIN_TOKEN: bookworm-ci-${{ github.run_id }}", "      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}")],
+  ["release running deploy.sh", (t) => t.replace("      - run: node scripts/vendor.mjs\n", "      - run: ./scripts/deploy.sh\n")],
+  ["release artifact no longer published", (t) => t.replace("          node scripts/publish-release.mjs out/release\n", "")],
+  ["release published after the ledger", (t) => t
+    .replace("          node scripts/package-release.mjs out/release\n          node scripts/publish-release.mjs out/release\n", "          true\n")
+    .replace("          git push -f origin released\n", "          git push -f origin released\n          node scripts/package-release.mjs out/release && node scripts/publish-release.mjs out/release\n")],
+  ["release job gaining an extra grant", (t) => t.replace("      pull-requests: write\n      actions: write", "      pull-requests: write\n      actions: write\n      issues: write")],
+  ["release not gated on test", (t) => t.replace("  release:\n    needs: test\n", "  release:\n")],
+  ["test job persisting credentials", (t) => t.replace("          # the suite runs the pushed code; leave no token on disk for it\n          persist-credentials: false\n", "")],
+];
+for (const [label, mutate] of releaseMutations) {
+  const mutated = mutate(releaseText);
+  assert.notEqual(mutated, releaseText, `mutation "${label}" did not apply — fixture drifted from release.yml`);
+  assert.notEqual(checkReleasePolicy(mutated).length, 0, `mutation "${label}" was not caught`);
+}
+
+console.log("✓ deploy.yml + release.yml + candidate.yml permission policy");
