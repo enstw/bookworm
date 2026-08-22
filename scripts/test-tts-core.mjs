@@ -52,6 +52,7 @@ for (const i of [0, 3, 5, 8, 12, 13, 15]) {
 for (const [raw, want] of [
   ["　　第三章 風起雲湧", "第三章，風起雲湧"],
   ["第1章 串流測試", "第1章，串流測試"],
+  ["第三章　血戰", "第三章，血戰"], // the ideographic space spaceHeading inserts
   ["用 iPhone 讀書", "用 iPhone 讀書"],
   ["甲說。\n　　乙曰。", "甲說。 乙曰。"],
 ]) {

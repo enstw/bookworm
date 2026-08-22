@@ -9,6 +9,26 @@ export const DEFAULT_PATTERN =
 
 export const MAX_HEADING_LEN = 80; // a matching line longer than this is prose, not a heading
 
+// 「第三章血戰」→「第三章　血戰」. A Han chapter number run straight into its
+// name gets an ideographic space (U+3000 — a full em in 直排 too, where an
+// ASCII space is a sliver); an existing gap of any whitespace is normalised
+// to the same one. The reader shows the gap, and ttsPrompt turns it into
+// 「，」, so the visible break and the heard pause come from one character
+// (the owner's note, 2026-08-22). Only before a name: 「第三章」 alone, or a
+// number followed by punctuation or a part marker like 「第三章 (2)」, is
+// left as it is.
+export const HEADING_NUMBER =
+  /^(第\s*[0-9〇零一二三四五六七八九十百千万萬两兩]+\s*[章节節回卷部篇集话話])[\s　]*(?=[\p{L}\p{N}「『《【])/u;
+export function spaceHeading(title) {
+  return title.replace(HEADING_NUMBER, (m, num) => num + "　");
+}
+// the same rule on a chapter body's first line, which IS the heading (the
+// reader renders it as the <h2> and skips it as a paragraph only while it
+// still equals the title — so the two must be spaced together)
+export function spaceHeadingLine(body) {
+  return body.replace(/^([^\S\n]*)([^\n]*)/u, (m, ws, line) => ws + spaceHeading(line));
+}
+
 export function deriveSlug(name) {
   return name
     .toLowerCase()
@@ -166,7 +186,7 @@ export function splitTextIntoPieces(text, opts = {}) {
     // a line with a full stop is a sentence, not a heading (chapter titles may
     // contain ，/、 but never 。)
     if (t && t.length <= MAX_HEADING_LEN && !t.includes("。") && re.test(t))
-      marks.push({ off, title: t });
+      marks.push({ off, title: spaceHeading(t) });
     off += line.length + 1;
   }
 
@@ -193,20 +213,23 @@ export function splitTextIntoPieces(text, opts = {}) {
     chapters.push({ title: bookTitle, start: 0, end: text.length });
   }
 
-  // enforce a max chapter size (split oversized ones at a line break)
+  // enforce a max chapter size (split oversized ones at a line break). The
+  // first piece of a chapter starts with its heading line: space it like the
+  // title was, or the reader would show the heading twice.
   const pieces = [];
   for (const ch of chapters) {
     let s = ch.start;
     let part = 1;
+    const body = (a, b) => (part === 1 ? spaceHeadingLine(text.slice(a, b)) : text.slice(a, b));
     while (ch.end - s > maxChars) {
       let cut = text.lastIndexOf("\n", s + maxChars);
       if (cut <= s) cut = s + maxChars;
-      pieces.push({ title: part === 1 ? ch.title : `${ch.title} (${part})`, body: text.slice(s, cut) });
+      pieces.push({ title: part === 1 ? ch.title : `${ch.title} (${part})`, body: body(s, cut) });
       s = cut;
       part++;
     }
     if (ch.end - s > 0) {
-      pieces.push({ title: part === 1 ? ch.title : `${ch.title} (${part})`, body: text.slice(s, ch.end) });
+      pieces.push({ title: part === 1 ? ch.title : `${ch.title} (${part})`, body: body(s, ch.end) });
     }
   }
   return { pieces, headingCount: marks.length };

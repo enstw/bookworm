@@ -863,6 +863,16 @@ tree, so the repo never grows a second, diverging install path.
   manifest last with fresh chars/bytes/generatedAt so `?v=` caches bust and
   the shelf index stays honest; the log prints removed codepoints and
   1-based chapter numbers, never titles).
+- **Heading spacing.** `spaceHeading` in `split-core.mjs` puts an
+  ideographic space (U+3000) between a Han chapter number and its name —
+  「第三章血戰」→「第三章　血戰」, any existing gap normalised to the same —
+  at split time, on the title and on the body's heading line together (the
+  reader skips the heading paragraph only while it equals the title). One
+  character serves both senses: the page shows the break, and `ttsPrompt`
+  turns a gap between Han characters into 「，」, so every engine pauses
+  there. U+3000 rather than an ASCII space because 直排 renders the latter
+  as a sliver. `renormalize-books.mjs` applies the same rule to stored books
+  (the owner's 2026-08-22 note).
 
 ## Positions & sync
 
