@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-22 — `c49284454c6b`
+
+- ci: release.yml cuts a release without deploying; panel shows armed state (`c492844`)
+
 ## 2026-08-22 — `cd19e0801506`
 
 - deploy: move the upstream_url backfill below the books blocks it clobbered (`cd19e08`)
