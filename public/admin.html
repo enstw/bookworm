@@ -1374,8 +1374,20 @@
           d.lastInstall.result === "rolled-back" || d.lastInstall.result === "failed"));
       $("upMode").value = d.policy.mode;
       $("upSoak").value = d.policy.soakDays;
+      // an "install now" already queued lives in D1 until the cron takes it —
+      // show it, or the owner reloads and thinks the click was lost. A queue
+      // for a version upstream has since moved past is one the cron will
+      // never take (decide() matches the exact version): say so, loudly, and
+      // give the button back so they can queue the current one.
+      const queued = d.installNow.version && d.installNow.version !== d.running;
+      const queuedStale = queued && d.upstream.version && d.installNow.version !== d.upstream.version;
+      if (queued) panel.append(upRow(t("up.queuedRow"),
+        queuedStale ? t("up.queuedStale", d.installNow.version, d.upstream.version)
+                    : t("up.queuedPending", d.installNow.version, when(d.installNow.at)),
+        queuedStale));
       // offer "install now" only when upstream has something newer to install
-      $("upNow").hidden = !(d.upstream.version && !upToDate);
+      // and it is not already queued (pressing again would only re-queue it)
+      $("upNow").hidden = !(d.upstream.version && !upToDate) || (queued && !queuedStale);
     }
 
     $("upSave").onclick = async () => {
@@ -1392,6 +1404,7 @@
       try {
         const r = await api("/api/admin/update/install-now", { method: "POST" });
         m.textContent = t("up.queued", r.version); m.className = "msg ok";
+        loadUpdate();
       } catch (err) { m.textContent = err.message; m.className = "msg err"; }
     };
 
