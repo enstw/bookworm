@@ -77,16 +77,17 @@ CREATE INDEX IF NOT EXISTS testlog_page_id ON testlog (page, id DESC);
 
 -- 改進建議 (the feedback queue): improvement notes the owner writes from
 -- /admin, for an AI dev session to read back through the unauthenticated
--- GET /api/feedback — no admin key changes hands. Add: admin only. Clear: no
--- route at all — deploy.sh re-applies this file on every deploy, so the
--- DELETE below empties the queue; a note that can still be read is a
--- suggestion that has not shipped yet.
+-- GET /api/feedback — no admin key changes hands. Add: admin only. Clear:
+-- the owner's 完成 button (DELETE /api/admin/feedback/<id>). This file used
+-- to DELETE the table on every apply so that "deploying clears the queue";
+-- pull mode ended that — an install runs additive migrations only — and the
+-- sweep took unaddressed notes with it anyway. Notes now live until the
+-- owner says they are done.
 CREATE TABLE IF NOT EXISTS feedback (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   body       TEXT    NOT NULL,
   created_at INTEGER NOT NULL DEFAULT 0
 );
-DELETE FROM feedback;
 
 -- Reader keys: possession of a key IS the reading identity. Each row is one
 -- device credential mapping a bearer key to the user whose positions and

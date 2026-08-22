@@ -15,8 +15,7 @@ and commit bodies carry the investigations since.
 - Fresh checkout: copy `.dev.vars.example` to `.dev.vars`, then
   `pnpm run db:init:local` — without the schema every table read 500s
   (`no such table`), and without the token every admin route 401s.
-  Re-applying the schema is always safe, and also empties the local feedback
-  queue — the local rehearsal of the deploy-sweep.
+  Re-applying the schema is always safe (it creates, never deletes).
 - `pnpm run dev` — wrangler dev on <http://localhost:8787>. Use pnpm, not
   npm — npm is disabled outright on the owner's machines (`npx` → `pnpm dlx`).
   The machines also set `strictDepBuilds`: a new dependency that carries a
@@ -41,10 +40,14 @@ Start a session by reading `/api/feedback` on the owner's live instance
 repo — on an owner machine read it from the untracked `.dev.vars`
 (`BOOKWORM_ORIGIN=`), in workflows it is the `BOOKWORM_URL` secret, and
 humans ask the owner). Each note is an improvement request the owner wrote
-from the phone on `/admin` — treat it as a ticket. Deploying clears the
-queue (`schema.sql` empties the table on every apply), so whatever is still
-readable is still undone. There is no delete route; shipping the fix is how
-a note gets cleared.
+from the phone on `/admin` — treat it as a ticket. Only the owner clears
+one, with 完成 on `/admin` (`DELETE /api/admin/feedback/<id>`, admin-gated;
+the AI holds no key and never calls it), so when you ship a fix, say which
+note it addressed so the owner can clear it. Whatever is still readable is
+what the owner still considers open. The deploy-time sweep (`schema.sql`
+used to empty the table on every apply) is gone: a pull-mode install runs
+additive migrations only, so it never reached the host, and it swept
+unaddressed notes along with the shipped ones.
 
 The second inbox is `/api/testlog?page=report` (reader key required): each
 row is one 🚩 tap on the player bar — book, chapter, char offset, engine and

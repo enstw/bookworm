@@ -572,10 +572,12 @@ async function handleSettings(request, env, url, who) {
 // GET /api/feedback — 改進建議, the owner's suggestion inbox for the AI.
 // Written from /admin (POST /api/admin/feedback) when an idea strikes on the
 // phone; read back by a dev agent with this plain unauthenticated GET, so no
-// admin key ever has to be handed to a tool. Deleted by no route at all:
-// deploy.sh re-applies schema.sql on every deploy and that file empties the
-// table — shipping the fix is what clears its note, so whatever this returns
-// is exactly the work still outstanding.
+// admin key ever has to be handed to a tool. Cleared only by the owner
+// pressing 完成 on /admin (DELETE below): the deploy-time sweep that used to
+// empty the table is gone — a pull-mode install runs additive migrations
+// only, so it never reached the host, and it swept unaddressed notes along
+// with the shipped ones anyway. Whatever this returns is what the owner
+// still considers open.
 async function listFeedback(request, env) {
   if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
   const rows = (await env.DB.prepare(
@@ -604,6 +606,15 @@ async function postFeedback(request, env) {
   await env.DB.prepare("INSERT INTO feedback (body, created_at) VALUES (?, ?)")
     .bind(text, Date.now()).run();
   return json({ ok: true });
+}
+
+// DELETE /api/admin/feedback/<id> — the owner marks a note done. The AI never
+// calls this (it holds no admin key, by design); a shipped fix is reported
+// back to the owner, who clears the note here.
+async function deleteFeedback(request, env, id) {
+  if (request.method !== "DELETE") return json({ error: "method not allowed" }, 405);
+  const r = await env.DB.prepare("DELETE FROM feedback WHERE id = ?").bind(id).run();
+  return json({ ok: true, deleted: r.meta?.changes ?? 0 });
 }
 
 // GET /api/admin/readers — every key with its user and label, oldest first.
@@ -1114,8 +1125,11 @@ async function handleAdmin(request, env, ctx, path) {
   // sendBeacon-only writers can log (see testlogSign)
   if (path === "/api/admin/session") return await mintTestlogSession(request, env);
 
-  // POST /api/admin/feedback — one 改進建議 onto the AI's queue
+  // POST /api/admin/feedback — one 改進建議 onto the AI's queue;
+  // DELETE /api/admin/feedback/<id> — the owner marks one done
   if (path === "/api/admin/feedback") return postFeedback(request, env);
+  const fm = path.match(/^\/api\/admin\/feedback\/(\d+)$/);
+  if (fm) return deleteFeedback(request, env, Number(fm[1]));
 
   // /api/admin/readers — mint, list, revoke and flag reader keys; the whole
   // lifecycle lives on /admin (see the readers table in schema.sql)

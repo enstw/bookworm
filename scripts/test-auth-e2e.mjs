@@ -50,7 +50,7 @@ const READER_401 = [
   "/api/push/subscribe", "/api/push/test", "/api/testlog",
 ];
 const ADMIN_401 = [
-  "/api/admin/ping", "/api/admin/session", "/api/admin/feedback",
+  "/api/admin/ping", "/api/admin/session", "/api/admin/feedback", "/api/admin/feedback/1",
   "/api/admin/readers", "/api/admin/reindex",
   "/api/admin/audit", "/api/admin/cleanup", "/api/admin/owner-test",
   "/api/admin/update", "/api/admin/update/policy", "/api/admin/update/install-now",
