@@ -145,6 +145,9 @@ CREATE TABLE IF NOT EXISTS updater_status (
   -- the source this machine follows (or warn that none is set). Display-only:
   -- setting it stays an owner act with Cloudflare credentials, never the panel.
   upstream_url         TEXT    NOT NULL DEFAULT '',
+  -- 1 when the updater holds CF_API_TOKEN + CF_ACCOUNT_ID, written by every
+  -- check: the only feedback the owner's arming step gets.
+  armed                INTEGER NOT NULL DEFAULT 0,
   detail               TEXT    NOT NULL DEFAULT '',
   last_install_at      INTEGER NOT NULL DEFAULT 0,
   last_install_version TEXT    NOT NULL DEFAULT '',

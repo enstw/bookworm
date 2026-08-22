@@ -57,13 +57,30 @@ suggestion queue before treating them as open.
 
 ## Delivery pipeline
 
-Merging to `main` does not deploy — cutting a release is a deliberate act:
-dispatch the `deploy` workflow (`gh workflow run deploy.yml`; Renovate's
-weekly roll-up dispatches it itself), and a green gate deploys the host and
-only then publishes the release the fleet pulls. Work lands only through a
-PR — the ruleset below rejects direct pushes server-side — so the path of a
-change is: branch → PR → green `candidate-gate` → rebase merge, and when a
-release is wanted: dispatch → gated deploy → release ledger.
+Merging to `main` does not deploy and does not release. Two dispatch-only
+workflows, split by what they may touch:
+
+- **`release.yml` — the routine act.** `gh workflow run release.yml`: the
+  full test gate, then package → publish the release → ledger. It holds
+  **no Cloudflare credential** (only the per-job `GITHUB_TOKEN`) and never
+  runs `deploy.sh`; `test-deploy-policy.mjs` refuses a version that does.
+  Upstream's own host is just the first instance to pull it — armed, soak 0
+  (the fleet's canary) — not something the release pre-deploys.
+- **`deploy.yml` — the repair tool.** The same gate, then `deploy.sh`
+  push-deploys the host (reader, updater, D1 backfills, secrets) and only
+  then publishes a release. This is what carries a change the pull path
+  cannot: a new updater, a new secret, a column the host's live D1 needs
+  before the worker that reads it. Renovate's weekly roll-up dispatches
+  this one, so a dependency bump is still live-probed before it is published.
+
+What the release path gives up is the live probe before publish — a build
+the gate passed but Cloudflare will not serve can reach `releases/latest`.
+What catches it is placed on the instances instead: the health check and
+automatic rollback (PM-07), the never-retry rule for a version that failed,
+and the fleet's soak behind upstream's zero-soak host. Work lands only
+through a PR — the ruleset below rejects direct pushes server-side — so the
+path of a change is: branch → PR → green `candidate-gate` → rebase merge,
+and when a release is wanted: `release.yml` → gated publish → ledger.
 
 ### Landing a PR
 
@@ -81,8 +98,8 @@ origin/main`, then PR the branch as usual.
 
 Expect the merge to be refused ONCE even on a green gate — "head branch is
 not up to date" or `Required status check "candidate-gate" is expected`.
-That is the ledger race, not a failure: a dispatched deploy lands a
-release-ledger commit on `main` minutes later, and a strict required check
+That is the ledger race, not a failure: a dispatched release or deploy lands
+a release-ledger commit on `main` minutes later, and a strict required check
 goes stale the moment the base moves — so it bites PRs in flight around a
 dispatch, no longer after every merge. The recipe: `git fetch
 && git rebase origin/main && git push --force-with-lease`, which re-runs the

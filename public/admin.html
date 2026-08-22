@@ -1346,6 +1346,11 @@
           : /未設定/.test(d.lastCheck.detail)
             ? [el("div", { class: "msg err", text: t("up.sourceUnset") })]
             : [upRow(t("up.source"), "—")]),
+        // the owner's arming step gets its feedback here and nowhere else; an
+        // updater older than v3 never wrote the flag — say so, don't cry wolf
+        upRow(t("up.armed"),
+          d.updaterVersion >= 3 ? (d.armed ? t("up.armedYes") : t("up.armedNo")) : t("up.armedUnknown"),
+          d.updaterVersion >= 3 && !d.armed),
         // PM-09: a release the updater will not take without you — shown here so
         // an instance with no owner device flagged still says why nothing moved
         ...(d.waiting.version && d.waiting.version !== d.running

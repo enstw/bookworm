@@ -26,7 +26,10 @@ export default {
   // it holds (PM-05) unreachable from the internet (R1).
   async scheduled(controller, env, ctx) {
     const now = Date.now();
-    const res = await checkOnce({ upstreamUrl: env.UPSTREAM_URL, store: d1Store(env), now });
+    // armed rides the check so /admin can SHOW whether the owner's arming
+    // took (a secret typo is otherwise silent: nothing installs, ever)
+    const armed = !!(env.CF_API_TOKEN && env.CF_ACCOUNT_ID);
+    const res = await checkOnce({ upstreamUrl: env.UPSTREAM_URL, store: d1Store(env), now, armed });
     // install only off a successful check, and only when armed (runInstall
     // returns at once without CF_API_TOKEN)
     if (res.ok) await runInstall({ env, manifest: res.manifest, now });
