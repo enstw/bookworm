@@ -159,7 +159,9 @@ for (const b of wanted) {
     : "";
   console.log(
     `${opts["dry-run"] ? "· would rewrite" : "✓"} ${label(b)}: ` +
-    `${changed}/${chapters.length} chapters${where}, −${removed.toLocaleString()} chars${cut}`,
+    // `removed` goes negative when a rule ADDS characters (spaceHeading);
+    // print the sign the reader expects rather than "−-1,191"
+    `${changed}/${chapters.length} chapters${where}, ${removed < 0 ? "+" : "−"}${Math.abs(removed).toLocaleString()} chars${cut}`,
   );
 }
 
