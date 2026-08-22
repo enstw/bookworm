@@ -374,9 +374,9 @@ const BW_STRINGS = {
     "up.save": "儲存原則",
     "up.saved": "✓ 已儲存",
     "up.now": "立即安裝",
-    "up.queued": (v) => `已排入安裝：${v}（更新器最多 15 分鐘內開始，完成後這裡會顯示結果）`,
+    "up.queued": (v) => `已排入安裝：${v}（更新器最多 5 分鐘內開始，完成後這裡會顯示結果）`,
     "up.queuedRow": "已排定安裝",
-    "up.queuedPending": (v, at) => `${v}（${at} 排定；更新器最多 15 分鐘內開始）`,
+    "up.queuedPending": (v, at) => `${v}（${at} 排定；更新器最多 5 分鐘內開始）`,
     "up.queuedStale": (v, latest) => `${v} — 但上游已經是 ${latest}，這筆不會執行；請再按一次「立即安裝」`,
 
     // --- 改進建議（在這裡寫，AI 之後不用密鑰就讀得到，部署時清空） ---
@@ -720,9 +720,9 @@ const BW_STRINGS = {
     "up.save": "Save policy",
     "up.saved": "✓ saved",
     "up.now": "Install now",
-    "up.queued": (v) => `Queued for install: ${v} (the updater starts within 15 minutes; the result shows here when done)`,
+    "up.queued": (v) => `Queued for install: ${v} (the updater starts within 5 minutes; the result shows here when done)`,
     "up.queuedRow": "Queued install",
-    "up.queuedPending": (v, at) => `${v} (queued ${at}; the updater starts within 15 minutes)`,
+    "up.queuedPending": (v, at) => `${v} (queued ${at}; the updater starts within 5 minutes)`,
     "up.queuedStale": (v, latest) => `${v} — but upstream is now ${latest}, so this will not run; press Install now again`,
 
     "fb.h": "Improvement notes",
