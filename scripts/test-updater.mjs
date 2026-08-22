@@ -596,9 +596,12 @@ function panelDb(state) {
   const q1 = await queueInstallNow({ DB: panelDb(seen) }, 999);
   const none = { status: { upstream_version: "" }, policy: {} };
   const q2 = await queueInstallNow({ DB: panelDb(none) }, 999);
+  // the running version is refused even though it was "seen": nothing to install
+  const same = { status: { upstream_version: "9a · x" }, policy: {} };
+  const q3 = await queueInstallNow({ DB: panelDb(same) }, 999, "9a · x");
   out.panelInstallNow = q1.ok && q1.version === "9a · x" && seen.policy.install_now_version === "9a · x" && seen.policy.install_now_at === 999 &&
-    q2.ok === false && /no upstream/.test(q2.error)
-    ? "ok (queues the seen version; refuses when none seen)" : `FAIL ${JSON.stringify({ q1, q2, policy: seen.policy })}`;
+    q2.ok === false && /no upstream/.test(q2.error) && q3.ok === false && /already running/.test(q3.error) && !same.policy.install_now_version
+    ? "ok (queues the seen version; refuses when none seen or already running)" : `FAIL ${JSON.stringify({ q1, q2, q3, policy: seen.policy })}`;
 }
 
 // ---- the silent-updater alarm (PM-14, R10) ------------------------------

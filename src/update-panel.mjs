@@ -107,10 +107,15 @@ export async function setPolicy(env, body) {
 // no callable surface is opened on the updater (the design's "An install button,
 // without giving the updater a door"). Refuses when nothing has been seen yet,
 // so the button cannot queue an empty request.
-export async function queueInstallNow(env, now) {
+// `running` is the reader's own BUILD: a queue for the version already
+// running is refused server-side, because the client once showed the button
+// regardless (a [hidden] CSS bug) and the owner queued the running version —
+// the cron then saw a newer release, matched nothing, and silently soaked.
+export async function queueInstallNow(env, now, running = "") {
   const s = await env.DB.prepare("SELECT upstream_version FROM updater_status WHERE id = 1").first();
   const version = s?.upstream_version ?? "";
   if (!version) return { ok: false, error: "no upstream version seen yet" };
+  if (running && version === running) return { ok: false, error: "already running the latest version" };
   await env.DB.prepare(
     `INSERT INTO updater_policy (id, install_now_version, install_now_at) VALUES (1, ?, ?)
      ON CONFLICT (id) DO UPDATE SET install_now_version = excluded.install_now_version, install_now_at = excluded.install_now_at`,

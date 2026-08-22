@@ -1153,7 +1153,7 @@ async function handleAdmin(request, env, ctx, path) {
   }
   if (path === "/api/admin/update/install-now") {
     if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
-    const r = await queueInstallNow(env, Date.now());
+    const r = await queueInstallNow(env, Date.now(), BUILD);
     return json(r, r.ok ? 200 : 400);
   }
 
