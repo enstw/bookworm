@@ -9,6 +9,16 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-23 — `78792889cd27`
+
+- updater: check every 5 minutes instead of 15 (`7879288`)
+- docs: after adding the updater's secrets, check the active version (`1305cbd`)
+- admin: queued-install copy says 5 minutes, matching the new cron (`34f8d92`)
+- admin: show the queued install-now, hide the button while it waits (`b81c92e`)
+- admin: make hidden actually hide, and date the last check like a version stamp (`21ff5ae`)
+- admin: refuse an install-now for the version already running (`09ed60b`)
+- feedback: the owner clears a note with 完成; no deploy sweeps the queue (`5e70ddf`)
+
 ## 2026-08-22 — `c49284454c6b`
 
 - ci: release.yml cuts a release without deploying; panel shows armed state (`c492844`)
