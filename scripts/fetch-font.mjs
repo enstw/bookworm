@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const FONT_RELEASE = "v4.4.0_lxgw1.522_nerd3.5.0";
+const FONT_RELEASE = "v4.5.0_lxgw1.522_nerd3.5.1";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dest = join(root, "public", "fonts", "ENSFont.woff2");
