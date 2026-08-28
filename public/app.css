@@ -425,6 +425,10 @@ button {
   font-size: 1.4rem;
   padding: 0.4rem 0.65rem;
 }
+/* the engine button is a word, not a glyph — status-text size; accent while
+   the engine running is the fallback rather than the chosen default */
+.playerbar .engbtn { font-size: 0.85rem; padding: 0.55rem 0.5rem; }
+.playerbar .engbtn.fallback { color: var(--accent); }
 
 /* with the botnav hidden the player can sit at the bottom edge */
 :root:not([data-bars]) .playerbar {

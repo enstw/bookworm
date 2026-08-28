@@ -1173,13 +1173,30 @@ where supported, CHAIN (double-buffered element swap) elsewhere;
 `globalThis.bwPlayer` says which. The online backend speaks Microsoft Edge
 read-aloud (protocol gotchas commented in `src/edge-tts.js`); real Mandarin
 rate ≈ 4.5 chars/s; TTS chunk 0 is always the chapter heading alone. **The
-WASM engine serves all real listening: `packReady()` prefers it whenever the
-voice pack is cached, and every reading device holds the pack — the online
-engines are only reachable from a pack-less device (fresh install, evicted
-cache, `bw_tts="stream"`). A pronunciation report in the feedback queue
+WASM engine serves all real listening by default: `packReady()` picks it
+whenever the voice pack is cached, and every reading device holds the pack —
+the online engines are reached from a pack-less device (fresh install,
+evicted cache) or by choice. A pronunciation report in the feedback queue
 therefore describes Matcha unless the player log says otherwise; diagnose
 there first.** Rejected alternatives: Web Speech API (iOS pauses it on
 lock), Azure/OpenAI TTS (~$200/novel).
+
+**預設引擎與備援** (owner, 2026-08-28). `bw_tts` is per-device — `"offline"`
+(default) or `"online"` (the retired force-online flag `"stream"` reads as
+`"online"`) — and the other engine is the fallback. The player bar's engine
+button names the engine RUNNING; its title names the default; they differ,
+and the button turns accent, exactly while a fallback is in effect. A tap
+flips the default and, under a live session, ends it and reopens on the
+other engine at the voice's position, inside the same tap (the element
+blessing needs the gesture). The fallbacks: 離線→線上 when the engine fails
+to initialise or the synth dies mid-book (`wasmSynthLoop`); 線上→離線 when
+▶ is pressed with no network, or a chunk fetch gets no answer at all
+(`TypeError`, never an HTTP status) while the buffer is under 30 s
+(`feedStream`). Each swap ends the timeline it leaves before opening the
+other, which is what the "never swap mid-stream" rule in `pickEngine`
+actually protects; the CHAIN engine (no MSE — desktop Firefox) has no
+fallback path. The pack offer pill no longer hides behind the online
+preference: with 線上 as the default the pack IS the fallback.
 
 ### The offline engine
 
