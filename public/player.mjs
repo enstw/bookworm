@@ -746,15 +746,16 @@ function streamAdvanceChunk(d) {
 // upstream so they are tested there (the ledger: DESIGN.md → TTS). What
 // stays here is the reader's side of the contract: chapter text → sentence
 // spans (ttsPrompt on each prompt, offsets kept raw), the next chapter when
-// one runs out (`more`), the timeline position → (chapter, char) → bookmark,
-// highlight and page-follow, ⏮/⏭ at chunk grain, and the engine fallbacks.
+// one runs out (`more`) and a chapter again when the player rebuilds in one
+// the producer has left (`restore`), the timeline position → (chapter,
+// char) → bookmark, highlight and page-follow, ⏮/⏭ at chunk grain, and the
+// engine fallbacks.
 
 export const wasm = {
   gen: 0,             // session generation — stale async work checks this
   player: null,       // the upstream player, made once on the reader's element
   pendingOpen: false, // chapter crossed while hidden; DOM catches up on show
   lastStatus: "",     // the upstream status last mirrored into the bar
-  drained: false,     // the producer has said 已結束 once this session
 };
 
 // ---- flight recorder ----------------------------------------------------
@@ -865,7 +866,6 @@ function wasmStop() {
   wasm.gen++;
   wasm.player?.stop();
   wasm.pendingOpen = false;
-  wasm.drained = false;
   wasm.lastStatus = "";
 }
 
@@ -879,7 +879,6 @@ function wasmPlayFrom(ci, off) {
   wasm.player?.stop();
   streamTeardown(); // an online timeline on the same element, if one is open
   wasm.pendingOpen = false;
-  wasm.drained = false;
   wasm.lastStatus = "";
   const ch = state.manifest.chapters[ci];
   if (!ch) return closePlayer();
@@ -907,12 +906,16 @@ function wasmPlayFrom(ci, off) {
   p.seekTo(off); // only the sentence holding the request, not the chunk from its start
   // the next chapter when this one's sentences run out — fetched on demand;
   // null at the book's end, which ends the timeline (`ended` closes the player)
-  wasmTts.setMore(async ({ tag }) => {
-    const next = tag + 1;
-    if (!player.on || gen !== wasm.gen || next >= state.manifest.chapters.length) return null;
-    const t = state.cache.get(state.manifest.chapters[next].file) ?? await fetchChapter(next);
-    return gen === wasm.gen ? { segments: chapterSegments(next, t), tag: next } : null;
-  });
+  const segmentsOf = async (ci) => {
+    if (!player.on || gen !== wasm.gen || ci < 0 || ci >= state.manifest.chapters.length) return null;
+    const t = state.cache.get(state.manifest.chapters[ci].file) ?? await fetchChapter(ci);
+    return gen === wasm.gen ? { segments: chapterSegments(ci, t), tag: ci } : null;
+  };
+  wasmTts.setMore(({ tag }) => segmentsOf(tag + 1));
+  // a chapter the producer has already left, when the player must rebuild
+  // its timeline there: ⏮ back across a boundary, or the watchdog striking
+  // inside the 90 s the producer runs ahead of the voice
+  wasmTts.setRestore((tag) => segmentsOf(tag));
   ensureStreamEl();
   wasm.player ??= createContinuousStreamPlayer({
     audio: stream.el,
@@ -922,12 +925,8 @@ function wasmPlayFrom(ci, off) {
     onUpdate: onWasmUpdate,
     onSegment: onWasmSegment,
     onStall: (e) => wlog(`看門狗 ${e.phase} @${Math.round(e.playhead ?? 0)}s`),
-    onLog: ({ message, detail }) => {
-      // upstream's feed re-asks an exhausted producer on every timeupdate and
-      // says so each time; once is the news
-      if (message === "producer 已結束") { if (wasm.drained) return; wasm.drained = true; }
-      wlog(detail && Object.keys(detail).length ? `${message} ${JSON.stringify(detail)}` : message);
-    },
+    onLog: ({ message, detail }) =>
+      wlog(detail && Object.keys(detail).length ? `${message} ${JSON.stringify(detail)}` : message),
   });
   wasm.player.start().catch((e) => {
     if (gen !== wasm.gen) return;
@@ -959,15 +958,14 @@ wasmTts.onEngineEvent((e) => {
 });
 
 // upstream's status → the bar; the playhead → the reader's position. Fires on
-// every timeupdate and feed; the snapshot says whether it is even ours.
-// "ended" upstream means the PRODUCER ran dry (the whole book synthesized —
-// up to 90 s of audio still buffered, minutes on a short book), not that the
-// element stopped: the element is the judge of "playing" here, and the
-// reader's `ended` listener on it is what closes the session.
+// every timeupdate and feed; the snapshot says whether it is even ours. The
+// producer running dry is `snap.drained`, not a status: `playing` holds
+// until the element itself ends (the whole book is synthesized up to 90 s
+// before the voice gets there), and the reader's `ended` listener on the
+// element is what closes the session.
 function onWasmUpdate(snap) {
   if (!useWasm() || !player.on || !snap.active) return;
-  const el = stream.el;
-  const playing = (snap.status === "playing" || snap.status === "ended") && !!el && !el.paused && !el.ended;
+  const playing = snap.status === "playing";
   const status = snap.status === "opening" || snap.status === "buffering" ? "loading"
     : snap.status === "error" ? "error" : "";
   const shown = `${snap.status}/${playing}`;
@@ -1042,23 +1040,21 @@ function wasmReplay() {
 }
 
 // ⏮/⏭ at chunk grain, like the online engines: the target chunk's first
-// sentence. Still in the buffered timeline → seek; gone, or in a chapter the
-// producer has already left → rebuild there. The producer's results carry
-// each unit's player index and char span, which is how a chunk start finds
-// its unit.
+// sentence. A unit the producer has made for it → the player seeks while it
+// is still buffered and rebuilds at that (chapter, sentence) otherwise; no
+// unit yet (ahead of the synthesis, or a chapter the producer has moved on
+// from — its results are the current chapter's) → start the reading there.
 function wasmSkip(d) {
   const k = player.chunkIdx + d;
   if (k >= 0 && k < player.chunks.length) {
     const ci = player.chapIdx;
     const target = player.chunks[k].start;
     const p = wasmTts.ensureProducer();
-    const unit = p.segments[0]?.tag === ci
-      ? (p.results.find((m) => m.tag === ci && m.start <= target && target < m.end)
-        ?? p.results.find((m) => m.tag === ci && m.start >= target))
-      : null;
+    const unit = p.results.find((m) => m.tag === ci && m.start <= target && target < m.end)
+      ?? p.results.find((m) => m.tag === ci && m.start >= target);
     if (unit && wasm.player) {
       startFloor = -1;
-      wasm.player.seekToSegment(unit.playerIndex, { producerIndex: unit.index })
+      wasm.player.seekToSegment(unit.playerIndex, { producerIndex: { tag: unit.tag, index: unit.index } })
         .catch(() => wasmPlayFrom(ci, target));
       return;
     }
