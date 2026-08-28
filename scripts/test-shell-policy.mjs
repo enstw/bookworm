@@ -51,7 +51,7 @@ out.engineFilesRideTheShell = missing.length === 0
 // looks fixed on a fresh profile and is still broken on the owner's phone,
 // the one device that matters. Update both lines below when this is red:
 // the golden is meant to be edited deliberately, not regenerated.
-const GOLDEN_SHELL = "bw-shell-v21";
+const GOLDEN_SHELL = "bw-shell-v22";
 const GOLDEN_ASSETS = [
   "/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs",
   "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-taiwan-profile.js",

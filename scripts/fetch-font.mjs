@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const FONT_RELEASE = "v4.4.0_lxgw1.522_nerd3.5.0";
+const FONT_RELEASE = "v4.5.0_lxgw1.522_nerd3.5.1";
 // the converter, pinned for reproducible bytes (see the header)
 const FONTTOOLS = "fonttools[woff]==4.63.0";
 const BROTLI = "brotli==1.2.0";
