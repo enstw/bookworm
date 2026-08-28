@@ -749,6 +749,11 @@ const TESTLOG_PAGES = {
   // once the session moves on, so it gets its own bucket instead of riding
   // the recorder's and being evicted by an evening of heartbeats
   report: 40,
+  // the bookmark's flight recorder (app.js plog): one row per write, read or
+  // re-aim of the position, from every device the reader holds. Born from a
+  // report that a phone reopened PAST where the other phone stopped
+  // (2026-08-28), which no sync rule can produce — the rows are the witness
+  pos: 200,
   wasmtest: 30, speechtest: 30, vhtest: 30, pgtest: 30, scrolltest: 30, pagedtest: 30,
 };
 // keys are literals in the object above, never anything a request supplies

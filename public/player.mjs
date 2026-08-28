@@ -667,7 +667,7 @@ function onStreamTime() {
       state.idx = seg.ci;
       state.off = off;
       stream.pendingOpen = true;
-      savePos();
+      savePos("player");
       return;
     }
     stream.pendingOpen = false;
@@ -677,7 +677,7 @@ function onStreamTime() {
   if (off === state.off) return;
   state.off = off;
   updateProgress();
-  savePos();
+  savePos("player");
   markSpoken(off);
   if (Date.now() - lastUserScroll() > 5000) followScroll(off);
 }
@@ -1111,7 +1111,7 @@ function wasmPosition(u) {
       state.idx = u.ci;
       state.off = u.start;
       wasm.pendingOpen = true;
-      savePos();
+      savePos("player");
       return;
     }
     wasm.pendingOpen = false;
@@ -1232,7 +1232,7 @@ function onAudioTime() {
   if (off === state.off) return;
   state.off = off;
   updateProgress();
-  savePos();
+  savePos("player");
   markSpoken(off);
   // follow the narration unless the user scrolled away recently
   if (Date.now() - lastUserScroll() > 5000) followScroll(off);
