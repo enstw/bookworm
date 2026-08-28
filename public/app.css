@@ -371,6 +371,35 @@ button {
 .syncdot.pending { background: #cfa03f; }
 .syncdot.err { background: #c0564f; }
 
+/* 同步成功的一閃 (user 08-28). The footer dot above lives in a bar that is
+   hidden while reading, so "did the bookmark sync" had no answer on the page
+   itself. This fixed corner dot blinks once per CONFIRMED exchange — a flush
+   the server took, a bookmark pulled from another device — and is gone in
+   1.6 s. Off-screen otherwise: it must never be mistaken for a control. */
+#syncflash {
+  position: fixed;
+  right: max(0.6rem, env(safe-area-inset-right));
+  bottom: max(0.6rem, env(safe-area-inset-bottom));
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7fa06a;
+  z-index: 12;
+  pointer-events: none;
+  opacity: 0;
+}
+#syncflash.on { animation: syncflash 1.6s ease-out forwards; }
+@keyframes syncflash {
+  0% { opacity: 0; transform: scale(0.6); }
+  15% { opacity: 1; transform: scale(1); }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* a plain show; the timer that drops .on hides it again */
+  #syncflash.on { animation: none; opacity: 1; }
+}
+
 /* ---------- audio player ---------- */
 
 /* near-transparent on purpose: the bar floats over the page while reading,

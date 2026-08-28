@@ -1299,6 +1299,7 @@ async function initReader(slug) {
   const [pos] = await Promise.all([resolvePosition(), resolveSettings(state.uid)]);
   buildReaderShell();
   await openChapter(pos.chapter, pos.offset);
+  if (pos.pulled) syncFlash();
   if (pos.back) showJumpNotice(pos.back);
   if (state.dirty) flush(); // local progress the server hasn't seen — push it now
 
@@ -1355,6 +1356,7 @@ function wireReaderEvents() {
     clearTimeout(resizeTick);
     resizeTick = setTimeout(() => {
       applyGrid();
+      plog(`resize ${where()}`);
       if ($("#content p[data-off]")) restoreScroll(state.off);
     }, 200);
   });
@@ -1404,12 +1406,17 @@ async function resolvePosition() {
   // mis-tap on another device — must never cost the reader their position)
   if (pick === remote && local && Math.abs(remote.chapter - local.chapter) >= 2)
     pick.back = { chapter: local.chapter, offset: local.offset };
+  // another device's bookmark won over this one's: worth the corner blink
+  if (pick === remote && (!local || (remote.updatedAt || 0) > (local.updatedAt || 0)))
+    pick.pulled = true;
   pick.chapter = Math.min(Math.max(pick.chapter ?? 0, 0), state.manifest.chapters.length - 1);
   pick.offset = Math.max(pick.offset ?? 0, 0);
   // the resume baseline: savePos treats an unchanged position as already
   // synced — merely opening a link must never re-write the bookmark or
   // bump its timestamp (位置變動才觸發同步)
   state.lastSaved = { chapter: pick.chapter, offset: pick.offset, updatedAt: pick.updatedAt || 0 };
+  plog(`open 取${pick === remote ? "遠端" : pick === local ? "本機" : "零"}`
+    + ` 本機${fmtPos(local)} 遠端${fmtPos(remote)}${pick.back ? " 跳章pill" : ""}`);
   return pick;
 }
 
@@ -1454,7 +1461,10 @@ async function checkRemotePosition() {
   // 1 s cap on a slow link would mean the notice simply never arrives.
   const remote = await fetchRemotePosition(capped(4000));
   if (!remote) return;
-  if (remote.updatedAt <= Math.max(state.lastSaved?.updatedAt ?? 0, posNoticed)) return;
+  const seen = Math.max(state.lastSaved?.updatedAt ?? 0, posNoticed);
+  const verdict = remote.updatedAt <= seen ? "不新" : remote.chapter === state.idx ? "同章靜默" : "pill";
+  plog(`remote ${fmtPos(remote)} 本機@${seen} → ${verdict} ${where()}`);
+  if (remote.updatedAt <= seen) return;
   posNoticed = remote.updatedAt; // asked and answered, including a dismissal
   // Same chapter is not worth a pill: it would name the chapter the reader is
   // already in, and two devices a few paragraphs apart resolve themselves —
@@ -1589,7 +1599,7 @@ async function openChapter(i, offset = 0) {
   state.off = offset;
   restoreScroll(atEnd ? "end" : offset);
   updateProgress();
-  savePos();
+  savePos("open");
 
   if (i + 1 < state.manifest.chapters.length) fetchChapter(i + 1).catch(() => {});
   updateOfflineWindow();
@@ -1945,11 +1955,13 @@ function restoreScroll(offset) {
       // the very end (scrollLeft's minimum on the flipped axis)
       if (settings.vertical) vSnap(c, c.clientWidth - c.scrollWidth);
       else scrollTo(0, document.documentElement.scrollHeight);
+      plog(`restore 末頁 ${where()}`);
       return;
     }
     if (!offset) {
       if (settings.vertical) vSnap(c, 0);
       else scrollTo(0, 0);
+      plog(`restore 首頁 ${where()}`);
       return;
     }
     const r = offsetRect(offset);
@@ -1959,14 +1971,71 @@ function restoreScroll(offset) {
       // mid-page, or restore→save→restore stops being a fixed point — and
       // it must be the character's page, not the paragraph's first page,
       // or a long paragraph reopens a page early
-      const pos = pageAlign(c, Math.max(0, rectDist(c, r)));
+      const dist = Math.max(0, rectDist(c, r));
+      const pos = pageAlign(c, dist);
       if (settings.vertical) vSnap(c, pos);
       else scrollTo(0, pos);
-    }
+      plog(`restore off${offset} dist${Math.round(dist)} → ${where()}`);
+    } else plog(`restore off${offset} 無rect ${where()}`);
   });
 }
 
 // ---------- position tracking / sync ----------
+
+// The bookmark's flight recorder (testlog page=pos, quota in the worker).
+//
+// Two phones, one bookmark, and a report (2026-08-28) that the second phone
+// reopened several pages PAST where the first one stopped — which no sync
+// rule can produce: the reconcile either stands still (same chapter) or
+// lands on exactly the offset the other device wrote. So either the offset
+// was wrong when written, or it was mapped to the wrong page when read, and
+// from the laptop the code cannot say which. This is the witness: every
+// place the bookmark is written, read or re-aimed logs one line — chapter,
+// offset, the page now on screen, the scroll position, the grid, the
+// viewport — the same recorder shape as the player's wlog. The device column
+// is the PLATFORM, not the reader id: both phones share the id, and telling
+// them apart is the whole question. Silent until something is logged, and
+// it honours the /admin 裝置診斷 switch (testlog.js) like every other page.
+const plog = (() => {
+  let buf = [], timer = 0, t0 = 0;
+  const ua = navigator.userAgent;
+  const device = (/iPhone|iPad|iPod/.test(ua) ? "ios" : /Android/.test(ua) ? "android" : "desktop")
+    + (matchMedia("(display-mode: standalone)").matches || navigator.standalone ? "-pwa" : "");
+  const on = () => { try { return localStorage.getItem("bw_testlog") !== "0"; } catch { return true; } };
+  const flush = () => {
+    timer = 0;
+    if (!buf.length) return;
+    const body = JSON.stringify({ page: "pos", device, data: buf.join("\n") });
+    buf = [];
+    try {
+      if (!navigator.sendBeacon?.("/api/testlog", new Blob([body], { type: "application/json" })))
+        fetch("/api/testlog", { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+    } catch { /* offline is fine */ }
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (!t0) return;
+    line("vis=" + document.visibilityState);
+    if (document.visibilityState === "hidden") { clearTimeout(timer); flush(); }
+  });
+  addEventListener("pagehide", () => { if (t0) { clearTimeout(timer); flush(); } });
+  function line(s) {
+    if (!on()) return;
+    if (!t0) t0 = performance.now();
+    buf.push(((performance.now() - t0) / 1000).toFixed(1) + "s " + s);
+    if (!timer) timer = setTimeout(flush, 1500);
+  }
+  return line;
+})();
+// the bookmark and the screen it sits on, in one token: chapter, offset, the
+// page on screen, raw scroll, grid pitch×lines, 直排 calibration, viewport
+function where() {
+  const c = $("#content");
+  const pg = c && GRID.span ? pageAt(scrollDist(c)) : "-";
+  const sl = c ? (settings.vertical ? c.scrollLeft : scrollY) : 0;
+  return `ci${state.idx} off${state.off} pg${pg} sl${Math.round(sl)}`
+    + ` p${GRID.pitch}×${GRID.N} cw${settings.calibWidth} ${innerWidth}×${innerHeight}`;
+}
+const fmtPos = (p) => (p ? `ci${p.chapter} off${p.offset} @${p.updatedAt || 0}` : "無");
 
 let scrollTick = 0;
 let lastScrollEvent = 0;
@@ -2046,16 +2115,20 @@ function trackScroll() {
   const next = ans + 1 < ps.length ? Number(ps[ans + 1].dataset.off) : Infinity;
   if (cur <= state.off && state.off < next) return;
   if (cur !== state.off) {
+    const was = state.off;
     state.off = cur;
     updateProgress();
-    savePos();
+    savePos(`track ${was}→${cur} 段${ans}`);
   }
 }
 
-function savePos() {
+// `src` names the caller for the recorder — who moved the bookmark is the
+// first question every runaway asks
+function savePos(src = "?") {
   const last = state.lastSaved;
   if (last && last.chapter === state.idx && last.offset === state.off) return; // nothing moved
   const rec = { chapter: state.idx, offset: state.off, updatedAt: Date.now() };
+  plog(`save[${src}] @${rec.updatedAt} ${where()}`);
   state.lastSaved = rec;
   try { localStorage.setItem(posKey(), JSON.stringify(rec)); } catch { /* full/blocked */ }
   state.dirty = true;
@@ -2076,6 +2149,7 @@ async function flush(useBeacon = false) {
   state.dirty = false;
   if (useBeacon && navigator.sendBeacon) {
     navigator.sendBeacon("/api/position", new Blob([body], { type: "application/json" }));
+    plog(`flush beacon ${fmtPos(state.lastSaved)}`);
     return;
   }
   try {
@@ -2088,7 +2162,10 @@ async function flush(useBeacon = false) {
     if (res.status === 401) reauth();
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     setSyncDot("ok");
-  } catch {
+    syncFlash();
+    plog(`flush ok ${fmtPos(state.lastSaved)}`);
+  } catch (err) {
+    plog(`flush 錯 ${err?.message} ${fmtPos(state.lastSaved)}`);
     state.dirty = true;
     setSyncDot("err");
     if (!state.syncTimer) state.syncTimer = setTimeout(() => flush(), 15_000);
@@ -2099,6 +2176,22 @@ function setSyncDot(s) {
   syncState = s;
   const dot = $("#syncdot");
   if (dot) dot.className = "syncdot " + s;
+}
+
+// 同步成功的一閃 (user 08-28): the footer dot is inside a bar that is hidden
+// while reading, so "did it sync" had no answer on the page itself. A fixed
+// corner dot blinks once per CONFIRMED exchange — a flush the server took,
+// or a bookmark pulled from another device at open — then leaves (app.css).
+// Beacon flushes are fire-and-forget and get no blink: nothing confirms them.
+let syncFlashTimer = 0;
+function syncFlash() {
+  const d = $("#syncflash")
+    ?? document.body.appendChild(el("div", { id: "syncflash", "aria-hidden": "true" }));
+  d.classList.remove("on");
+  void d.offsetWidth; // restart the animation when two confirmations overlap
+  d.classList.add("on");
+  clearTimeout(syncFlashTimer);
+  syncFlashTimer = setTimeout(() => d.classList.remove("on"), 1800);
 }
 
 // ---------- settings sync (mirrors the position sync above) ----------

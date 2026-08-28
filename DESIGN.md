@@ -899,7 +899,27 @@ tree, so the repo never grows a second, diverging install path.
   `updated_at` is offered exactly once, so a dismissal stays dismissed; and
   a same-chapter difference is silent, because the pill would name the
   chapter the reader is already in and two devices a few paragraphs apart
-  resolve themselves on the next LWW write. Direction is not a criterion —
+  resolve themselves on the next LWW write.
+- **The bookmark has a flight recorder** (`plog` in `public/app.js`, testlog
+  `page=pos`, quota in `TESTLOG_PAGES`). It exists because of a report
+  (2026-08-28, both phones 直排) that phone B read on ten pages and phone A
+  then reopened PAST where B stopped — which the sync rules cannot produce:
+  the reconcile stands still (same chapter) or lands on exactly the offset B
+  wrote. So the offset was wrong when written or mapped to the wrong page
+  when read, and the laptop cannot tell which. Every write (`savePos`, tagged
+  by caller: `track`/`open`/`player`), read (`resolvePosition`,
+  `checkRemotePosition` with its verdict), re-aim (`restoreScroll`, `resize`)
+  and flush logs chapter, offset, the page on screen, raw scroll, grid
+  pitch×lines, 直排 calibration and viewport. The device column is the
+  platform (`ios-pwa`, `android`, …), not the reader id — both phones share
+  the id, and telling them apart is the question. Read with
+  `GET /api/testlog?page=pos&limit=200` under a reader key.
+- **A confirmed sync blinks a corner dot** (`syncFlash`, `#syncflash`). The
+  footer's `#syncdot` is inside a bar that is hidden while reading, so "did
+  it sync" had no answer on the page (user 08-28). The blink fires only on a
+  confirmed exchange — a flush the server answered 2xx, or another device's
+  bookmark winning at open — never on a beacon (nothing confirms it) and
+  never as a persistent control; it is gone in 1.6 s and ignores taps. Direction is not a criterion —
   a phone that jumped backwards is news too. Settings deliberately do NOT
   get this treatment: a background `resolveSettings` would reflow a
   rendered chapter, which is the one thing its own comment forbids. Reader
