@@ -23,7 +23,7 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v21"; // v21: + ort-wasm.min.js, lame.min.js (the same offline gap v20 closed for pack-manifest.mjs)
+const SHELL = "bw-shell-v22"; // v21: + ort-wasm.min.js, lame.min.js (the same offline gap v20 closed for pack-manifest.mjs)
 // The offline TTS engine's big binaries live in their own bw-wasmtts cache,
 // but its small same-origin files ride the shell, because /wasmtest
 // downloads only the voice pack: without these, the first ensureEngine() on a
