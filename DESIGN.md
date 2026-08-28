@@ -235,6 +235,10 @@ with the same pinned fonttools/brotli — the bytes are the one thing a line
 diff cannot vouch for, so they are re-derived, the way an action digest is
 resolved against its tag. `scripts/test-renovate-policy.mjs` pins the
 bypass cases.
+A breaking upstream release is held out of the roll-up by a temporary
+`allowedVersions` rule and adopted in its own migration PR, which also
+removes the rule (wasmtts v2, 2026-08-28) — otherwise one red vendor step
+holds every other bump hostage for as long as the migration takes.
 
 An **off-schedule roll-up** is three steps, each with a known pit. (1)
 Dispatch the `renovate` workflow. (2) If that run ends green yet opens
