@@ -9,6 +9,13 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-29 — `f33cd1b91a7c`
+
+> 離線朗讀升級到 wasmtts v2：繁體詞典修正大批讀音（銀行、會計…），鎖屏播放更穩；語音包會提示補下載約 2 MB 的新詞典。
+> wasmtts v1.2.4 → v2.3.0
+
+- tts: the offline engine is wasmtts's whole stack — worker, producer, player — from its release tarball (v2.3.0) (`f33cd1b`)
+
 ## 2026-08-28 — `a3300d8c9392`
 
 > ENSFont v4.4.0_lxgw1.522_nerd3.5.0 → v4.5.0_lxgw1.522_nerd3.5.1
