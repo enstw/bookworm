@@ -20,10 +20,11 @@
 // - CHAIN (everything else): the double-buffered element swap. Chrome and
 //   Firefox happily chain play() from the `ended` handler in background.
 // - WASM (offline, wasm-tts.mjs): in-browser Matcha zh-en — no network after
-//   the one-time voice pack download. Selected automatically when the pack is
-//   in the cache (downloaded by /wasmtest, never by the reader — ▶ must
-//   not quietly pull 138 MB over cellular); localStorage bw_tts="stream"
-//   forces the online engines back. Playback rides the SAME MediaSource
+//   the one-time voice pack download. The reader's DEFAULT when the pack is
+//   in the cache (downloaded by /wasmtest or the pill, never silently — ▶
+//   must not quietly pull 138 MB over cellular). localStorage bw_tts picks
+//   the default engine, "offline" (default) or "online"; the other one is
+//   the fallback (see ttsPref). Playback rides the SAME MediaSource
 //   discipline as STREAM: the synth worker encodes each unit to mp3 and
 //   the units are appended to one continuous timeline. The chain-swap
 //   variant died on the phone after ~5 min locked — a play() at a unit
@@ -41,16 +42,30 @@ export const useStream = !!MMS?.isTypeSupported?.("audio/mpeg");
 const LocalMS = MMS ?? globalThis.MediaSource;
 const wasmStreamOk = !!LocalMS?.isTypeSupported?.("audio/mpeg");
 let wasmOn = false;
+let packOk = false; // the voice pack is complete in the cache (pickEngine)
 const useWasm = () => wasmOn;
+// 預設語音引擎 (owner, 2026-08-28): "offline" (the default) or "online"; the
+// other one is the fallback. Per-device, like 每頁行數 — the pack is on THIS
+// device and so is the signal. The old force-online debug flag "stream"
+// reads as "online" so a phone that set it keeps its choice.
+export function ttsPref() {
+  let v = null;
+  try { v = localStorage.getItem("bw_tts"); } catch { /* private mode */ }
+  return v === "online" || v === "stream" ? "online" : "offline";
+}
 // Re-run whenever the pack may have changed (module load, pill re-download,
 // session close) — but never under a live session: useWasm() is consulted
 // throughout playback, and an engine that swaps mid-stream strands the
 // timeline the other one owns. closePlayer re-picks, so a pack downloaded
-// while listening takes effect at the next ▶.
+// while listening takes effect at the next ▶. The fallbacks that DO swap
+// under a session (engine failure, the network going away) each end the
+// timeline they leave before opening the other — see wasmSynthLoop and
+// feedStream.
 function pickEngine() {
-  wasmTts.packReady().then((r) => {
+  return wasmTts.packReady().then((r) => {
+    packOk = !!r;
     if (player.on) return;
-    wasmOn = r && localStorage.getItem("bw_tts") !== "stream";
+    wasmOn = packOk && ttsPref() === "offline";
     console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline matcha)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
   });
 }
@@ -109,7 +124,7 @@ let packNoticed = false; // the voice-pack pill, at most once per session
 // the online engine meanwhile; the offline one takes over at the next ▶
 // (closePlayer re-picks).
 function noticePack() {
-  if (packNoticed || useWasm() || localStorage.getItem("bw_tts") === "stream") return;
+  if (packNoticed || useWasm()) return;
   (async () => {
     const stale = await wasmTts.packStale();
     const missing = await wasmTts.packMissingBytes();
@@ -145,8 +160,36 @@ function noticePack() {
 
 export function togglePlayer() {
   if (player.on) return closePlayer();
+  // a NEW reading opens at the top of the page on screen — the tracked
+  // state.off is paragraph-grained and sticky (a straddling paragraph keeps
+  // its start), so it routinely points a page or more behind the eye
+  startPlayer(pageStartOffset() ?? state.off);
+}
+
+// The engine button: a tap flips the default and, under a live session,
+// reopens the reading on the other engine at the voice's own position —
+// inside the same tap, so the element blessing below still counts as a
+// gesture. Ending the session first is what keeps the mid-stream rule.
+function toggleTtsPref() {
+  const next = ttsPref() === "online" ? "offline" : "online";
+  try { localStorage.setItem("bw_tts", next); } catch { /* private mode: this session only */ }
+  wlog(`預設引擎 → ${next}`);
+  if (!player.on) return;
+  const off = state.off;
+  closePlayer();
+  // the synchronous re-pick; closePlayer's async one lands on the same
+  // answer and stands down because the session is already on again
+  wasmOn = packOk && next === "offline";
+  startPlayer(off);
+}
+
+// open a session at `off` inside the current tap
+function startPlayer(off) {
   player.on = true;
   $("#audioBtn")?.classList.add("active");
+  // 線上為預設、離線為備援: with no network at ▶ the fallback starts at once
+  // instead of a stream that can only fail
+  if (!wasmOn && packOk && !navigator.onLine) { wasmOn = true; wlog("▶ 無網路 → 離線引擎"); }
   noticePack();
   // bless the element(s) inside this tap: iOS only lets an element play()
   // outside a gesture (chunk swaps happen on `ended`) after it has played
@@ -160,10 +203,7 @@ export function togglePlayer() {
     unlockAudio(player.standby);
   }
   buildPlayerBar();
-  // a NEW reading opens at the top of the page on screen — the tracked
-  // state.off is paragraph-grained and sticky (a straddling paragraph keeps
-  // its start), so it routinely points a page or more behind the eye
-  playFrom(state.idx, pageStartOffset() ?? state.off);
+  playFrom(state.idx, off);
 }
 
 // called by openChapter: navigating while listening moves the narration too
@@ -562,8 +602,21 @@ async function feedStream(gen) {
     stream.sb.appendBuffer(buf);
     stream.feedCi = next.ci;
     stream.feedK = next.k + 1;
-  } catch {
+  } catch (e) {
     if (gen !== stream.gen) return;
+    // 線上為預設、離線為備援: the network is gone — a fetch that got no answer
+    // (TypeError), not a bad one (HTTP) — and the pack is here: hand the
+    // reading over while the buffer still has something in it, rather than
+    // retrying every 4 s into silence. wasmPlayFrom opens the offline
+    // timeline on the same element (a new generation ends this one)
+    if (packOk && player.on && (!navigator.onLine || e instanceof TypeError)
+        && bufferedEnd(stream.sb) - stream.el.currentTime < 30) {
+      wlog(`線上斷 ${e?.message ?? e} → 離線引擎`);
+      wasmOn = true;
+      wasmPlayFrom(state.idx, state.off);
+      flashStatus(t("player.fellBack", t("player.engOffline")));
+      return;
+    }
     // synthesis hiccup: only alarm the user if we're about to run dry
     if (bufferedEnd(stream.sb) - stream.el.currentTime < 10) {
       player.status = "error";
@@ -956,7 +1009,10 @@ async function wasmSynthLoop(gen, ci, chunks, k, startOff = -1) {
     console.warn("wasm-tts unavailable, falling back:", e);
     wlog(`引擎失敗 ${e?.message ?? e} → 回線上引擎`);
     wasmOn = false;
-    if (player.on && gen === wasm.gen) playFrom(state.idx, state.off);
+    if (player.on && gen === wasm.gen) {
+      playFrom(state.idx, state.off);
+      flashStatus(t("player.fellBack", t("player.engOnline")));
+    }
     return;
   }
   try {
@@ -1012,6 +1068,17 @@ async function wasmSynthLoop(gen, ci, chunks, k, startOff = -1) {
     if (gen !== wasm.gen) return;
     console.warn("wasm-tts synth:", e);
     wlog(`合成錯誤 ${e?.message ?? e}`);
+    // 離線為預設、線上為備援: a synth that died mid-book hands the reading to
+    // the online engine rather than parking on 按 ▶ 重試. Its own timeline is
+    // ended first (wasmTeardown), then the online one opens at the voice
+    if (player.on && navigator.onLine) {
+      wlog("→ 回線上引擎");
+      wasmTeardown();
+      wasmOn = false;
+      playFrom(state.idx, state.off);
+      flashStatus(t("player.fellBack", t("player.engOnline")));
+      return;
+    }
     player.status = "error";
     updatePlayerBar();
   }
@@ -1129,6 +1196,7 @@ function buildPlayerBar() {
       el("button", { class: "iconbtn", title: t("player.back"), onclick: () => advanceChunk(-1) }, "⏮"),
       el("button", { class: "iconbtn", title: t("player.forward"), onclick: () => advanceChunk(1) }, "⏭"),
       el("button", { class: "iconbtn", id: "reportBtn", title: t("player.report"), onclick: reportHere }, "🚩"),
+      el("button", { class: "iconbtn engbtn", id: "engBtn", onclick: toggleTtsPref }, ""),
       el("div", { class: "player-status", id: "playerStatus" }, ""),
       el("button", { class: "iconbtn", title: t("player.stop"), onclick: closePlayer }, "✕")),
   );
@@ -1190,6 +1258,17 @@ function updatePlayerBar() {
   else if (player.chunks.length && player.chunkIdx >= 0)
     label = t("player.chunk", player.chunkIdx + 1, player.chunks.length);
   $("#playerStatus").textContent = label;
+  // the engine button names the engine RUNNING; the title names the default.
+  // They differ exactly when a fallback is in effect (.fallback, accent)
+  const eb = $("#engBtn");
+  if (eb) {
+    const active = useWasm() ? "offline" : "online";
+    const name = (e) => t(e === "offline" ? "player.engOffline" : "player.engOnline");
+    eb.textContent = name(active);
+    eb.dataset.engine = active;
+    eb.title = t("player.engine", name(ttsPref()));
+    eb.classList.toggle("fallback", active !== ttsPref());
+  }
 }
 
 // Paint the sentence containing the char the voice is on. Bounds come from
@@ -1253,4 +1332,4 @@ function setMediaSession() {
 }
 
 // debug handle: e2e assertions and the remote-inspector device pass
-globalThis.bwPlayer = { player, stream, wasm, useStream, useWasm };
+globalThis.bwPlayer = { player, stream, wasm, useStream, useWasm, ttsPref };

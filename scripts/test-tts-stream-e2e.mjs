@@ -272,4 +272,26 @@ out.closesAtBookEnd = (await waitFor(`bwPlayer.player.on === false`, (v) => v, 6
 out.markCleared = (await evalJs(`document.getElementById("ttsHl") === null`))
   ? "ok" : "FAIL: overlay survived close";
 
+// --- the engine button: names the engine running, a tap flips the default --
+// No pack in this profile, so the default (offline) is unreachable and the
+// online engine runs as its fallback — the button says 線上 and is marked.
+// The tap sets bw_tts=online and reopens the session inside the same tap;
+// still online here (nothing else to run), but on again and unmarked.
+await evalJs(`openChapter(0)`);
+await waitFor(`document.getElementById("ctitle").textContent.includes("第1章")`, (v) => v, 20);
+await evalJs(`document.getElementById("audioBtn").click()`);
+await waitFor(`bwPlayer.player.on && !!document.getElementById("engBtn")`, (v) => v, 20);
+const engBefore = await evalJs(`(b => ({ engine: b.dataset.engine, fallback: b.classList.contains("fallback") }))(document.getElementById("engBtn"))`);
+out.engineButton = engBefore.engine === "online" && engBefore.fallback
+  ? "ok (online, marked as the fallback)" : `FAIL: ${JSON.stringify(engBefore)}`;
+await evalJs(`document.getElementById("engBtn").click()`);
+const pref = await evalJs(`localStorage.getItem("bw_tts")`);
+const engAfter = await waitFor(
+  `bwPlayer.player.on && bwPlayer.ttsPref() === "online" && (b => b && b.dataset.engine === "online" && !b.classList.contains("fallback"))(document.getElementById("engBtn"))`,
+  (v) => v, 20);
+out.engineToggle = pref === "online" && engAfter
+  ? "ok (bw_tts=online, session reopened, no longer a fallback)"
+  : `FAIL: pref=${pref} on=${await evalJs(`bwPlayer.player.on`)} btn=${await evalJs(`document.getElementById("engBtn")?.outerHTML`)}`;
+await evalJs(`bwPlayer.player.on && document.getElementById("audioBtn").click(); localStorage.removeItem("bw_tts")`);
+
 await finish(out);

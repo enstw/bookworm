@@ -65,8 +65,9 @@
       背景播放要驗，請用閱讀器，不要用本頁。</li>
     <li>×N＝實時倍率（音訊秒÷合成秒）。桌機實測約 ×7，遠高於邊播邊合成所需的 1。</li>
     <li>停頓由模型自己的標點音素決定，本頁不再插入靜音 — 與閱讀器完全一致。</li>
-    <li>下載完成後回到書頁按 ▶，閱讀器自動改用離線引擎（console 顯示
-      wasm-tts ready: matcha zh-en；localStorage bw_tts="stream" 可強制回線上）。</li>
+    <li>下載完成後回到書頁按 ▶，閱讀器預設改用離線引擎（console 顯示
+      wasm-tts ready: matcha zh-en）；播放列的「線上／離線」按鈕切換預設引擎，
+      另一個自動成為備援（localStorage bw_tts）。</li>
     <li>繁體直接送入詞典，沒有 OpenCC：常用詞會有讀音誤差（銀行、看著），
       修正以 wasm-tts.mjs 的 OVERRIDES 逐條累加，依聽測結果決定。</li>
   </ol>
