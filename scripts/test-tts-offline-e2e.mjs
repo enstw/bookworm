@@ -142,7 +142,7 @@ await send("Page.navigate", { url: `${BASE}/ol` }, sessionId);
 await waitFor(`document.querySelectorAll("#content p[data-off]").length`, (n) => n > 0);
 const legacy = await evalJs(`import("/wasm-tts.mjs").then(async (m) => {
   const url = new URL(m.PACK_BASE + m.ORT_WASM.packName, location.origin).href;
-  const cached = (await m.packStatus()).files.find((f) => f.name === m.ORT_WASM.packName).cached;
+  const cached = (await m.packStatus()).assets.find((a) => a.key === "ortWasm").cached;
   return { cached, legacyGone: !(await caches.has("bw-wasmtts-rt")), inPack: !!(await (await caches.open("bw-wasmtts")).match(url)) };
 })`);
 out.adoptsLegacyBucket = legacy?.cached && legacy.legacyGone && legacy.inPack
@@ -201,7 +201,21 @@ const crossed = await waitFor(`state.idx >= 1 && document.getElementById("ctitle
 out.chapterCrossed = crossed ? "ok (第2章 opened by the narration, still playing)"
   : `FAIL idx=${await evalJs(`state.idx`)} title=${await evalJs(`document.getElementById("ctitle").textContent`)} status=${await evalJs(`bwPlayer.wasm.player?.snapshot().status`)}`;
 
-// --- 6. a rebuild behind the producer: the watchdog's move (and ⏮'s, out
+// --- 6a. ⏮ from 第2章's first chunk goes back into 第1章 — whose units are
+// still on the timeline (segments()), so the player seeks: no rebuild, the
+// producer stays where `more` put it ---
+const tag0 = await evalJs(`import("/wasm-tts.mjs").then((m) => m.ensureProducer().tag)`);
+await evalJs(`document.getElementById("backBtn").click()`);
+const seekBack = await waitFor(`bwPlayer.player.chapIdx === 0 && bwPlayer.player.playing ? bwPlayer.wasm.player.snapshot().rebuilds : -1`, (v) => v >= 0, 40);
+const tag1 = await evalJs(`import("/wasm-tts.mjs").then((m) => m.ensureProducer().tag)`);
+out.skipBackSeeks = seekBack === 0 && tag0 >= 1 && tag1 === tag0
+  ? `ok (⏮ into 第1章 was a seek on the timeline: 0 rebuilds, producer untouched on 第${tag0 + 1}章)`
+  : `FAIL rebuilds=${seekBack} producer.tag ${tag0} → ${tag1} chapIdx=${await evalJs(`bwPlayer.player.chapIdx`)}`;
+// back to 第2章 for the rebuild case, the same way the narration got there
+await evalJs(`document.getElementById("fwdBtn").click()`);
+await waitFor(`bwPlayer.player.chapIdx === 1 && bwPlayer.player.playing`, (v) => v, 60);
+
+// --- 6b. a rebuild behind the producer: the watchdog's move (and ⏮'s, out
 // of the buffer) is restartFrom({tag, index}) — the producer has moved on to
 // 第2章, so the player asks `restore` for 第1章's sentences and the reading
 // resumes there, DOM included ---
@@ -242,11 +256,33 @@ out.markCleared = (await evalJs(`document.getElementById("ttsHl") === null`)) ? 
 // not once per timeupdate (v2.3.0 logged it three times a second)
 await sleep(1500);
 const lines = recorder.join("\n").split("\n");
-const dry = lines.filter((l) => l.includes("已用盡")).length;
-const beats = lines.filter((l) => l.includes("heartbeat")).length;
+const dry = lines.filter((l) => l.includes("[drained]")).length;
+const beats = lines.filter((l) => l.includes("[heartbeat]")).length;
 out.drainedLoggedOnce = beats > 0 && dry >= 1 && dry <= 3
-  ? `ok (${dry} 已用盡 line(s) over ${beats} heartbeat(s))`
-  : `FAIL ${dry} 已用盡 line(s), ${beats} heartbeat(s), ${lines.length} lines`;
+  ? `ok (${dry} [drained] line(s) over ${beats} [heartbeat](s), by code)`
+  : `FAIL ${dry} [drained] line(s), ${beats} [heartbeat](s), ${lines.length} lines`;
+
+// --- 9. the second ▶: the engine is warm and the reader primed the
+// bookmark's sentence when the session closed, so the first sound lands
+// with the tap — the unit is already synthesized, only the append remains ---
+const primedState = await waitFor(`bwPlayer.wasm.primed && JSON.stringify(bwPlayer.wasm.primed)`, (v) => !!v, 30);
+await sleep(2000); // the primed sentence's synthesis (~0.6 s) — the state is set before it lands
+// timed inside the page: tap → first append, at 20 ms grain
+const firstMs = await evalJs(`new Promise((r) => {
+  const t0 = performance.now();
+  document.getElementById("audioBtn").click();
+  const iv = setInterval(() => {
+    const n = bwPlayer.wasm.player?.snapshot().appendCount ?? 0;
+    if (n > 0) { clearInterval(iv); r(Math.round(performance.now() - t0)); }
+    else if (performance.now() - t0 > 8000) { clearInterval(iv); r(-1); }
+  }, 20);
+})`);
+await sleep(1500); // the flight recorder's batch
+const usedPrimed = (recorder.join("\n").match(/預熱單位直接上/g) ?? []).length;
+out.primedFirstSound = primedState && firstMs >= 0 && usedPrimed >= 1 && firstMs < 700
+  ? `ok (primed ${primedState}; first append ${firstMs} ms after ▶ on the primed unit — the cold first ▶ took seconds)`
+  : `FAIL primed=${primedState} first append ${firstMs} ms used=${usedPrimed}`;
+await waitFor(`bwPlayer.player.on === false`, (v) => v, 120);
 }
 
 try {

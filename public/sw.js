@@ -23,7 +23,7 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v24"; // v24: wasmtts v2.4.0 — ort's wasm is the synth worker's to cache; sw.js no longer touches /api/wasmtts/
+const SHELL = "bw-shell-v25"; // v25: wasmtts v2.6.0 engine files
 // The offline TTS engine's big binaries live in their own bw-wasmtts cache
 // (the synth worker's) and ort's wasm in bw-wasmtts-rt (above), but every
 // same-origin file the engine loads by URL rides the shell: the worker
