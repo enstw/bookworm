@@ -23,7 +23,7 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v23"; // v23: wasmtts v2 — the engine tarball's files under their own names, ort/lamejs under their versioned packNames
+const SHELL = "bw-shell-v24"; // v24: wasmtts v2.4.0 — ort's wasm is the synth worker's to cache; sw.js no longer touches /api/wasmtts/
 // The offline TTS engine's big binaries live in their own bw-wasmtts cache
 // (the synth worker's) and ort's wasm in bw-wasmtts-rt (above), but every
 // same-origin file the engine loads by URL rides the shell: the worker
@@ -62,18 +62,9 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
-  // The one /api/ route the worker serves from a cache: ort's 13 MB wasm.
-  // The synth worker (wasmtts's matcha-worker.js) caches the voice pack it
-  // downloads in bw-wasmtts and sweeps that cache by keep-set, but ort loads
-  // its own wasm by URL at every init and knows nothing of caches — so this
-  // file is parked in ITS OWN cache (bw-wasmtts-rt, never swept by the
-  // worker), cache-first under its versioned name, and a phone that has gone
-  // offline still inits. Every other /api/wasmtts/ file is the worker's to
-  // cache; the rest of /api/ is untouched.
-  if (url.pathname.startsWith("/api/wasmtts/")) {
-    if (RUNTIME_WASM.test(url.pathname)) e.respondWith(runtimeFetch(e.request));
-    return;
-  }
+  // /api/ is never served from here — /api/wasmtts/ included: the voice
+  // pack, ort's wasm with it, is the synth worker's (wasmtts's
+  // matcha-worker.js caches it in bw-wasmtts and sweeps that by keep-set).
   if (url.pathname.startsWith("/api/")) return;
 
   if (url.pathname.startsWith("/books/")) {
@@ -111,19 +102,6 @@ function timedNetwork(e, save) {
 
 async function cacheFirst(req) {
   return (await caches.match(req)) ?? fetch(req);
-}
-
-// ort's wasm under its versioned packName (ort-<version>-wasm-simd-threaded.wasm)
-const RUNTIME_WASM = /^\/api\/wasmtts\/ort-[\w.-]+-wasm-simd-threaded\.wasm$/;
-const RUNTIME_CACHE = "bw-wasmtts-rt";
-
-async function runtimeFetch(req) {
-  const c = await caches.open(RUNTIME_CACHE);
-  const hit = await c.match(req);
-  if (hit) return hit;
-  const res = await fetch(req);
-  if (res.ok) c.put(req, res.clone());
-  return res;
 }
 
 // fonts and PWA icons are immutable: serve from cache, fill on first fetch

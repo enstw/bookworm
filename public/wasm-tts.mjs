@@ -23,16 +23,16 @@
 // none. The raw ONNX buffers are dropped inside the worker the moment the
 // sessions exist (upstream's own rule; ~124 MiB on a phone).
 //
-// The pack: the models, tokens, rule tables and the compiled lexicon live on
-// the wasmtts-assets GitHub release under their content-versioned packNames,
-// proxied same-origin by /api/wasmtts/ (src/worker.js) and cached by the
-// synth worker in its own "bw-wasmtts" Cache API bucket, swept by keep-set on
-// every download. ort's 13 MB wasm is the one file ort loads by URL itself,
-// so it lives in a second bucket ("bw-wasmtts-rt") that sw.js serves
-// cache-first and the worker never sweeps. A phone that ran the old engine
-// holds ort's wasm under the old bucket: migrateRuntime moves it over before
-// the worker's first sweep can reclaim it, so nobody re-downloads 13 MB over
-// cellular for a bookkeeping change.
+// The pack: the models, tokens, rule tables, the compiled lexicon AND ort's
+// 13 MB wasm live on the wasmtts-assets GitHub release under their
+// content-versioned packNames, proxied same-origin by /api/wasmtts/
+// (src/worker.js) and cached by the synth worker in its own "bw-wasmtts"
+// Cache API bucket, swept by keep-set on every download. ort's wasm rides
+// the same pipeline since wasmtts v2.4.0 (the worker injects it as
+// ort.env.wasm.wasmBinary, so ort never fetches by URL): one bucket, one
+// status() answer, one sweep. Phones that ran v2.3.0 hold that file in the
+// old second bucket; adoptRuntime moves it over once so the change costs no
+// cellular bytes.
 
 // Relative, unlike player.mjs's absolute "/...": this module is also imported
 // straight off disk by scripts/test-wasm-frontend.mjs, where a root-absolute
@@ -62,8 +62,8 @@ export const RATE = 16000; // the model's own rate; lame encodes at it directly
 export const OVERRIDES = {};
 
 // ---- the config: which URL serves what ------------------------------------
-const CACHE = "bw-wasmtts";       // the synth worker's pack bucket (cacheName)
-const RT_CACHE = "bw-wasmtts-rt"; // sw.js parks ort's wasm here (runtimeFetch)
+const CACHE = "bw-wasmtts";          // the synth worker's pack bucket (cacheName)
+const LEGACY_RT = "bw-wasmtts-rt";   // v2.3.0's ort-wasm bucket — adopted, then deleted
 export const ENGINE_BASE = "/vendor/wasmtts/"; // the tarball's files, on the sw shell
 export const PACK_BASE = "/api/wasmtts/";      // the assets release, proxied same-origin
 
@@ -71,11 +71,15 @@ const runtimeFile = (pkg, file) => ASSETS.runtime[pkg].files[file];
 export const ORT_WASM = runtimeFile("onnxruntime-web", "dist/ort-wasm-simd-threaded.wasm");
 
 // Everything the worker needs, as URLs: engine scripts and the runtime's JS
-// from the shell, the pack from the release proxy, ort's wasm from the proxy
-// too (its own bucket, above). Derived from the pin's manifest — no file name
-// is written here, so a pin that moves a model or a runtime moves this.
+// from the shell, the pack from the release proxy — ort's wasm included:
+// a `wasm` path that ends in its packName is what makes upstream list it as
+// a pack asset (assets.ortWasm) instead of leaving ort to fetch it by URL.
+// Derived from the pin's manifest — no file name is written here, so a pin
+// that moves a model or a runtime moves this. The compiled lexicon is
+// cache-first for the same reason upstream makes it so: its packName is its
+// content hash.
 export function workerConfig() {
-  const cfg = workerConfigFromAssets({
+  return workerConfigFromAssets({
     assets: ASSETS,
     engineBaseUrl: ENGINE_BASE,
     assetBaseUrl: PACK_BASE,
@@ -91,11 +95,6 @@ export function workerConfig() {
     networkTimeoutMs: 1000, // NET_MS: a dying link hangs, it does not fail
     ort: { numThreads: 1 },
   });
-  // the compiled lexicon's packName carries its content hash, so its bytes
-  // can never change under the URL: cache-first, like the models — the
-  // upstream default (network-first) is for a host that serves it unversioned
-  cfg.assets.lexicon.networkFirst = false;
-  return cfg;
 }
 
 // The pack as the pill and /wasmtest count it: every release-served file,
@@ -121,28 +120,32 @@ async function openCache(name) {
   try { return await caches.open(name); } catch { return null; } // private mode: no cache
 }
 
-// ort's wasm used to live in the pack bucket (the old engine preloaded it);
-// the worker's keep-set sweep would reclaim it there. Move it once.
-let migrated = null;
-function migrateRuntime() {
-  return migrated ??= (async () => {
-    const [pack, rt] = await Promise.all([openCache(CACHE), openCache(RT_CACHE)]);
-    if (!pack || !rt) return;
-    const url = packUrl(ORT_WASM.packName);
-    if (await rt.match(url)) return;
-    const old = await pack.match(url);
-    if (old) await rt.put(url, old);
+// v2.3.0 parked ort's wasm in a bucket of its own (sw.js served it
+// cache-first; the worker did not know the file). Now the worker owns it
+// under the same key in the pack bucket: move the phone's copy over once
+// and drop the old bucket, so the bookkeeping change costs no 13 MB
+// download. Deletable once every phone has opened the app on v2.4.0+.
+let adopted = null;
+function adoptRuntime() {
+  return adopted ??= (async () => {
+    if (!("caches" in self) || !(await caches.has(LEGACY_RT))) return;
+    const [pack, rt] = await Promise.all([openCache(CACHE), openCache(LEGACY_RT)]);
+    if (pack && rt) {
+      const url = packUrl(ORT_WASM.packName);
+      const old = await rt.match(url);
+      if (old && !(await pack.match(url))) await pack.put(url, old);
+    }
+    await caches.delete(LEGACY_RT);
   })().catch(() => {});
 }
 
 export async function packStatus() {
-  await migrateRuntime();
-  const [pack, rt] = await Promise.all([openCache(CACHE), openCache(RT_CACHE)]);
+  await adoptRuntime();
+  const pack = await openCache(CACHE);
   const files = [];
   let cachedBytes = 0, missingBytes = 0;
   for (const f of PACK_FILES) {
-    const bucket = f.name === ORT_WASM.packName ? rt : pack;
-    const cached = !!(await bucket?.match(packUrl(f.name)));
+    const cached = !!(await pack?.match(packUrl(f.name)));
     files.push({ ...f, cached });
     if (cached) cachedBytes += f.bytes;
     else missingBytes += f.bytes;
@@ -172,44 +175,30 @@ export const packMissingBytes = async () => (await packStatus()).missingBytes;
 // /wasmtest's 清除快取 button; here because the module owns the bucket names.
 export async function clearPack() {
   let any = false;
-  for (const name of [CACHE, RT_CACHE]) {
+  for (const name of [CACHE, LEGACY_RT]) {
     try { any = (await caches.delete(name)) || any; } catch { /* private mode */ }
   }
   return any;
-}
-
-// ort's wasm into its bucket (sw.js does the same on the way through, so this
-// is the no-service-worker path and the "count it as downloaded" step); stale
-// ort versions leave with it, the way the worker sweeps the pack bucket.
-async function ensureRuntimeWasm() {
-  const rt = await openCache(RT_CACHE);
-  const url = packUrl(ORT_WASM.packName);
-  if (rt) {
-    for (const req of await rt.keys()) if (req.url !== url) await rt.delete(req);
-    if (await rt.match(url)) return;
-  }
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${ORT_WASM.packName} HTTP ${res.status}`);
-  const buf = await res.arrayBuffer();
-  if (buf.byteLength !== ORT_WASM.bytes)
-    throw new Error(`ort wasm is ${buf.byteLength} B, the pin says ${ORT_WASM.bytes} — the release and the pin disagree; re-sync the release`);
-  if (rt) await rt.put(url, new Response(buf, { headers: { "content-type": "application/wasm" } }));
 }
 
 // ---- the producer: one worker, kept across sessions -----------------------
 // The models take seconds to load and ~124 MiB to hold; a producer that dies
 // with the listening session would pay that on every ▶. So one producer, made
 // on first use, its worker kept warm; a worker that crashes is forgotten so
-// the next ▶ builds a fresh one. `more` is the reader's hook for the next
-// chapter's sentences (set per session by player.mjs); events fan out to
+// the next ▶ builds a fresh one. `more` and `restore` are the reader's hooks
+// (set per session by player.mjs): the next chapter's sentences when this
+// one runs out, and a chapter's sentences again when the player must
+// rebuild the timeline in a chapter the producer has already left (⏮ across
+// a boundary, the watchdog inside the 90 s after one). Events fan out to
 // whoever subscribed (the pill's progress, the player's fallback).
 const listeners = new Set();
 export function onEngineEvent(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
-let moreHook = null;
+let moreHook = null, restoreHook = null;
 export function setMore(fn) { moreHook = fn; }
+export function setRestore(fn) { restoreHook = fn; }
 
 let producer = null;
 export function ensureProducer() {
@@ -218,6 +207,7 @@ export function ensureProducer() {
     workerUrl: ENGINE_BASE + "matcha-worker.js",
     config: workerConfig(),
     more: (ctx) => (moreHook ? moreHook(ctx) : null),
+    restore: (tag) => (restoreHook ? restoreHook(tag) : null),
     allowUnknown: true, // one unknown glyph must never stop a book
     onEvent: (e) => {
       if (e.type === "error" && e.action === "worker") {
@@ -243,12 +233,14 @@ let engine = null; // singleton promise — models stay loaded across sessions
 // → { producer, speakChunk } — throws when init fails (the player falls back
 // to the online engine). Reads the pack from the worker's cache and inits;
 // with the pack complete (packReady, which is what put the reader on this
-// engine) nothing here touches the network but the runtime check.
+// engine) nothing here touches the network but the two network-first files'
+// 1 s probe.
 export function ensureEngine() {
   return engine ??= (async () => {
     navigator.storage?.persist?.().catch(() => {});
+    await adoptRuntime();
     const p = ensureProducer();
-    await Promise.all([p.download(), ensureRuntimeWasm()]);
+    await p.download();
     const init = await p.initialize();
     engineInfo.threads = init.runtime?.threads ?? 1;
     engineInfo.rules = init.frontend?.ruleFsts?.length ?? 0;
@@ -260,25 +252,22 @@ export function ensureEngine() {
   })().catch((e) => { engine = null; throw e; });
 }
 
-// The whole pack, into the worker's bucket (and ort's wasm into its own) —
-// /wasmtest and the reader's pack pill both call this, so either path primes
-// the other. onProgress({label, gotBytes, totalBytes}) rides the worker's
-// download-progress events (cached files count as arrived). Every caller sits
-// behind an explicit tap that names the size: ▶ itself must never quietly pull
-// ~140 MB over cellular.
+// The whole pack, into the worker's bucket — /wasmtest and the reader's pack
+// pill both call this, so either path primes the other.
+// onProgress({label, gotBytes, totalBytes}) rides the worker's
+// download-progress events (cached files count as arrived; the total is the
+// worker's own, which includes the profile it also fetches). Every caller
+// sits behind an explicit tap that names the size: ▶ itself must never
+// quietly pull ~140 MB over cellular.
 export async function downloadPack(onProgress) {
+  await adoptRuntime();
   const p = ensureProducer();
-  const totalBytes = PACK_FILES.reduce((s, f) => s + f.bytes, 0);
-  const packTotal = totalBytes - ORT_WASM.bytes;
   const off = onEngineEvent((e) => {
     if (e.type !== "download-progress") return;
-    onProgress?.({ label: e.asset, gotBytes: Math.min(packTotal, e.loaded), totalBytes });
+    onProgress?.({ label: e.asset, gotBytes: e.loaded, totalBytes: e.total });
   });
   try {
     await p.download();
-    onProgress?.({ label: "推論引擎", gotBytes: packTotal, totalBytes });
-    await ensureRuntimeWasm();
-    onProgress?.({ label: "推論引擎", gotBytes: totalBytes, totalBytes });
   } finally {
     off();
   }

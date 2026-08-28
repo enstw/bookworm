@@ -1255,20 +1255,24 @@ mid-session, the 1 s network cap on the pack's network-first files — and
 was handed upstream so it is tested there (`stream-player` and `producer`
 gates on every release) instead of living as one app's private lore. The
 migration ledger — 21 gaps found by comparing this app's `player.mjs`
-against v2.0.0, all closed by v2.1.0–v2.3.0 — is what v2 was cut against.
+against v2.0.0, plus three this reader found once it ran on v2.3.0, all
+closed by v2.1.0–v2.4.0 — is what v2 was cut against.
 
 What stays in this repo is the reader's side of the contract, in
 `wasm-tts.mjs` (thin) and the WASM section of `player.mjs`: the worker
 config (`workerConfigFromAssets` on the pin's own manifest — which
 same-origin URL serves what, ort single-threaded, `OVERRIDES` as the local
-pronunciation staging layer, the compiled lexicon cache-first because its
-packName is its content hash), the pack rules (`packReady` /
+pronunciation staging layer), the pack rules (`packReady` /
 `packMissingBytes` / `packStale` answered from the Cache API without a
 worker, so opening a book never pays for a Worker just to pick an engine;
 `downloadPack` behind an explicit tap that names the megabytes), one
 producer kept across sessions (the models load once), chapter text →
 `sentenceSpans` (upstream's walk on the RAW text, so `meta.start/end` are
-the reader's own offsets; `ttsPrompt` on each prompt), the unit under the
+the reader's own offsets; `ttsPrompt` on each prompt) — handed over as the
+session's segments, then again through the producer's two host hooks,
+`more` (the next chapter when one runs out) and `restore` (a chapter the
+producer has already left, when the player must rebuild its timeline
+there), the unit under the
 voice → (chapter, char) → bookmark, highlight, page-follow and chunk label
 (`onWasmUpdate`), ⏮/⏭ at chunk grain (`wasmSkip`: the target chunk's first
 sentence — `seekToSegment` while it is still in the buffer, a rebuild
@@ -1282,12 +1286,14 @@ Two things the app must keep doing for upstream's player: the element it
 hands over is the reader's one blessed `<audio>` (`unlockAudio` inside the
 tap), and `player.start()` — the transport's one `play()` — runs
 synchronously inside that tap when the chapter text is cached, while the
-engine comes up alongside. ort's 13 MB wasm is the one file ort loads by
-URL itself and the worker's keep-set sweep does not know: it lives in a
-second bucket (`bw-wasmtts-rt`) that `sw.js` serves cache-first, so a phone
-that has gone offline still inits, and `migrateRuntime` moves a phone's old
-copy over before the first sweep can reclaim it (a bookkeeping change must
-not cost 13 MB of cellular). One thread, no WebGPU — the worker's default —
+engine comes up alongside. ort's 13 MB wasm is a pack file like the models
+since wasmtts v2.4.0: a `wasm` path ending in its packName makes upstream
+list it as `assets.ortWasm`, so the worker downloads, counts and sweeps it
+with the rest and hands it to ort as `wasmBinary` (ort never fetches by
+URL, `sw.js` never touches `/api/`). v2.3.0 kept it in a second bucket the
+service worker served cache-first; `adoptRuntime` moves a phone's copy over
+once and deletes that bucket, because a bookkeeping change must not cost
+13 MB of cellular. One thread, no WebGPU — the worker's default —
 and no COOP/COEP (`public/_headers` stays deleted; upstream verified the
 non-isolated path). Matcha replaced piper 華言 on quality — 90 vs 60 in a
 blind listening test (Kokoro 80), piper marked 外國腔 — at comparable cost;
@@ -1383,15 +1389,19 @@ is testable headless): chain-swapping blob WAVs died after ~5 min locked
 with a `play()` that never settled — no new-element `play()` survives the
 lock screen long-term, same lesson as the STREAM engine. The player's log
 and heartbeat ride the engine's flight recorder to
-`/api/testlog?page=player`. Two upstream quirks the reader compensates for
-(reported, `/tmp/wasmtts-downstream-gaps.md` #22–#23): the player's
-`status` turns `ended` when the PRODUCER runs dry — the whole book
-synthesized, up to 90 s still buffered — so `onWasmUpdate` judges "playing"
-by the element, not the status, and the reader's own `ended` listener is
-what closes the session; and `restartFrom` assumes the producer is still on
-the same chapter, so ⏮/⏭ only seek through the player when the producer's
-segments carry the target chapter's tag, and rebuild the reading themselves
-otherwise.
+`/api/testlog?page=player`. Two findings from this reader's first day on
+the upstream player went back as v2.4.0 (ledger #22–#23), and the reader
+leans on both: the producer running dry is `snapshot().drained`, not a
+status — the whole book is synthesized up to 90 s before the voice gets
+there, and `playing` holds until the element itself ends (v2.3.0 flipped to
+`ended` at that moment and re-asked the drained producer on every
+timeupdate, which froze the bookmark 90 s before the book's end and logged
+three lines a second); and a rebuild — the watchdog's, or ⏮/⏭ out of the
+buffer — is `restartFrom({tag, index})`, which asks the producer to
+`restore(tag)` when `more` has already moved it to the next chapter,
+instead of resuming at the same sentence number of the wrong chapter.
+`test-tts-offline-e2e.mjs` drives both: a `restartFrom` into the chapter
+the producer left, and the bookmark still moving after `drained`.
 
 ### The voice pack
 
@@ -1404,10 +1414,10 @@ owns the `bw-wasmtts` bucket: it downloads there (models cache-first, the
 profile network-first with a 1 s cap and cache fallback, the lexicon
 cache-first because its packName is its content hash) and sweeps it by
 keep-set on every download, so a model or lexicon bump reclaims the old
-bytes by itself and the piper/melo/fanchen era was gone in one pass. ort's
-wasm lives in `bw-wasmtts-rt`, served cache-first by `sw.js` (see the engine
-section). `packReady()` answers from the Cache API — both buckets, the
-worker's own keys — and flips the reader to this engine; an evicted or
+bytes by itself and the piper/melo/fanchen era was gone in one pass; ort's
+wasm is one of those files (see the engine section). `packReady()` answers
+from the Cache API — the one bucket, the worker's own keys — and flips the
+reader to this engine; an evicted or
 renamed file falls back to STREAM and offers the pill with the missing
 megabytes (`packMissingBytes`, `packStale`); `localStorage bw_tts` picks the
 default engine. The same-origin engine files (`/vendor/wasmtts/`) ride the

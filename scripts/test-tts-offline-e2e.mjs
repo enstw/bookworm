@@ -3,9 +3,11 @@
 // player.mjs hands chapter sentences to wasmtts's producer, wasmtts's
 // continuous-stream-player appends units to the one blessed element, and the
 // units' char spans come back as the reader's position: bookmark, highlight,
-// chunk label, the next chapter through `more`, ⏮/⏭ at chunk grain, and the
-// player closing when the book ends. test-tts-wasm-e2e.mjs proves the engine;
-// this proves the reader's side of the contract (DESIGN.md → TTS).
+// chunk label, the next chapter through `more`, a chapter back through
+// `restore` when the player rebuilds behind the producer, ⏮/⏭ at chunk
+// grain, and the player closing when the book ends. test-tts-wasm-e2e.mjs
+// proves the engine; this proves the reader's side of the contract
+// (DESIGN.md → TTS).
 //
 // NOT in the default `pnpm test` chain: it needs the ~130 MB pack, served
 // like the engine suite does — weights from MATCHA_MODEL_DIR, the compiled
@@ -122,6 +124,30 @@ async function main() {
 await send("Page.navigate", { url: `${BASE}/ol` }, sessionId);
 await waitFor(`document.querySelectorAll("#content p[data-off]").length`, (n) => n > 0);
 await evalJs(`localStorage.setItem("bw_tts", "offline")`);
+// the profile is persistent (for the pack), so the last run's bookmark at
+// the book's end is too: start this reading from the top
+await evalJs(`Object.keys(localStorage).filter((k) => k.startsWith("bw_pos_")).forEach((k) => localStorage.removeItem(k))`);
+// a phone that ran v2.3.0 keeps ort's wasm in the bucket sw.js used to
+// serve it from: on the next open the pack must count as complete without
+// a download, and the old bucket must be gone. Planted here, judged after
+// a reload — adoptRuntime runs once per page, at the reader's first look.
+await evalJs(`import("/wasm-tts.mjs").then(async (m) => {
+  const url = new URL(m.PACK_BASE + m.ORT_WASM.packName, location.origin).href;
+  const pack = await caches.open("bw-wasmtts"), rt = await caches.open("bw-wasmtts-rt");
+  const res = (await pack.match(url)) ?? await fetch(url);
+  await rt.put(url, res.clone());
+  await pack.delete(url);
+})`);
+await send("Page.navigate", { url: `${BASE}/ol` }, sessionId);
+await waitFor(`document.querySelectorAll("#content p[data-off]").length`, (n) => n > 0);
+const legacy = await evalJs(`import("/wasm-tts.mjs").then(async (m) => {
+  const url = new URL(m.PACK_BASE + m.ORT_WASM.packName, location.origin).href;
+  const cached = (await m.packStatus()).files.find((f) => f.name === m.ORT_WASM.packName).cached;
+  return { cached, legacyGone: !(await caches.has("bw-wasmtts-rt")), inPack: !!(await (await caches.open("bw-wasmtts")).match(url)) };
+})`);
+out.adoptsLegacyBucket = legacy?.cached && legacy.legacyGone && legacy.inPack
+  ? "ok (v2.3.0's bw-wasmtts-rt copy moved into the worker's bucket on open, old bucket deleted)"
+  : `FAIL ${JSON.stringify(legacy)}`;
 const primed = await evalJs(`import("/wasm-tts.mjs").then(async (m) => {
   const before = await m.packReady();
   await m.downloadPack();
@@ -175,16 +201,52 @@ const crossed = await waitFor(`state.idx >= 1 && document.getElementById("ctitle
 out.chapterCrossed = crossed ? "ok (第2章 opened by the narration, still playing)"
   : `FAIL idx=${await evalJs(`state.idx`)} title=${await evalJs(`document.getElementById("ctitle").textContent`)} status=${await evalJs(`bwPlayer.wasm.player?.snapshot().status`)}`;
 
-// --- 6. ⏮ into a chapter the producer has left rebuilds there ---
+// --- 6. a rebuild behind the producer: the watchdog's move (and ⏮'s, out
+// of the buffer) is restartFrom({tag, index}) — the producer has moved on to
+// 第2章, so the player asks `restore` for 第1章's sentences and the reading
+// resumes there, DOM included ---
+const restored = await evalJs(`bwPlayer.wasm.player.restartFrom({ tag: 0, index: 2 })
+  .then(() => import("/wasm-tts.mjs")).then((m) => m.ensureProducer().tag)`).catch((e) => `threw ${e}`);
+const backIn1 = await waitFor(`state.idx === 0 && bwPlayer.player.chapIdx === 0 && bwPlayer.player.playing`, (v) => v, 60);
+out.restoresChapter = restored === 0 && backIn1
+  ? "ok (restartFrom({tag: 0}) → restore(0) → producer back on 第1章, DOM followed)"
+  : `FAIL producer.tag=${JSON.stringify(restored)} idx=${await evalJs(`state.idx`)} chapIdx=${await evalJs(`bwPlayer.player.chapIdx`)}`;
+
+// --- 7. ⏮ at chunk grain inside the rebuilt chapter keeps playing ---
 await evalJs(`document.getElementById("backBtn").click()`);
 await sleep(1500);
 const back = await waitFor(`bwPlayer.player.playing && bwPlayer.player.on`, (v) => v, 60);
 out.skipBack = back ? `ok (still playing after ⏮, chapter ${(await evalJs(`bwPlayer.player.chapIdx`)) + 1})` : "FAIL not playing after ⏮";
 
-// --- 7. book end: producer returns null → timeline ends → the player closes ---
-out.closesAtBookEnd = (await waitFor(`bwPlayer.player.on === false`, (v) => v, 400))
+// --- 8. book end: producer returns null → timeline ends → the player closes.
+// The producer runs dry long before the voice does (a whole short book is
+// synthesized in seconds): the bookmark must keep moving through that
+// tail, i.e. the last position seen is the last chapter's end, not where
+// the producer stopped ---
+const tail = [];
+for (let i = 0; i < 400; i++) {
+  const v = await evalJs(`bwPlayer.player.on ? { idx: state.idx, off: state.off, drained: bwPlayer.wasm.player?.snapshot().drained } : null`);
+  if (!v) break;
+  if (v.drained) tail.push(v);
+  await sleep(500);
+}
+const closed = await evalJs(`bwPlayer.player.on === false`);
+out.closesAtBookEnd = closed
   ? "ok" : `FAIL still open: idx=${await evalJs(`state.idx`)} status=${await evalJs(`bwPlayer.wasm.player?.snapshot().status`)}`;
+const moved = tail.length > 1 && (tail.at(-1).idx > tail[0].idx || tail.at(-1).off > tail[0].off);
+out.positionAfterDrain = moved
+  ? `ok (${tail.length} ticks after the producer drained, position ${tail[0].idx}:${tail[0].off} → ${tail.at(-1).idx}:${tail.at(-1).off})`
+  : `FAIL ${tail.length} ticks drained, ${JSON.stringify(tail.slice(0, 3))}`;
 out.markCleared = (await evalJs(`document.getElementById("ttsHl") === null`)) ? "ok" : "FAIL overlay survived close";
+// the flight recorder: the producer running dry is news once per timeline,
+// not once per timeupdate (v2.3.0 logged it three times a second)
+await sleep(1500);
+const lines = recorder.join("\n").split("\n");
+const dry = lines.filter((l) => l.includes("已用盡")).length;
+const beats = lines.filter((l) => l.includes("heartbeat")).length;
+out.drainedLoggedOnce = beats > 0 && dry >= 1 && dry <= 3
+  ? `ok (${dry} 已用盡 line(s) over ${beats} heartbeat(s))`
+  : `FAIL ${dry} 已用盡 line(s), ${beats} heartbeat(s), ${lines.length} lines`;
 }
 
 try {
