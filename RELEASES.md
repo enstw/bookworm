@@ -9,6 +9,13 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-29 — `6ec806bf5384`
+
+> 離線朗讀：再次按 ▶ 幾乎立刻出聲（先合成好畫面這頁的第一句）；⏮ 回前一章不再重建；/wasmtest 多了「短句合併」試聽選項。
+> wasmtts v2.4.0 → v2.6.0
+
+- tts: wasmtts v2.6.0 — the reader takes the eight things it asked for (`6ec806b`)
+
 ## 2026-08-29 — `6469586bde7e`
 
 > 離線朗讀升級到 wasmtts v2.4.0：接近書末時書籤不再提前停住，跨章回跳更穩；語音包不需重新下載。
