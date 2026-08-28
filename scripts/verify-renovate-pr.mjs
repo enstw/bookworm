@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { pathToFileURL } from "node:url";
+import { buildWoff2 } from "./fetch-font.mjs";
 
 const REPOSITORY = "enstw/bookworm";
 const BASE_BRANCH = "main";
@@ -21,6 +22,18 @@ const RENOVATE_LINE = new RegExp(`^(\\s*- run: pnpm dlx "renovate@)(${SEMVER_SOU
 // git dependency. Registry packages resolve URL-free (integrity only, host
 // from settings), so any other URL in the lockfile is a redirected install.
 const LOCKFILE_SOURCE = /^https:\/\/codeload\.github\.com\/enstw\//;
+// A font bump is four files that move together (fetch-font.mjs): the pin, the
+// woff2 it names, the SHELL that makes installed phones refetch it, and the
+// shell test's golden that confirms the bump was deliberate.
+const FONT_FILES = {
+  pin: "scripts/fetch-font.mjs",
+  woff2: "public/fonts/ENSFont.woff2",
+  sw: "public/sw.js",
+  golden: "scripts/test-shell-policy.mjs",
+};
+const FONT_PIN_LINE = /^const FONT_RELEASE = "(v(\d+\.\d+\.\d+)_lxgw[\d.]+_nerd[\d.]+)";$/;
+const SHELL_LINE = /^const SHELL = "bw-shell-v(\d+)";(.*)$/;
+const GOLDEN_LINE = /^const GOLDEN_SHELL = "bw-shell-v(\d+)";$/;
 
 function refuse(message) {
   throw new Error(`unsafe Renovate PR: ${message}`);
@@ -192,6 +205,55 @@ export function verifyWorkflowUpdate(path, baseText, headText) {
   return { actionPins, toolPins, actionUpdates };
 }
 
+// The one line of `path` that may differ between base and head, or a refusal.
+function singleChangedLine(path, baseText, headText) {
+  const before = baseText.split("\n");
+  const after = headText.split("\n");
+  if (before.length !== after.length) refuse(`${path} added or removed lines`);
+  let found = null;
+  for (let index = 0; index < before.length; index += 1) {
+    if (before[index] === after[index]) continue;
+    if (found) refuse(`${path} changed more than one line`);
+    found = { index, before: before[index], after: after[index] };
+  }
+  if (!found) refuse(`${path} is listed as changed but is identical`);
+  return found;
+}
+
+// Four files, each held to one line or to bytes the verifier can rebuild:
+// the pin moves to a strictly newer release, SHELL to exactly the next
+// number, the golden to that same name, and the woff2 must equal a fresh
+// conversion of the release's TTF (buildWoff2, the same pinned fonttools the
+// branch ran) — the bytes are the one thing a line diff cannot vouch for.
+export async function verifyFontUpdate({ readGitFile, readGitBlob, baseSha, headSha, deriveWoff2 }) {
+  const pin = singleChangedLine(FONT_FILES.pin, readGitFile(baseSha, FONT_FILES.pin), readGitFile(headSha, FONT_FILES.pin));
+  const oldPin = pin.before.match(FONT_PIN_LINE);
+  const newPin = pin.after.match(FONT_PIN_LINE);
+  if (!oldPin || !newPin) refuse(`${FONT_FILES.pin}:${pin.index + 1} is not the FONT_RELEASE pin`);
+  if (compareSemver(newPin[2], oldPin[2]) <= 0) refuse(`${FONT_FILES.pin} FONT_RELEASE is not an upgrade`);
+
+  const sw = singleChangedLine(FONT_FILES.sw, readGitFile(baseSha, FONT_FILES.sw), readGitFile(headSha, FONT_FILES.sw));
+  const oldShell = sw.before.match(SHELL_LINE);
+  const newShell = sw.after.match(SHELL_LINE);
+  if (!oldShell || !newShell) refuse(`${FONT_FILES.sw}:${sw.index + 1} is not the SHELL constant`);
+  if (Number(newShell[1]) !== Number(oldShell[1]) + 1) refuse(`${FONT_FILES.sw} SHELL did not move by exactly one`);
+  if (newShell[2] !== oldShell[2]) refuse(`${FONT_FILES.sw} SHELL line changed beyond the number`);
+
+  const golden = singleChangedLine(FONT_FILES.golden, readGitFile(baseSha, FONT_FILES.golden), readGitFile(headSha, FONT_FILES.golden));
+  const oldGolden = golden.before.match(GOLDEN_LINE);
+  const newGolden = golden.after.match(GOLDEN_LINE);
+  if (!oldGolden || !newGolden) refuse(`${FONT_FILES.golden}:${golden.index + 1} is not the GOLDEN_SHELL constant`);
+  if (newGolden[1] !== newShell[1]) refuse(`${FONT_FILES.golden} GOLDEN_SHELL does not match the new SHELL`);
+
+  if (typeof deriveWoff2 !== "function") refuse("font pin changed but no woff2 builder is available");
+  const expected = await deriveWoff2(newPin[1]);
+  const actual = readGitBlob(headSha, FONT_FILES.woff2);
+  if (!Buffer.isBuffer(expected) || !Buffer.isBuffer(actual) || !expected.equals(actual)) {
+    refuse(`${FONT_FILES.woff2} is not the conversion of ${newPin[1]}'s ${"ENSFont-Regular.ttf"}`);
+  }
+  return { release: newPin[1], shell: `bw-shell-v${newShell[1]}` };
+}
+
 export function parseNameStatus(raw) {
   const fields = raw.split("\0");
   if (fields.at(-1) === "") fields.pop();
@@ -252,12 +314,13 @@ export function verifyChecks(statusCheckRollup) {
   return statusCheckRollup.length;
 }
 
-export function verifyRenovateChange({ metadata, statusCheckRollup, entries, baseSha, headSha, readGitFile, resolveActionTag }) {
+export async function verifyRenovateChange({ metadata, statusCheckRollup, entries, baseSha, headSha, readGitFile, readGitBlob, resolveActionTag, deriveWoff2 }) {
   verifyMetadata(metadata, baseSha, headSha);
   const checkCount = verifyChecks(statusCheckRollup);
   if (entries.length === 0) refuse("PR has no changed files");
   if (metadata.changed_files !== entries.length) refuse("GitHub and git disagree on changed-file count");
 
+  const fontPaths = new Set(Object.values(FONT_FILES));
   const paths = new Set();
   for (const entry of entries) {
     if (entry.status !== "M") refuse(`${entry.path} has disallowed change type ${entry.status}`);
@@ -265,6 +328,7 @@ export function verifyRenovateChange({ metadata, statusCheckRollup, entries, bas
     paths.add(entry.path);
     const allowed = entry.path === "package.json"
       || entry.path === "pnpm-lock.yaml"
+      || fontPaths.has(entry.path)
       || /^\.github\/workflows\/[^/]+\.ya?ml$/.test(entry.path);
     if (!allowed) refuse(`${entry.path} is outside the dependency-update allowlist`);
   }
@@ -272,6 +336,13 @@ export function verifyRenovateChange({ metadata, statusCheckRollup, entries, bas
   const hasPackage = paths.has("package.json");
   const hasLockfile = paths.has("pnpm-lock.yaml");
   if (hasPackage !== hasLockfile) refuse("package.json and pnpm-lock.yaml must change together");
+  const fontTouched = [...fontPaths].filter((p) => paths.has(p)).length;
+  if (fontTouched !== 0 && fontTouched !== fontPaths.size) refuse("a font bump must change the pin, the woff2, sw.js and the shell golden together");
+  let fontPins = 0;
+  if (fontTouched) {
+    await verifyFontUpdate({ readGitFile, readGitBlob, baseSha, headSha, deriveWoff2 });
+    fontPins = 1;
+  }
 
   let dependencyPins = 0;
   let actionPins = 0;
@@ -303,11 +374,15 @@ export function verifyRenovateChange({ metadata, statusCheckRollup, entries, bas
       refuse(`${update.action}@${update.sha} does not match upstream tag v${update.version} (${resolved})`);
     }
   }
-  return { changedFiles: entries.length, dependencyPins, actionPins, toolPins, checkCount };
+  return { changedFiles: entries.length, dependencyPins, actionPins, toolPins, fontPins, checkCount };
 }
 
 function gitFile(sha, path) {
   return execFileSync("git", ["show", `${sha}:${path}`], { encoding: "utf8" });
+}
+
+function gitBlob(sha, path) {
+  return execFileSync("git", ["show", `${sha}:${path}`], { encoding: "buffer", maxBuffer: 64 * 1048576 });
 }
 
 function ghApi(path) {
@@ -329,7 +404,7 @@ function ghResolveActionTag(action, version) {
   return object.sha;
 }
 
-function main() {
+async function main() {
   const [metadataPath, checksPath, baseSha, headSha] = process.argv.slice(2);
   if (!metadataPath || !checksPath || !/^[0-9a-f]{40}$/.test(baseSha ?? "") || !/^[0-9a-f]{40}$/.test(headSha ?? "")) {
     console.error("usage: verify-renovate-pr.mjs <metadata.json> <checks.json> <base-sha> <head-sha>");
@@ -338,22 +413,24 @@ function main() {
   const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
   const { statusCheckRollup } = JSON.parse(readFileSync(checksPath, "utf8"));
   const rawDiff = execFileSync("git", ["diff", "--name-status", "-z", baseSha, headSha], { encoding: "utf8" });
-  const result = verifyRenovateChange({
+  const result = await verifyRenovateChange({
     metadata,
     statusCheckRollup,
     entries: parseNameStatus(rawDiff),
     baseSha,
     headSha,
     readGitFile: gitFile,
+    readGitBlob: gitBlob,
     resolveActionTag: ghResolveActionTag,
+    deriveWoff2: buildWoff2,
   });
-  console.log(`✓ Renovate PR #${metadata.number}: ${result.changedFiles} files, ${result.dependencyPins} dependency pins, ${result.actionPins} action pins, ${result.toolPins} tool pins`);
+  console.log(`✓ Renovate PR #${metadata.number}: ${result.changedFiles} files, ${result.dependencyPins} dependency pins, ${result.actionPins} action pins, ${result.toolPins} tool pins, ${result.fontPins} font pins`);
   if (result.checkCount === 0) console.log("  no PR checks reported; the required candidate gate is tracked separately");
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   try {
-    main();
+    await main();
   } catch (error) {
     console.error(`✗ ${error.message}`);
     process.exit(1);

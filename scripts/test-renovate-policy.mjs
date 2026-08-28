@@ -5,6 +5,7 @@ import {
   compareSemver,
   parseNameStatus,
   verifyChecks,
+  verifyFontUpdate,
   verifyLockfileSources,
   verifyPackageUpdate,
   verifyRenovateChange,
@@ -31,6 +32,9 @@ const newToolWorkflow = `jobs:\n  test:\n    steps:\n      - uses: pnpm/action-s
 
 function mustRefuse(fn, pattern) {
   assert.throws(fn, pattern);
+}
+async function mustReject(fn, pattern) {
+  await assert.rejects(fn, pattern);
 }
 
 assert.equal(verifyPackageUpdate(JSON.stringify(basePackage), JSON.stringify(headPackage)), 2);
@@ -176,8 +180,8 @@ const goodInput = {
   readGitFile: (sha, path) => files.get(`${sha}:${path}`),
   resolveActionTag: resolveCheckoutTag,
 };
-const result = verifyRenovateChange(goodInput);
-assert.deepEqual(result, { changedFiles: 3, dependencyPins: 2, actionPins: 1, toolPins: 0, checkCount: 0 });
+const result = await verifyRenovateChange(goodInput);
+assert.deepEqual(result, { changedFiles: 3, dependencyPins: 2, actionPins: 1, toolPins: 0, fontPins: 0, checkCount: 0 });
 
 assert.equal(verifyLockfileSources(goodLockfile), 2);
 mustRefuse(
@@ -188,7 +192,7 @@ mustRefuse(
   () => verifyLockfileSources("tarball: http://codeload.github.com/enstw/wasmtts/tar.gz/f4d4\n"),
   /unexpected source/,
 );
-mustRefuse(
+await mustReject(
   () => verifyRenovateChange({
     ...goodInput,
     readGitFile: (sha, path) => (path === "pnpm-lock.yaml"
@@ -197,15 +201,15 @@ mustRefuse(
   }),
   /unexpected source/,
 );
-mustRefuse(
+await mustReject(
   () => verifyRenovateChange({ ...goodInput, resolveActionTag: () => "f".repeat(40) }),
   /does not match upstream tag/,
 );
-mustRefuse(
+await mustReject(
   () => verifyRenovateChange({ ...goodInput, resolveActionTag: undefined }),
   /no tag resolver/,
 );
-mustRefuse(
+await mustReject(
   () => verifyRenovateChange({
     ...goodInput,
     metadata: { ...metadata, head: { ...metadata.head, sha: "c".repeat(40) } },
@@ -213,7 +217,7 @@ mustRefuse(
   /API metadata does not match the fetched commit pair/,
 );
 
-mustRefuse(
+await mustReject(
   () => verifyRenovateChange({
     metadata: { ...metadata, changed_files: 1 },
     statusCheckRollup: [],
@@ -224,7 +228,7 @@ mustRefuse(
   }),
   /outside the dependency-update allowlist/,
 );
-mustRefuse(
+await mustReject(
   () => verifyRenovateChange({
     metadata: { ...metadata, changed_files: 1 },
     statusCheckRollup: [],
@@ -235,7 +239,7 @@ mustRefuse(
   }),
   /disallowed change type/,
 );
-mustRefuse(
+await mustReject(
   () => verifyRenovateChange({
     metadata: { ...metadata, changed_files: 1 },
     statusCheckRollup: [],
@@ -246,7 +250,7 @@ mustRefuse(
   }),
   /must change together/,
 );
-mustRefuse(
+await mustReject(
   () => verifyRenovateChange({
     metadata: {
       ...metadata,
@@ -264,6 +268,84 @@ mustRefuse(
     readGitFile: (sha, path) => files.get(`${sha}:${path}`),
   }),
   /head repository or branch is unexpected/,
+);
+
+// ---- the font bump: four files, one line each, and bytes the verifier rebuilds
+const oldPin = 'const A = 1;\nconst FONT_RELEASE = "v4.4.0_lxgw1.522_nerd3.5.0";\nconst B = 2;\n';
+const newPin = 'const A = 1;\nconst FONT_RELEASE = "v4.5.0_lxgw1.522_nerd3.5.1";\nconst B = 2;\n';
+const oldSw = 'const SHELL = "bw-shell-v22"; // v22: + something\nconst X = 1;\n';
+const newSw = 'const SHELL = "bw-shell-v23"; // v22: + something\nconst X = 1;\n';
+const oldGolden = 'const GOLDEN_SHELL = "bw-shell-v22";\nconst Y = 1;\n';
+const newGolden = 'const GOLDEN_SHELL = "bw-shell-v23";\nconst Y = 1;\n';
+const woff2 = Buffer.from("wOF2-bytes-for-v4.5.0");
+const fontFiles = new Map([
+  [`${BASE_SHA}:scripts/fetch-font.mjs`, oldPin],
+  [`${HEAD_SHA}:scripts/fetch-font.mjs`, newPin],
+  [`${BASE_SHA}:public/sw.js`, oldSw],
+  [`${HEAD_SHA}:public/sw.js`, newSw],
+  [`${BASE_SHA}:scripts/test-shell-policy.mjs`, oldGolden],
+  [`${HEAD_SHA}:scripts/test-shell-policy.mjs`, newGolden],
+]);
+const fontInput = (overrides = {}) => ({
+  baseSha: BASE_SHA,
+  headSha: HEAD_SHA,
+  readGitFile: (sha, path) => fontFiles.get(`${sha}:${path}`),
+  readGitBlob: () => Buffer.from(woff2),
+  deriveWoff2: async (release) => (release === "v4.5.0_lxgw1.522_nerd3.5.1" ? Buffer.from(woff2) : Buffer.from("other")),
+  ...overrides,
+});
+assert.deepEqual(await verifyFontUpdate(fontInput()), { release: "v4.5.0_lxgw1.522_nerd3.5.1", shell: "bw-shell-v23" });
+const withFile = (sha, path, text) => (s, p) => (s === sha && p === path ? text : fontFiles.get(`${s}:${p}`));
+await mustReject(() => verifyFontUpdate(fontInput({ readGitBlob: () => Buffer.from("tampered") })), /not the conversion of/);
+await mustReject(() => verifyFontUpdate(fontInput({ deriveWoff2: undefined })), /no woff2 builder/);
+await mustReject(
+  () => verifyFontUpdate(fontInput({ readGitFile: withFile(HEAD_SHA, "scripts/fetch-font.mjs", oldPin.replace("v4.4.0", "v4.3.0")) })),
+  /not an upgrade/,
+);
+await mustReject(
+  () => verifyFontUpdate(fontInput({ readGitFile: withFile(HEAD_SHA, "scripts/fetch-font.mjs", newPin.replace("const B = 2", "const B = 3")) })),
+  /changed more than one line/,
+);
+await mustReject(
+  () => verifyFontUpdate(fontInput({ readGitFile: withFile(HEAD_SHA, "scripts/fetch-font.mjs", newPin + 'import("x");\n') })),
+  /added or removed lines/,
+);
+await mustReject(
+  () => verifyFontUpdate(fontInput({ readGitFile: withFile(HEAD_SHA, "public/sw.js", newSw.replace("v23", "v24")) })),
+  /did not move by exactly one/,
+);
+await mustReject(
+  () => verifyFontUpdate(fontInput({ readGitFile: withFile(HEAD_SHA, "public/sw.js", newSw.replace("+ something", "+ other")) })),
+  /beyond the number/,
+);
+await mustReject(
+  () => verifyFontUpdate(fontInput({ readGitFile: withFile(HEAD_SHA, "scripts/test-shell-policy.mjs", newGolden.replace("v23", "v24")) })),
+  /does not match the new SHELL/,
+);
+// in the roll-up: the four ride together or not at all, beside the usual pins
+const fontEntries = [
+  { status: "M", path: "scripts/fetch-font.mjs" },
+  { status: "M", path: "public/fonts/ENSFont.woff2" },
+  { status: "M", path: "public/sw.js" },
+  { status: "M", path: "scripts/test-shell-policy.mjs" },
+];
+const rollupWithFont = await verifyRenovateChange({
+  ...goodInput,
+  metadata: { ...metadata, changed_files: 7 },
+  entries: [...goodInput.entries, ...fontEntries],
+  readGitFile: (sha, path) => files.get(`${sha}:${path}`) ?? fontFiles.get(`${sha}:${path}`),
+  readGitBlob: () => Buffer.from(woff2),
+  deriveWoff2: async () => Buffer.from(woff2),
+});
+assert.deepEqual(rollupWithFont, { changedFiles: 7, dependencyPins: 2, actionPins: 1, toolPins: 0, fontPins: 1, checkCount: 0 });
+await mustReject(
+  () => verifyRenovateChange({
+    ...goodInput,
+    metadata: { ...metadata, changed_files: 4 },
+    entries: [...goodInput.entries, fontEntries[0]],
+    readGitFile: (sha, path) => files.get(`${sha}:${path}`) ?? fontFiles.get(`${sha}:${path}`),
+  }),
+  /must change the pin, the woff2, sw.js and the shell golden together/,
 );
 
 console.log("✓ Renovate auto-merge policy");
