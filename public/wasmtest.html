@@ -36,6 +36,7 @@
     h1 a { font-weight: 400; }
     .btns { margin: 10px 0 6px; display: flex; flex-wrap: wrap; gap: 4px;
       align-items: center; }
+    .hint { font-size: .8em; opacity: .7; }
     .btns b { width: 100%; }
     button, select { font: inherit; padding: 7px 9px;
       border: 1px solid #a05e2a; background: #fffdf8; border-radius: 6px;
@@ -78,6 +79,14 @@
     <button id="bPrep">準備引擎</button>
     <button id="bClear">清除快取</button>
   </div>
+  <div class="btns"><b>單位</b>
+    <select id="unitSel">
+      <option value="0">逐句（預設）</option>
+      <option value="30">短句併到 30 字</option>
+      <option value="50">短句併到 50 字</option>
+    </select>
+    <span class="hint">接縫停頓由模型自己決定 vs 兩個單位的頭尾靜音；換檔會重載引擎</span>
+  </div>
   <div class="btns"><b>朗讀</b>
     <button id="bShort">短句</button>
     <button id="bLong">連續朗讀（鎖屏用）</button>
@@ -91,7 +100,7 @@
 <script type="module">
 "use strict";
 import * as ttsCore from "/tts-core.mjs";
-import { ensureEngine, packReady, engineInfo, mkWav, PACK_FILES, RATE, downloadPack, clearPack } from "/wasm-tts.mjs";
+import { ensureEngine, packReady, engineInfo, mkWav, packTotalBytes, RATE, downloadPack, clearPack, UNIT_KEY, unitChars, resetProducer } from "/wasm-tts.mjs";
 
 const $ = (id) => document.getElementById(id);
 
@@ -128,7 +137,7 @@ addEventListener("pagehide", () => { clearTimeout(flushTimer); flush(); });
 // this validates, and simd is the variant the release hosts
 const SIMD = WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
 const standalone = matchMedia("(display-mode: standalone)").matches || !!navigator.standalone;
-const PACK_MB = PACK_FILES.reduce((s, f) => s + f.bytes, 0) / 1048576;
+const PACK_MB = packTotalBytes() / 1048576;
 const ctxRows = [
   ["mode", standalone ? "standalone（已安裝）" : "browser"],
   ["wasm simd / 核心", `${SIMD ? "有" : "無"} / ${navigator.hardwareConcurrency ?? "?"}`],
@@ -288,6 +297,17 @@ $("bPrep").onclick = () => { startHb(); prepare().catch((e) => log(`準備失敗
 $("bShort").onclick = () => speak(SHORT, "短句").catch((e) => log(`短句失敗 ${e.message}`));
 $("bLong").onclick = () => speak(LONG, "連續").catch((e) => log(`連續失敗 ${e.message}`));
 $("bStop").onclick = () => { stopAll(); log("停止"); };
+// the unit-packing knob (upstream minUnitChars): the reader reads the same
+// key, so a setting chosen by ear here is what the book gets
+$("unitSel").value = String(unitChars());
+$("unitSel").onchange = () => {
+  localStorage.setItem(UNIT_KEY, $("unitSel").value);
+  stopAll();
+  resetProducer();
+  engine = null;
+  log(`單位改為 ${$("unitSel").value === "0" ? "逐句" : `併到 ${$("unitSel").value} 字`}，下次朗讀重載引擎`);
+};
+
 $("bClear").onclick = async () => {
   stopAll();
   engine = null;

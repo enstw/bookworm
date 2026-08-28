@@ -62,6 +62,7 @@ function pickEngine() {
     if (player.on) return;
     wasmOn = packOk && ttsPref() === "offline";
     console.log(`bookworm tts engine: ${wasmOn ? "wasm (offline matcha)" : useStream ? "stream (ManagedMediaSource)" : "chain"}`);
+    wasmPrime();
   });
 }
 pickEngine();
@@ -75,6 +76,14 @@ export function init(deps) {
   ({ $, el, state, fetchChapter, openChapter, savePos, flush,
     updateProgress, followScroll, pageStartOffset, highlightSentence,
     lastUserScroll } = deps);
+  // a page turn moves where ▶ would start (the page on screen): re-prime
+  // once the reader settles — a no-op when the page still starts in the
+  // primed sentence, one sentence of worker time otherwise
+  let primeTimer = 0;
+  document.addEventListener("scroll", () => {
+    clearTimeout(primeTimer);
+    primeTimer = setTimeout(wasmPrime, 1500);
+  }, { capture: true, passive: true });
 }
 
 export const player = {
@@ -206,6 +215,7 @@ function startPlayer(off) {
 // here — advance paths set chapIdx before opening the chapter)
 export function chapterOpened(i, offset) {
   if (player.on && player.playing && i !== player.chapIdx) playFrom(i, offset);
+  else if (!player.on) wasmPrime();
 }
 
 // called on visibilitychange→visible: show the chapter the narration
@@ -756,6 +766,7 @@ export const wasm = {
   player: null,       // the upstream player, made once on the reader's element
   pendingOpen: false, // chapter crossed while hidden; DOM catches up on show
   lastStatus: "",     // the upstream status last mirrored into the bar
+  primed: null,       // {ci, sentence}: the unit synthesized ahead of ▶ (wasmPrime)
 };
 
 // ---- flight recorder ----------------------------------------------------
@@ -867,6 +878,33 @@ function wasmStop() {
   wasm.player?.stop();
   wasm.pendingOpen = false;
   wasm.lastStatus = "";
+  wasm.primed = null;
+}
+
+// The sentence ▶ would start on (the page on screen — togglePlayer's
+// offset, not the sticky bookmark), synthesized before the tap (upstream
+// prime): on a warm engine the first sound then lands with the tap instead
+// of ~0.6 s after it. Runs when the reader lands on a chapter or turns a
+// page with the offline engine picked and no session open; nothing on a
+// cold engine (see engineWarm) and nothing without the chapter text. A ▶
+// elsewhere just voids it.
+async function wasmPrime() {
+  if (!wasmOn || player.on || !wasmTts.engineWarm() || !state?.manifest) return;
+  const ci = state.idx, off = pageStartOffset?.() ?? state.off;
+  const text = state.cache.get(state.manifest.chapters[ci]?.file);
+  if (text === undefined) return;
+  const p = wasmTts.ensureProducer();
+  if (wasm.primed?.ci === ci && p.tag === ci && wasmTts.chunkIndexFor(p.segments, off) === wasm.primed.sentence) return;
+  p.setSegments(chapterSegments(ci, text), { tag: ci });
+  const sentence = wasmTts.chunkIndexFor(p.segments, off);
+  wasm.primed = { ci, sentence };
+  try {
+    const m = await p.prime({ offset: off });
+    if (m && wasm.primed?.ci === ci) wlog(`預熱 ci${ci} 句${sentence} ${Math.round(m.phases?.totalMs ?? 0)}ms`);
+  } catch (e) {
+    if (wasm.primed?.ci === ci) wasm.primed = null;
+    wlog(`預熱失敗 ${e?.message ?? e}`);
+  }
 }
 
 // Start (or restart) the offline reading of chapter ci at char offset off.
@@ -902,8 +940,16 @@ function wasmPlayFrom(ci, off) {
   wlog(`start ci${ci} k${player.chunkIdx} off${off} wasmtts`);
 
   const p = wasmTts.ensureProducer();
-  p.setSegments(chapterSegments(ci, text), { tag: ci });
-  p.seekTo(off); // only the sentence holding the request, not the chunk from its start
+  // the primed unit stands when ▶ lands in its sentence — setSegments/seekTo
+  // would void it; otherwise only the sentence holding the request, not the
+  // chunk from its start
+  const primed = wasm.primed?.ci === ci && p.tag === ci && wasmTts.chunkIndexFor(p.segments, off) === wasm.primed.sentence;
+  if (!primed) {
+    p.setSegments(chapterSegments(ci, text), { tag: ci });
+    p.seekTo(off);
+  }
+  wlog(primed ? "預熱單位直接上" : "無預熱");
+  wasm.primed = null;
   // the next chapter when this one's sentences run out — fetched on demand;
   // null at the book's end, which ends the timeline (`ended` closes the player)
   const segmentsOf = async (ci) => {
@@ -925,8 +971,8 @@ function wasmPlayFrom(ci, off) {
     onUpdate: onWasmUpdate,
     onSegment: onWasmSegment,
     onStall: (e) => wlog(`看門狗 ${e.phase} @${Math.round(e.playhead ?? 0)}s`),
-    onLog: ({ message, detail }) =>
-      wlog(detail && Object.keys(detail).length ? `${message} ${JSON.stringify(detail)}` : message),
+    onLog: ({ code, message, detail }) =>
+      wlog(`[${code}] ${message}${detail && Object.keys(detail).length ? ` ${JSON.stringify(detail)}` : ""}`),
   });
   wasm.player.start().catch((e) => {
     if (gen !== wasm.gen) return;
@@ -1040,29 +1086,29 @@ function wasmReplay() {
 }
 
 // ⏮/⏭ at chunk grain, like the online engines: the target chunk's first
-// sentence. A unit the producer has made for it → the player seeks while it
-// is still buffered and rebuilds at that (chapter, sentence) otherwise; no
-// unit yet (ahead of the synthesis, or a chapter the producer has moved on
-// from — its results are the current chapter's) → start the reading there.
+// sentence. On the timeline (upstream segments(): every unit still in the
+// buffer, the previous chapter's included) → the player seeks, or rebuilds
+// at that (chapter, sentence) when the audio is gone — asking the producer
+// to restore the chapter if `more` has moved it on; not on the timeline
+// (ahead of the synthesis, or a chapter never played) → start there.
 function wasmSkip(d) {
   const k = player.chunkIdx + d;
-  if (k >= 0 && k < player.chunks.length) {
-    const ci = player.chapIdx;
-    const target = player.chunks[k].start;
-    const p = wasmTts.ensureProducer();
-    const unit = p.results.find((m) => m.tag === ci && m.start <= target && target < m.end)
-      ?? p.results.find((m) => m.tag === ci && m.start >= target);
-    if (unit && wasm.player) {
-      startFloor = -1;
-      wasm.player.seekToSegment(unit.playerIndex, { producerIndex: { tag: unit.tag, index: unit.index } })
-        .catch(() => wasmPlayFrom(ci, target));
-      return;
-    }
-    return wasmPlayFrom(ci, target);
+  let ci = player.chapIdx, target;
+  if (k >= 0 && k < player.chunks.length) target = player.chunks[k].start;
+  else {
+    ci += d < 0 ? -1 : 1;
+    if (ci < 0 || ci >= state.manifest.chapters.length) return closePlayer();
+    target = 0;
   }
-  const ci = player.chapIdx + (d < 0 ? -1 : 1);
-  if (ci < 0 || ci >= state.manifest.chapters.length) return closePlayer();
-  wasmPlayFrom(ci, 0);
+  const segs = wasm.player?.segments() ?? [];
+  const seg = segs.find((s) => s.meta?.tag === ci && s.meta.start <= target && target < s.meta.end)
+    ?? segs.find((s) => s.meta?.tag === ci && s.meta.start >= target);
+  if (seg) {
+    startFloor = -1;
+    wasm.player.seekToSegment(seg.index).catch(() => wasmPlayFrom(ci, target));
+    return;
+  }
+  wasmPlayFrom(ci, target);
 }
 
 // ---------- player bar / MediaSession ----------

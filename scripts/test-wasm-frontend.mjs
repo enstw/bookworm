@@ -20,7 +20,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { sentenceSpans, mkWav, RATE, OVERRIDES, PACK_FILES, ENDERS, CLOSERS, WASMTTS_TAG } from "../public/wasm-tts.mjs";
+import { sentenceSpans, mkWav, RATE, OVERRIDES, ENDERS, CLOSERS, WASMTTS_TAG, workerConfig, packTotalBytes } from "../public/wasm-tts.mjs";
+import { assetListFromConfig } from "../public/vendor/wasmtts/matcha-producer.mjs";
 import * as ttsCore from "../public/tts-core.mjs";
 import { engineDir } from "./wasmtts-pin.mjs";
 import "../public/vendor/wasmtts/matcha-frontend.js";
@@ -101,11 +102,16 @@ out.rate = RATE === 16000 ? "ok (16 kHz, the model's own rate)" : `FAIL ${RATE}`
 // typo here silently means "no offline engine, ever". Eight files: the two
 // models, the compiled lexicon (content-hashed name), tokens, three rule
 // tables, ort's wasm.
-out.pack = PACK_FILES.length === 8 && PACK_FILES.every((f) => f.name && f.bytes > 0 && f.label)
-  && PACK_FILES.some((f) => /^matcha-lexicon-[0-9a-f]{8}\.txt$/.test(f.name))
-  && PACK_FILES.some((f) => /^ort-\d.*-wasm-simd-threaded\.wasm$/.test(f.name))
-  ? `ok (8 files, ${(PACK_FILES.reduce((s, f) => s + f.bytes, 0) / 1048576).toFixed(0)} MiB)`
-  : `FAIL ${JSON.stringify(PACK_FILES)}`;
+// the pack is the worker's own list (upstream assetListFromConfig on this
+// app's config): 8 sized pack files plus the unsized profile, every one
+// under this app's label, the compiled lexicon and ort's wasm among them
+const PACK = assetListFromConfig(workerConfig());
+const sized = PACK.filter((a) => Number.isFinite(a.bytes));
+out.pack = PACK.length === 9 && sized.length === 8 && PACK.every((a) => a.url && /[\u4e00-\u9fff]/.test(a.label))
+  && PACK.some((a) => /\/matcha-lexicon-[0-9a-f]{8}\.txt$/.test(a.url) && a.networkFirst === false)
+  && PACK.some((a) => a.key === "ortWasm" && /\/ort-\d.*-wasm-simd-threaded\.wasm$/.test(a.url))
+  ? `ok (${sized.length} pack files + profile, ${(packTotalBytes() / 1048576).toFixed(0)} MiB, labelled)`
+  : `FAIL ${JSON.stringify(PACK.map((a) => [a.key, a.label, a.bytes, a.url]))}`;
 
 // ---- text normalisation (pure, no lexicon) --------------------------------
 

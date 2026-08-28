@@ -47,7 +47,7 @@ out.engineFilesRideTheShell = missing.length === 0 && extra.length === 0
 // the one device that matters. Update both lines below when this is red:
 // the golden is meant to be edited deliberately, not regenerated.
 // (scripts/fetch-font.mjs bumps both lines itself when the font moves.)
-const GOLDEN_SHELL = "bw-shell-v24";
+const GOLDEN_SHELL = "bw-shell-v25";
 const GOLDEN_ASSETS = [
   "/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs",
   "/vendor/wasmtts/continuous-stream-player.mjs", "/vendor/wasmtts/kaldifst-normalizer.js",

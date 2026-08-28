@@ -1255,18 +1255,23 @@ mid-session, the 1 s network cap on the pack's network-first files — and
 was handed upstream so it is tested there (`stream-player` and `producer`
 gates on every release) instead of living as one app's private lore. The
 migration ledger — 21 gaps found by comparing this app's `player.mjs`
-against v2.0.0, plus three this reader found once it ran on v2.3.0, all
-closed by v2.1.0–v2.4.0 — is what v2 was cut against.
+against v2.0.0, plus three this reader found once it ran on v2.3.0 and
+eight more from wiring v2.4.0, all closed by v2.1.0–v2.6.0 — is what v2 was
+cut against.
 
 What stays in this repo is the reader's side of the contract, in
 `wasm-tts.mjs` (thin) and the WASM section of `player.mjs`: the worker
 config (`workerConfigFromAssets` on the pin's own manifest — which
 same-origin URL serves what, ort single-threaded, `OVERRIDES` as the local
-pronunciation staging layer), the pack rules (`packReady` /
-`packMissingBytes` / `packStale` answered from the Cache API without a
-worker, so opening a book never pays for a Worker just to pick an engine;
+pronunciation staging layer, this app's `labels` for the progress line),
+the pack rules (`packReady` / `packMissingBytes` / `packStale` on upstream's
+main-thread `packStatus` — the worker's own asset list against the Cache
+API, so opening a book never pays for a Worker just to pick an engine;
 `downloadPack` behind an explicit tap that names the megabytes), one
-producer kept across sessions (the models load once), chapter text →
+producer kept across sessions (the models load once) and primed with the
+bookmark's sentence ahead of ▶ once it is warm (`wasmPrime`: on landing on
+a chapter and when a session closes; never on a cold engine, which would
+load 140 MB behind every book open), chapter text →
 `sentenceSpans` (upstream's walk on the RAW text, so `meta.start/end` are
 the reader's own offsets; `ttsPrompt` on each prompt) — handed over as the
 session's segments, then again through the producer's two host hooks,
@@ -1275,8 +1280,11 @@ producer has already left, when the player must rebuild its timeline
 there), the unit under the
 voice → (chapter, char) → bookmark, highlight, page-follow and chunk label
 (`onWasmUpdate`), ⏮/⏭ at chunk grain (`wasmSkip`: the target chunk's first
-sentence — `seekToSegment` while it is still in the buffer, a rebuild
-otherwise), a chapter crossed while hidden (bookkeeping only; the DOM
+sentence — found on the timeline through upstream's `segments()`, the
+previous chapter's units included, `seekToSegment` does the rest: a seek
+while the audio is still buffered, a rebuild at that (chapter, sentence)
+otherwise; a target no unit exists for yet starts the reading there), a
+chapter crossed while hidden (bookkeeping only; the DOM
 catches up on show), and the engine fallbacks. `test-tts-wasm-e2e.mjs`
 proves the engine under this app's URLs; `test-tts-offline-e2e.mjs` proves
 the reader on it (▶ from the cached pack, position, highlight, ⏭, `more`
@@ -1401,13 +1409,24 @@ buffer — is `restartFrom({tag, index})`, which asks the producer to
 `restore(tag)` when `more` has already moved it to the next chapter,
 instead of resuming at the same sentence number of the wrong chapter.
 `test-tts-offline-e2e.mjs` drives both: a `restartFrom` into the chapter
-the producer left, and the bookmark still moving after `drained`.
+the producer left, and the bookmark still moving after `drained`. The
+player's log lines carry upstream's stable `code` (`[drained]`,
+`[heartbeat]`, `[stall-rebuild]`…) into the flight recorder, so nothing
+here matches on wording.
+
+One sentence is one unit by default, and the join pause between units is
+the measured cost (see Pauses): upstream's `minUnitChars` packs adjacent
+short sentences into one synthesis so the pause is the model's own. It is
+a listening decision, not a code one — `/wasmtest` has the knob (逐句 / 30
+/ 50 字, `localStorage bw_tts_unit`) and the reader's producer reads the
+same key, so a setting chosen by ear on a phone is what the book gets.
 
 ### The voice pack
 
 The ~140 MB voice pack (two models, the compiled lexicon, tokens, the three
-rule tables, ort's wasm — `PACK_FILES` in `wasm-tts.mjs`, derived from the
-pin's manifest) is downloaded only through `downloadPack` — the `/wasmtest`
+rule tables, ort's wasm, the runtime profile — the worker's own list,
+`assetListFromConfig`, nothing enumerated here) is downloaded only through
+`downloadPack` — the `/wasmtest`
 diagnostic and the stale-pack pill share it, and every entry is an explicit
 tap that names the megabytes (never ▶ itself — cellular). The synth worker
 owns the `bw-wasmtts` bucket: it downloads there (models cache-first, the

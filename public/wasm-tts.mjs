@@ -41,8 +41,8 @@
 // every test entry point runs it).
 import { ASSETS, PACK_NAMES, WASMTTS_TAG } from "./vendor/wasmtts/pack-manifest.mjs";
 import {
-  CLOSERS, ENDERS, chunkIndexFor, createMatchaProducer, sentenceEndFor, sentenceSpans, sentenceStartFor,
-  workerConfigFromAssets,
+  CLOSERS, ENDERS, assetListFromConfig, chunkIndexFor, createMatchaProducer, packStatus as upstreamPackStatus,
+  sentenceEndFor, sentenceSpans, sentenceStartFor, workerConfigFromAssets,
 } from "./vendor/wasmtts/matcha-producer.mjs";
 
 export { ASSETS, PACK_NAMES, WASMTTS_TAG, CLOSERS, ENDERS, chunkIndexFor, sentenceEndFor, sentenceSpans, sentenceStartFor };
@@ -70,16 +70,26 @@ export const PACK_BASE = "/api/wasmtts/";      // the assets release, proxied sa
 const runtimeFile = (pkg, file) => ASSETS.runtime[pkg].files[file];
 export const ORT_WASM = runtimeFile("onnxruntime-web", "dist/ort-wasm-simd-threaded.wasm");
 
+// The pack as the pill and /wasmtest name it: the worker's own asset list
+// (assetListFromConfig — lexicon, profile, tokens, the three rule tables,
+// ort's wasm, the two models), with this app's labels for the progress
+// line. Sizes and cache keys are the worker's; nothing is listed here.
+const LABELS = {
+  lexicon: "詞典", profile: "讀音規則", tokens: "音素表",
+  "phone-zh.fst": "號碼規則", "date-zh.fst": "日期規則", "number-zh.fst": "數字規則",
+  ortWasm: "推論引擎", acoustic: "聲學模型", vocoder: "聲碼器",
+};
+
 // Everything the worker needs, as URLs: engine scripts and the runtime's JS
-// from the shell, the pack from the release proxy — ort's wasm included:
-// a `wasm` path that ends in its packName is what makes upstream list it as
-// a pack asset (assets.ortWasm) instead of leaving ort to fetch it by URL.
-// Derived from the pin's manifest — no file name is written here, so a pin
-// that moves a model or a runtime moves this. The compiled lexicon is
-// cache-first for the same reason upstream makes it so: its packName is its
-// content hash.
+// from the shell, the pack from the release proxy — ort's wasm included
+// (upstream lists it as a pack asset by default; the override only says
+// which URL serves it). Derived from the pin's manifest — no file name is
+// written here, so a pin that moves a model or a runtime moves this. The
+// compiled lexicon is cache-first for the same reason upstream makes it so:
+// its packName is its content hash.
+let config = null;
 export function workerConfig() {
-  return workerConfigFromAssets({
+  return config ??= workerConfigFromAssets({
     assets: ASSETS,
     engineBaseUrl: ENGINE_BASE,
     assetBaseUrl: PACK_BASE,
@@ -91,30 +101,23 @@ export function workerConfig() {
       },
     },
     cacheName: CACHE,
+    labels: LABELS,
     pronunciationOverrides: OVERRIDES,
     networkTimeoutMs: 1000, // NET_MS: a dying link hangs, it does not fail
     ort: { numThreads: 1 },
   });
 }
 
-// The pack as the pill and /wasmtest count it: every release-served file,
-// labelled. Sizes are what a progress line or a percentage needs.
-const fstLabels = { "phone-zh.fst": "號碼規則", "date-zh.fst": "日期規則", "number-zh.fst": "數字規則" };
-export const PACK_FILES = [
-  { name: ASSETS.acoustic.packName, bytes: ASSETS.acoustic.bytes, label: "聲學模型" },
-  { name: ASSETS.vocos.packName, bytes: ASSETS.vocos.bytes, label: "聲碼器" },
-  { name: ASSETS.lexicon.packName, bytes: ASSETS.lexicon.bytes, label: "詞典" },
-  { name: ASSETS.matcha.files["tokens.txt"].packName, bytes: ASSETS.matcha.files["tokens.txt"].bytes, label: "音素表" },
-  ...Object.entries(ASSETS.matcha.files).filter(([f]) => f.endsWith(".fst"))
-    .map(([f, m]) => ({ name: m.packName, bytes: m.bytes, label: fstLabels[f] ?? "規則表" })),
-  { name: ORT_WASM.packName, bytes: ORT_WASM.bytes, label: "推論引擎" },
-];
+// what the pill and /wasmtest quote before a tap: the pack's bytes, the
+// worker's own sum (its list, so the profile's unsized entry counts as 0)
+export const packTotalBytes = () =>
+  assetListFromConfig(workerConfig()).reduce((s, a) => s + (Number.isFinite(a.bytes) ? a.bytes : 0), 0);
 
 // ---- pack status, answered from the Cache API without a worker ------------
-// The worker can answer status() too, but it costs a Worker plus importScripts
-// of ort and the engine just to ask — and the reader asks at every open to
-// pick an engine. The keys are the worker's own (absolute URLs of the config's
-// asset URLs), so both answers agree.
+// upstream's packStatus: the worker's asset list against the Cache API on
+// the main thread — the worker's status() costs a Worker plus importScripts
+// of ort and the engine just to ask, and the reader asks at every open to
+// pick an engine. Same list, same keys, so the two answers agree.
 const packUrl = (name) => new URL(PACK_BASE + name, location.origin).href;
 async function openCache(name) {
   try { return await caches.open(name); } catch { return null; } // private mode: no cache
@@ -141,16 +144,13 @@ function adoptRuntime() {
 
 export async function packStatus() {
   await adoptRuntime();
-  const pack = await openCache(CACHE);
-  const files = [];
-  let cachedBytes = 0, missingBytes = 0;
-  for (const f of PACK_FILES) {
-    const cached = !!(await pack?.match(packUrl(f.name)));
-    files.push({ ...f, cached });
-    if (cached) cachedBytes += f.bytes;
-    else missingBytes += f.bytes;
+  const cfg = workerConfig();
+  try {
+    return await upstreamPackStatus(cfg);
+  } catch {
+    // private mode: no Cache API → nothing is cached, everything is missing
+    return upstreamPackStatus(cfg, { caches: null });
   }
-  return { files, cachedBytes, missingBytes, complete: missingBytes === 0 };
 }
 
 // what flips the reader to this engine: the whole pack, including the rule
@@ -200,6 +200,16 @@ let moreHook = null, restoreHook = null;
 export function setMore(fn) { moreHook = fn; }
 export function setRestore(fn) { restoreHook = fn; }
 
+// Unit packing (upstream `minUnitChars`, opt-in, default off = one sentence
+// per unit): adjacent short sentences share one synthesis so the join pause
+// is the model's (~300 ms) rather than two units' trailing+leading silence
+// (~740 ms, measured — DESIGN.md → Pauses). Whether that reads better is a
+// listening call, made on /wasmtest's knob; the reader takes the same key.
+export const UNIT_KEY = "bw_tts_unit";
+export function unitChars() {
+  try { return Math.max(0, Number(localStorage.getItem(UNIT_KEY)) || 0); } catch { return 0; }
+}
+
 let producer = null;
 export function ensureProducer() {
   if (producer) return producer;
@@ -209,11 +219,12 @@ export function ensureProducer() {
     more: (ctx) => (moreHook ? moreHook(ctx) : null),
     restore: (tag) => (restoreHook ? restoreHook(tag) : null),
     allowUnknown: true, // one unknown glyph must never stop a book
+    minUnitChars: unitChars(),
     onEvent: (e) => {
       if (e.type === "error" && e.action === "worker") {
         // the Worker itself failed to start or died: nothing on it can be
         // reused — forget it, and the engine promise with it
-        if (producer === p) { producer = null; engine = null; }
+        if (producer === p) { producer = null; engine = null; warm = false; }
       }
       for (const l of listeners) {
         try { l(e); } catch { /* a listener must not break the engine */ }
@@ -225,10 +236,26 @@ export function ensureProducer() {
   return p;
 }
 
+// /wasmtest's knob changes take effect on the next producer: drop this one
+// (its worker and the loaded models with it) so prepare() builds a fresh one
+export function resetProducer() {
+  const p = producer;
+  producer = null;
+  engine = null;
+  warm = false;
+  try { p?.dispose(); } catch { /* already gone */ }
+}
+
 // what init actually decided — the player's flight recorder and /wasmtest read this
 export const engineInfo = { tag: WASMTTS_TAG, threads: 0, rules: 0, lexiconSize: 0, contextualRules: 0, localOverrides: 0 };
 
 let engine = null; // singleton promise — models stay loaded across sessions
+let warm = false;  // that promise has resolved: the models are in memory
+// A warm engine is what makes priming worth it: with the producer already up,
+// synthesizing the bookmark's sentence ahead of ▶ costs ~half a second of
+// worker CPU; on a cold one it would mean loading 140 MB of models behind
+// every book open, whether or not the reader ever taps ▶.
+export const engineWarm = () => warm;
 
 // → { producer, speakChunk } — throws when init fails (the player falls back
 // to the online engine). Reads the pack from the worker's cache and inits;
@@ -248,6 +275,7 @@ export function ensureEngine() {
     engineInfo.contextualRules = init.frontend?.contextualRules?.length ?? 0;
     engineInfo.localOverrides = init.frontend?.localOverrides?.length ?? 0;
     console.log(`wasm-tts ready: wasmtts ${WASMTTS_TAG}, matcha zh-en ${RATE}Hz, ${engineInfo.threads} thread, ${engineInfo.lexiconSize} lexicon entries, ${engineInfo.rules} rule tables, ${engineInfo.contextualRules} contextual rules, ${engineInfo.localOverrides} local overrides, init ${Math.round(init.wallMs)}ms`);
+    warm = true;
     return { producer: p, speakChunk };
   })().catch((e) => { engine = null; throw e; });
 }
@@ -273,33 +301,31 @@ export async function downloadPack(onProgress) {
   }
 }
 
-// Synthesize one prompt as a stream of sentence-sized mp3 units — /wasmtest's
-// chain playback and the e2e suite drive the engine this way; the reader's
-// player goes through the producer's next() instead. onUnit({buf|blob, secs,
-// ms, frac0, frac1}) — fracs are the unit's span over the prompt; await its
-// return value for backpressure, return false to abort. One unreadable
-// sentence must not kill the readout: its span joins the next unit so the
-// char mapping stays continuous (the producer does the same for the player).
+// Synthesize one prompt as a stream of mp3 units — /wasmtest's chain
+// playback and the e2e suite drive the engine this way; the reader's player
+// goes through the same producer's next() from its own segments. Units are
+// the producer's (one sentence, or several under the packing knob): an
+// unreadable sentence's span folds into the next unit, so the char mapping
+// stays continuous. onUnit({buf|blob, secs, ms, frac0, frac1}) — fracs are
+// the unit's span over the prompt; await its return value for backpressure,
+// return false to abort.
 async function speakChunk(prompt, onUnit, mp3 = true) {
   const p = ensureProducer();
   const total = prompt.length || 1;
-  let held = null;
-  for (const s of sentenceSpans(prompt)) {
-    let r = null;
-    try { r = await p.synthesize(s.text); } catch { r = null; }
-    if (!r || r.empty) { held ??= s.start; continue; }
+  p.setSegments(sentenceSpans(prompt));
+  for (let i = 0; ; i++) {
+    const r = await p.next({ index: i });
+    if (!r) return true;
     const unit = {
       secs: r.meta.audioSeconds,
       ms: r.meta.phases?.totalMs ?? 0, // compute time — the flight recorder's ×N
-      frac0: (held ?? s.start) / total,
-      frac1: s.end / total,
+      frac0: r.meta.start / total,
+      frac1: r.meta.end / total,
     };
-    held = null;
     if (mp3) unit.buf = r.buffer;
     else unit.blob = new Blob([r.buffer], { type: "audio/mpeg" });
     if ((await onUnit(unit)) === false) return false;
   }
-  return true;
 }
 
 // Float32 PCM → 16-bit mono WAV — /wasmtest's 50 ms primer silence
