@@ -2,43 +2,31 @@
 // Fill a local weights directory (default ~/.cache/bookworm-matcha) with the
 // voice-pack files the gated suites need — tts-wasm, and the
 // MATCHA_MODEL_DIR/MATCHA_FST_DIR halves of wasm-frontend / matcha-fst.
-// Everything downloads from the pins in the wasmtts dependency's
+// Everything downloads from the pins in the wasmtts engine's
 // matcha-assets.json and is SHA-256-verified before it lands; a file that
-// already verifies is skipped, so re-runs are cheap. Never point the suites
-// at a live wasmtts checkout instead — a working tree's models are mutable
-// owner state (see DESIGN.md's working agreements).
+// already verifies is skipped, so re-runs are cheap. The compiled lexicon is
+// not fetched here: it ships in the engine tarball, which wasmtts-pin.mjs
+// already holds under node_modules/.cache/wasmtts-engine/<tag>/. Never point
+// the suites at a live wasmtts checkout instead — a working tree's models are
+// mutable owner state (see DESIGN.md's working agreements).
 
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { ensureEngine, packEntries, readAssets, sha256 } from "./wasmtts-pin.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dir = process.argv[2] ?? join(homedir(), ".cache", "bookworm-matcha");
 
-const wasmttsDir = realpathSync(join(root, "node_modules", "wasmtts"));
-const pack = JSON.parse(readFileSync(join(wasmttsDir, "platform", "matcha-assets.json"), "utf8"));
-if (pack.schemaVersion !== 3)
-  throw new Error(`wasmtts matcha-assets.json schemaVersion ${pack.schemaVersion} — this fetcher understands 3`);
+const engine = await ensureEngine();
+// the upstream-hosted half of the pack; the lexicon (tarball) and ort's wasm
+// (npm) are already on disk and the suites read them from where they are
+const FILES = packEntries(readAssets(engine), engine).filter((e) => e.url).map((e) => ({
+  ...e,
+  target: e.name.startsWith("matcha-vocos") ? join(dir, e.file) : join(dir, "matcha-icefall-zh-en", e.file),
+}));
 
-const matchaRepo = pack.matcha.repository.replace(/\.git$/u, "");
-const FILES = [
-  { url: `${pack.acoustic.repository}/resolve/${pack.acoustic.revision}/${pack.acoustic.file}`,
-    target: join(dir, "matcha-icefall-zh-en", pack.acoustic.file),
-    bytes: pack.acoustic.bytes, sha256: pack.acoustic.sha256 },
-  { url: pack.vocos.url, target: join(dir, basename(new URL(pack.vocos.url).pathname)),
-    bytes: pack.vocos.bytes, sha256: pack.vocos.sha256 },
-  ...Object.entries(pack.matcha.files).map(([file, meta]) => ({
-    url: `${matchaRepo}/resolve/${pack.matcha.revision}/${file}`,
-    target: join(dir, "matcha-icefall-zh-en", file),
-    bytes: meta.bytes, sha256: meta.sha256,
-  })),
-];
-
-const verifies = ({ target, bytes, sha256 }) =>
-  existsSync(target) && statSync(target).size === bytes &&
-  createHash("sha256").update(readFileSync(target)).digest("hex") === sha256;
+const verifies = ({ target, bytes, sha256: want }) =>
+  existsSync(target) && statSync(target).size === bytes && sha256(readFileSync(target)) === want;
 
 for (const f of FILES) {
   if (verifies(f)) { console.log(`✓ ${basename(f.target)} (cached)`); continue; }
@@ -51,4 +39,5 @@ for (const f of FILES) {
 }
 console.log(`weights ready in ${dir}
   MATCHA_MODEL_DIR=${dir}
-  MATCHA_FST_DIR=${join(dir, "matcha-icefall-zh-en")}`);
+  MATCHA_FST_DIR=${join(dir, "matcha-icefall-zh-en")}
+  lexicon: ${engine}`);

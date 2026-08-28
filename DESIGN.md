@@ -202,6 +202,27 @@ merges it and dispatches the gated deploy. Major updates get their own PR
 and wait for review. There is no Renovate App — the CLI runs in Actions, or
 by hand via the command in the config header.
 
+**The wasmtts pin is two things.** The git dependency in `package.json`
+(`github:enstw/wasmtts#vX.Y.Z`) is what Renovate tracks and what the npm
+runtime pins (onnxruntime-web, lamejs) resolve through; the engine itself
+comes from the **release tarball of that tag** (`wasmtts-engine.tar.gz`,
+verified against the release's `.sha256`, cached under
+`node_modules/.cache/wasmtts-engine/<tag>/` by `scripts/wasmtts-pin.mjs`),
+because the compiled lexicon, the runtime profile and the complete pack
+manifest are built at release time and are not in the git tree — the tree's
+`matcha-assets.source.json` is `stage: source` and the producer refuses it.
+`vendor.mjs` copies the engine files under `public/vendor/wasmtts/` and the
+runtime scripts under their versioned packNames (each byte checked against
+the manifest's sha256), and generates `pack-manifest.mjs` (`ASSETS`,
+`PACK_NAMES`) for the engine module and the worker's `/api/wasmtts/`
+allowlist; `sync-wasmtts-assets.mjs` keeps the `wasmtts-assets-v2` release
+in step with the same list (models and tables from their upstream hosts,
+the lexicon from the tarball, ort's wasm from npm); `packEntries` in
+`wasmtts-pin.mjs` is the one list all four derive from. A pin bump therefore
+moves the vendored engine, the pack names, the release and the tests in one
+motion, and a bump the gate cannot build (a schema the vendor step does not
+understand) turns the roll-up red, which is the right answer.
+
 A third-party release must be **30 days old** before it can join a roll-up,
 so a yanked or compromised publish has time to surface somewhere else first;
 expect the pins to sit a release or two behind npm on purpose. Our own
@@ -1181,10 +1202,11 @@ live shelf.
 
 ### Three engines
 
-`player.mjs` drives three engines: WASM (offline Matcha, preferred when the
-voice pack is cached), STREAM (`ManagedMediaSource`, one continuous mp3
-timeline — no chunk boundary ever needs `play()` while the screen is locked)
-where supported, CHAIN (double-buffered element swap) elsewhere;
+`player.mjs` drives three engines: WASM (offline Matcha — wasmtts's own
+worker, producer and streaming player, preferred when the voice pack is
+cached), STREAM (`ManagedMediaSource`, one continuous mp3 timeline — no
+chunk boundary ever needs `play()` while the screen is locked) where
+supported, CHAIN (double-buffered element swap) elsewhere;
 `globalThis.bwPlayer` says which. The online backend speaks Microsoft Edge
 read-aloud (protocol gotchas commented in `src/edge-tts.js`); real Mandarin
 rate ≈ 4.5 chars/s; TTS chunk 0 is always the chapter heading alone. **The
@@ -1204,7 +1226,7 @@ and the button turns accent, exactly while a fallback is in effect. A tap
 flips the default and, under a live session, ends it and reopens on the
 other engine at the voice's position, inside the same tap (the element
 blessing needs the gesture). The fallbacks: 離線→線上 when the engine fails
-to initialise or the synth dies mid-book (`wasmSynthLoop`); 線上→離線 when
+to initialise or its worker dies (`wasmFallback`); 線上→離線 when
 ▶ is pressed with no network, or a chunk fetch gets no answer at all
 (`TypeError`, never an HTTP status) while the buffer is under 30 s
 (`feedStream`). Each swap ends the timeline it leaves before opening the
@@ -1213,48 +1235,88 @@ actually protects; the CHAIN engine (no MSE — desktop Firefox) has no
 fallback path. The pack offer pill no longer hides behind the online
 preference: with 線上 as the default the pack IS the fallback.
 
-### The offline engine
+### The offline engine is wasmtts's, whole
 
-`wasm-tts.mjs` runs Matcha zh-en (`matcha-icefall-zh-en`) under
-onnxruntime-web in a Worker, ONE wasm thread, `executionProviders:
-["wasm"]` — **no WebGPU, ever**: it measured slower than CPU for VITS-shaped
-graphs (small, numerous ops; the GPU round-trip eats the win) and the option
-is deleted rather than kept as a tempting fallback. TWO sessions are live at
-once: the acoustic model emits a mel spectrogram and Vocos turns it into
-magnitude plus cos/sin phase — **not a waveform** — so the inverse FFT and
-overlap-add in `matcha-synthesis.js` are what produce audio at all, at ~1.4%
-of synthesis time. The raw ONNX buffers are transferred into the worker and
-nulled the moment the sessions exist; that is ~124 MiB and load-bearing on a
-phone, not an optimisation. Matcha replaced piper 華言 on quality — 90 vs 60
-in a blind listening test (Kokoro 80), piper marked 外國腔 — at comparable
-cost: measured RTF 0.1317–0.1360 (×7.3–7.6 realtime) single-threaded on
-desktop, verified on the phone before the swap and on device after it — pack
-download, MediaSource timeline, lock-screen readout, which is the checklist
-any future voice or engine swap owes. piper, its espeak phonemizer
-and the melo-era 台灣讀音 overlay live in git history.
+Since wasmtts v2 (adopted 2026-08-29) the offline reading is wasmtts's own
+stack, vendored from its **release tarball** and driven, not re-implemented:
+`matcha-worker.js` (the synth worker: pack download into its Cache API
+bucket, `MatchaEngine.create`, mp3 per sentence), `matcha-producer.mjs`
+(sentences in, units out — each unit carrying the raw char span it speaks
+and the chapter tag it came from; `seekTo(offset)` starts on the sentence
+holding a request; `more()` asks the host for the next chapter so the
+timeline never ends mid-book; a sentence the engine cannot read is skipped
+and its span folded into the next unit), and `continuous-stream-player.mjs`
+(ONE element, ONE MediaSource timeline, and the lock-screen rules). Every
+one of those rules was a bookworm phone finding first — the heartbeat
+watchdog (nudge, then rebuild at the current unit), the 5-minute chain death
+(only `pause()` is a user pause; a system pause is `suspended` and
+auto-resumes on the foreground flip), Media Session metadata that updates
+mid-session, the 1 s network cap on the pack's network-first files — and
+was handed upstream so it is tested there (`stream-player` and `producer`
+gates on every release) instead of living as one app's private lore. The
+migration ledger — 21 gaps found by comparing this app's `player.mjs`
+against v2.0.0, all closed by v2.1.0–v2.3.0 — is what v2 was cut against.
 
-COOP/COEP is gone (`public/_headers` deleted): nothing needs
-`crossOriginIsolated` now that the threaded experiments are, and the engine
-was verified running with it false.
+What stays in this repo is the reader's side of the contract, in
+`wasm-tts.mjs` (thin) and the WASM section of `player.mjs`: the worker
+config (`workerConfigFromAssets` on the pin's own manifest — which
+same-origin URL serves what, ort single-threaded, `OVERRIDES` as the local
+pronunciation staging layer, the compiled lexicon cache-first because its
+packName is its content hash), the pack rules (`packReady` /
+`packMissingBytes` / `packStale` answered from the Cache API without a
+worker, so opening a book never pays for a Worker just to pick an engine;
+`downloadPack` behind an explicit tap that names the megabytes), one
+producer kept across sessions (the models load once), chapter text →
+`sentenceSpans` (upstream's walk on the RAW text, so `meta.start/end` are
+the reader's own offsets; `ttsPrompt` on each prompt), the unit under the
+voice → (chapter, char) → bookmark, highlight, page-follow and chunk label
+(`onWasmUpdate`), ⏮/⏭ at chunk grain (`wasmSkip`: the target chunk's first
+sentence — `seekToSegment` while it is still in the buffer, a rebuild
+otherwise), a chapter crossed while hidden (bookkeeping only; the DOM
+catches up on show), and the engine fallbacks. `test-tts-wasm-e2e.mjs`
+proves the engine under this app's URLs; `test-tts-offline-e2e.mjs` proves
+the reader on it (▶ from the cached pack, position, highlight, ⏭, `more`
+crossing a chapter, ⏮, book end).
+
+Two things the app must keep doing for upstream's player: the element it
+hands over is the reader's one blessed `<audio>` (`unlockAudio` inside the
+tap), and `player.start()` — the transport's one `play()` — runs
+synchronously inside that tap when the chapter text is cached, while the
+engine comes up alongside. ort's 13 MB wasm is the one file ort loads by
+URL itself and the worker's keep-set sweep does not know: it lives in a
+second bucket (`bw-wasmtts-rt`) that `sw.js` serves cache-first, so a phone
+that has gone offline still inits, and `migrateRuntime` moves a phone's old
+copy over before the first sweep can reclaim it (a bookkeeping change must
+not cost 13 MB of cellular). One thread, no WebGPU — the worker's default —
+and no COOP/COEP (`public/_headers` stays deleted; upstream verified the
+non-isolated path). Matcha replaced piper 華言 on quality — 90 vs 60 in a
+blind listening test (Kokoro 80), piper marked 外國腔 — at comparable cost;
+piper, its espeak phonemizer and the melo-era 台灣讀音 overlay live in git
+history.
 
 ### The text frontend: 簡繁直輸
 
 **Traditional and simplified text go straight into the lexicon, with no
-OpenCC anywhere.** The cost is measured and accepted, not unknown: 70.5% of
-the lexicon's 47,113 multi-char entries are unreachable from traditional
-input, 19.3% of those get ≥1 syllable wrong via per-char fallback, and real
-traditional prose comes out ~16% wrong — 銀行 as yín xíng, 會計 as huì jì.
-**Corrections arrive as upstream's taiwan profile — the reviewed reading
-layer is part of the product voice, not an optional extra:**
-`matcha-taiwan-profile.js` and its `matcha-g2p-review.json` ledger ride the
-pin through vendor.mjs and the sw shell, and compile to ~120 phrase
-overrides plus 16 contextual rules (得/著/長/還/乾…, dictionary- and
-corpus-reviewed upstream) applied in the synth worker — which is what fixed
-看著 to kàn zhe. `OVERRIDES` in wasm-tts.mjs is local staging on top: an
-entry lands there when a listening test here catches a reading the review
-has not reached, wins over the profile, and leaves once upstream absorbs it
-(垃圾→lè sè made that trip). Every reading change gets a pinned case in
-`scripts/test-wasm-frontend.mjs`.
+OpenCC at runtime.** The cost was measured before it was closed: 70.5% of
+the upstream lexicon's 47,113 multi-char entries were unreachable from
+traditional input, 19.3% of those got ≥1 syllable wrong via per-char
+fallback, and real traditional prose came out ~16% wrong — 銀行 as yín xíng,
+會計 as huì jì. wasmtts v2 closes it at build time: the **compiled lexicon**
+(`matcha-lexicon-<hash>.txt`, 101,051 entries, a pack file) is the upstream
+lexicon plus a curated traditional mirror (OpenCC phrase-level, 2,132 base
+syllable fixes + 12 guards such as 不會計較, the tone-only and
+cross-boundary cases deliberately left out) plus the reviewed phrase
+readings, and the **runtime profile** (`matcha-profile.runtime.json`)
+carries the 16 contextual rules (得/著/長/還/乾…) the lexicon cannot express
+— which is what fixed 看著 to kàn zhe. `OVERRIDES` in wasm-tts.mjs is local
+staging on top: an entry lands there when a listening test here catches a
+reading upstream has not reached, wins over the lexicon and the profile
+(the engine refuses a phone that is not in tokens.txt at create time), and
+leaves once upstream absorbs it into its review/curation (垃圾→lè sè made
+that trip). `tts-core.mjs` keeps its own copy of the sentence enders and
+closers because the server's synthesis worker imports it and cannot reach
+the vendored engine; `test-wasm-frontend.mjs` pins that the two walks agree,
+and every reading change gets a pinned case there.
 
 ### Numbers ride kaldifst
 
@@ -1310,43 +1372,50 @@ sentences into one unit, not re-arming the cutter.
 
 ### Units and playback
 
-One sentence is one unit (`segments()`, reusing `ENDERS`/`CLOSERS` from
-`tts-core.mjs` so the two splitters cannot drift); the worker lame-encodes
-each to mp3 and playback appends them to ONE ManagedMediaSource timeline
-(plain MediaSource on Chrome, so the same path is testable headless):
-chain-swapping blob WAVs died after ~5 min locked with a `play()` that never
-settled — no new-element `play()` survives the lock screen long-term, same
-lesson as the STREAM engine. The engine's flight recorder mirrors the
-timeline to `/api/testlog?page=player`.
+One sentence is one unit: upstream's `sentenceSpans` walks the RAW chapter
+text (`ENDERS`/`CLOSERS` — `tts-core.mjs` keeps its own copy for the
+server's chunker and `test-wasm-frontend.mjs` pins that the two walks
+agree), each prompt is cleaned by `ttsPrompt`, and the unit comes back with
+that raw span in `meta.start/end` and the chapter in `meta.tag`; the worker
+lame-encodes each to mp3 and wasmtts's player appends them to ONE
+ManagedMediaSource timeline (plain MediaSource on Chrome, so the same path
+is testable headless): chain-swapping blob WAVs died after ~5 min locked
+with a `play()` that never settled — no new-element `play()` survives the
+lock screen long-term, same lesson as the STREAM engine. The player's log
+and heartbeat ride the engine's flight recorder to
+`/api/testlog?page=player`. Two upstream quirks the reader compensates for
+(reported, `/tmp/wasmtts-downstream-gaps.md` #22–#23): the player's
+`status` turns `ended` when the PRODUCER runs dry — the whole book
+synthesized, up to 90 s still buffered — so `onWasmUpdate` judges "playing"
+by the element, not the status, and the reader's own `ended` listener is
+what closes the session; and `restartFrom` assumes the producer is still on
+the same chapter, so ⏮/⏭ only seek through the player when the producer's
+segments carry the target chapter's tag, and rebuild the reading themselves
+otherwise.
 
 ### The voice pack
 
-The ~145 MB voice pack (five model files plus the three rule tables) is
-downloaded only through `downloadPack` in `wasm-tts.mjs` — the `/wasmtest`
+The ~140 MB voice pack (two models, the compiled lexicon, tokens, the three
+rule tables, ort's wasm — `PACK_FILES` in `wasm-tts.mjs`, derived from the
+pin's manifest) is downloaded only through `downloadPack` — the `/wasmtest`
 diagnostic and the stale-pack pill share it, and every entry is an explicit
-tap that names the megabytes (never ▶ itself — cellular) — into the
-`bw-wasmtts` cache; `packReady()` flips the reader to this engine, eviction
-falls back to STREAM, `localStorage bw_tts="stream"` forces the online
-engines. The cache sweep is a keep-set, not a name list, so it reclaims the
-whole piper/melo/fanchen era in one pass and never needs editing again. The
-same-origin JS modules and vendor bundles are fetched network-first at init
-(`cachedBuf` fresh mode; the service worker bounds it at 1 s and answers
-offline) because the copy parked in `bw-wasmtts` outlives every SHELL bump —
-a phone once inited a stale cached ort UMD against a newer wasm exactly that
-way. Cache-first stays correct only for the release binaries, whose
-filenames carry their version.
-
-A pack change reaches a phone as `packReady()` false: the reader falls back
-to STREAM and `player.mjs` offers the re-download as a one-tap pill
-(`player.packStale`) — the voice pack is a reader feature, not
-diagnostic-page lore, and a silent engine downgrade reads as the app losing
-a feature it used to have. The pill downloads in place with its button
-naming the missing MB; narration keeps playing online and the offline
-engine returns at the next ▶ — never mid-session, because `useWasm()` is
-consulted live throughout playback. A device that never held the pack gets
-the same pill as a plain offer (`player.packOffer`) — first download and
-re-download are the one flow, and `/wasmtest` keeps only the per-file
-diagnostic timeline.
+tap that names the megabytes (never ▶ itself — cellular). The synth worker
+owns the `bw-wasmtts` bucket: it downloads there (models cache-first, the
+profile network-first with a 1 s cap and cache fallback, the lexicon
+cache-first because its packName is its content hash) and sweeps it by
+keep-set on every download, so a model or lexicon bump reclaims the old
+bytes by itself and the piper/melo/fanchen era was gone in one pass. ort's
+wasm lives in `bw-wasmtts-rt`, served cache-first by `sw.js` (see the engine
+section). `packReady()` answers from the Cache API — both buckets, the
+worker's own keys — and flips the reader to this engine; an evicted or
+renamed file falls back to STREAM and offers the pill with the missing
+megabytes (`packMissingBytes`, `packStale`); `localStorage bw_tts` picks the
+default engine. The same-origin engine files (`/vendor/wasmtts/`) ride the
+service worker shell, network-first at 1 s with the cached copy behind — a
+phone once inited a stale cached ort UMD against a newer wasm when those
+were parked cache-first in the pack bucket, which is why the runtime scripts
+now carry their version in the name and the pack bucket holds pack files
+only.
 
 ### Vendoring and pins
 
@@ -1354,49 +1423,44 @@ Binaries come from the `wasmtts-assets-v2` GitHub release via the
 allowlisted `/api/wasmtts/` proxy; `/wasmtest` imports the real engine
 rather than carrying its own copy, because a bench that drifts from what
 ships measures the wrong thing. **The engine code itself is vendored from
-the wasmtts git dependency** — `matcha-frontend.js`, `matcha-synthesis.js`,
-the kaldifst wasm and its wrapper, plus the `matcha-fst.js` test oracle land
-in `public/vendor/wasmtts/` via `vendor.mjs`, never hand-copied into
-`public/`: hand copies drift both ways (bookworm held the fromCharCode and
-colon fixes while upstream held the ruleNormalizer interface — each side
-missing the other's), and upstream's release gates (FST
-golden, RTF, 512 MiB, Whisper CER) test what this repo cannot. The pin is a
-release tag Renovate bumps; bookworm's fixes are upstreamed first so the
-vendored files need no local patches.
+the wasmtts release tarball of the pinned tag** (`scripts/wasmtts-pin.mjs`
+downloads it once per tag, verifies it against the release's `.sha256`, and
+`vendor.mjs` copies its files into `public/vendor/wasmtts/`), never
+hand-copied into `public/`: hand copies drift both ways (bookworm held the
+fromCharCode and colon fixes while upstream held the ruleNormalizer
+interface — each side missing the other's), and upstream's release gates
+(FST golden, RTF, 512 MiB, Whisper CER, the streaming player) test what this
+repo cannot. The pin is a release tag Renovate bumps; bookworm's fixes are
+upstreamed first so the vendored files need no local patches.
 
-**ort is pinned exactly, and the pin lives upstream**: wasmtts declares
-`onnxruntime-web` (and `lamejs`) in its `dependencies`, and `vendor.mjs`
-resolves both through the wasmtts tree — this repo holds no ort version of
-its own, so ort can only move together with a gated engine release, never
-alone. The pin has no `^`: the wasm's byte length is asserted at init, so a
-floating range would break the engine on a lockfile refresh. A dev build is
-not an acceptable pin — it gets no security fixes and cannot be
-meaningfully bumped — and measured RTF differences between ort versions are
-run-to-run noise, so a bump is judged on runway and security, never speed.
-Note `env.versions.common` reports *onnxruntime-common*, not the web
-package, so the drift guard checks the wasm's byte length instead.
+**ort and lamejs are pinned exactly, and the pins live upstream**: the
+tarball's `matcha-assets.json` carries a `runtime` block naming each npm
+package's version, files, versioned packNames and sha256; wasmtts declares
+the same versions in its `dependencies`, and `vendor.mjs` resolves both
+through the wasmtts tree, checks every byte against the block, and serves
+the scripts under their packNames (`ort-1.27.0-wasm.min.js`, …) — this repo
+holds no ort version of its own, so ort can only move together with a gated
+engine release, never alone. ort's wasm is a pack file under its packName,
+and `wasm-tts.mjs` asserts its byte length before init.
 
-**The release asset re-cuts itself**: `vendor.mjs` derives the versioned
-filename + byte length from the wasmtts tree into
-`public/vendor/wasmtts/ort-manifest.mjs` (the only place the app learns
-them; `wasm-tts.mjs` imports it, the worker allowlist admits the name by
-shape), and the deploy job runs `scripts/sync-wasmtts-assets.mjs` before
-`deploy.sh` — it uploads the pinned package's wasm under that name to
-`wasmtts-assets-v2` if absent, refuses a same-name-different-bytes replace,
-and then deletes stale ort versions (sole install, no backward-compat
-window). So an ort bump is: upstream repins → gated tag → bookworm repins
-one line → CI re-cuts and deploys.
+**The release asset re-cuts itself**: `packEntries` in `wasmtts-pin.mjs` is
+the one list of release-served names — models and rule tables from their
+upstream hosts, the compiled lexicon from the tarball, ort's wasm from npm —
+and the deploy job runs `scripts/sync-wasmtts-assets.mjs` before `deploy.sh`:
+it uploads whatever the pin names that the release lacks (SHA-verified),
+refuses a same-name-different-bytes replace, and then deletes stale names
+(sole install, no backward-compat window). So a model, lexicon or ort bump
+is: upstream repins → gated tag → bookworm repins one line → CI re-cuts and
+deploys.
 
-**The whole voice pack rides the same rail**: upstream's
-`matcha-assets.json` (schemaVersion 3) is the pack's canonical definition —
-per-asset packName/bytes/SHA-256, under the invariant that changed bytes
-change the packName — and `vendor.mjs` bakes it into `pack-manifest.mjs`,
-which `wasm-tts.mjs`, the worker allowlist and the tts-wasm e2e all read;
-`sync-wasmtts-assets.mjs` fetches any asset the pin names that the release
-lacks from its pinned source (SHA-verified) and sweeps names the pin
-dropped. No model filename exists in this repo's code — a pack outliving an
-engine bump is exactly the drift this closes. A same-name asset can still
-never change bytes, and a sync failure 404s loudly on device.
+**The whole voice pack rides the same rail**: the tarball's
+`matcha-assets.json` (schemaVersion 4, `stage: complete`) is the pack's
+canonical definition — per-asset packName/bytes/SHA-256, under the
+invariant that changed bytes change the packName (the lexicon's name is its
+content hash) — and `vendor.mjs` bakes it into `pack-manifest.mjs`
+(`ASSETS`, `PACK_NAMES`), which `wasm-tts.mjs`, the worker allowlist and
+both wasm e2e suites read. No model filename exists in this repo's code — a
+pack outliving an engine bump is exactly the drift this closes.
 
 ### Verifying engine changes
 

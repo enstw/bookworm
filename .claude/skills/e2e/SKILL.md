@@ -36,6 +36,7 @@ scripts in `scripts/` are the source of truth.
 | **everything above, one command** | `ADMIN_TOKEN=… node scripts/run-ci-tests.mjs` | Chromium (spawns its own server if 8787 is silent; per-suite logs in `test-artifacts/`) |
 | offline | see runbook below | dev server, then NO server |
 | tts-wasm | `MATCHA_MODEL_DIR=… pnpm run test:tts-wasm` | Chromium + ~130 MB of model weights (own static server) |
+| tts-offline | `MATCHA_MODEL_DIR=… pnpm run test:tts-offline` | same pack; the reader on the offline engine (own static server) |
 
 `tts-wasm` stays out of the `pnpm test` chain because it needs the voice-pack
 weights on disk. It serves them itself from `MATCHA_MODEL_DIR` (the directory
@@ -52,8 +53,9 @@ append together.
 **Never point `MATCHA_MODEL_DIR`/`MATCHA_FST_DIR` at a live wasmtts
 checkout** — that is the owner's working folder; its contents mutate and
 vanish mid-experiment, which has already killed a batch mid-run. The
-assets are pinned through the wasmtts dependency (`matcha-assets.json`, the
-pack's canonical definition); fetch a SHA-256-verified private copy once —
+assets are pinned through the wasmtts engine tarball's `matcha-assets.json`
+(the pack's canonical definition, `stage: complete`); fetch a
+SHA-256-verified private copy once —
 re-runs skip files that still verify, and a model bump upstream changes what
 this fetches with no edit here:
 
@@ -63,12 +65,20 @@ node scripts/fetch-matcha-weights.mjs   # fills ~/.cache/bookworm-matcha
 
 Then:
 
-- `MATCHA_MODEL_DIR=~/.cache/bookworm-matcha pnpm run test:tts-wasm`
-  (add `MATCHA_FST_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en` to
-  assert the rule tables loaded; without it the run asserts the JS-rules
-  fallback half instead — that split is deliberate)
+- `MATCHA_MODEL_DIR=~/.cache/bookworm-matcha pnpm run test:tts-wasm` — the
+  engine: wasmtts's worker under this app's URLs, the pack cache, the mp3
+  timeline (the rule tables are part of the pack the worker downloads, so
+  they are always asserted now)
+- `MATCHA_MODEL_DIR=~/.cache/bookworm-matcha pnpm run test:tts-offline` — the
+  reader on that engine: ▶ picks it from the cached pack, units' char spans
+  drive bookmark/highlight/label, `more` crosses chapters, ⏮/⏭, book end
 - `MATCHA_MODEL_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en node scripts/test-wasm-frontend.mjs`
 - `MATCHA_FST_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en node scripts/test-matcha-fst.mjs`
+
+The compiled lexicon and ort's wasm are not weights: they come from the
+wasmtts engine tarball (`node_modules/.cache/wasmtts-engine/<tag>/`, fetched
+and sha256-verified by `scripts/wasmtts-pin.mjs` the first time vendor runs)
+and the pinned npm package; every suite reads them from there.
 
 ## The reader gate (affects every server-backed suite)
 

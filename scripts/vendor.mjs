@@ -1,138 +1,102 @@
 #!/usr/bin/env node
-// Copy the browser bundles the /admin page uses from the pinned npm packages
-// into public/vendor/ (gitignored). Runs automatically before `pnpm run dev`
-// and `pnpm run deploy`, so the served assets always match package.json —
-// Renovate bumps a version, the next deploy ships it.
+// Populate public/vendor/ (gitignored) from the pins: the browser bundles the
+// /admin page uses from the pinned npm packages, and the offline TTS engine
+// from the pinned wasmtts release tarball. Runs automatically before
+// `pnpm run dev` and `pnpm run deploy`, so the served assets always match
+// package.json — Renovate bumps a version, the next deploy ships it.
 
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { ensureEngine, packEntries, pinnedTag, readAssets, root, runtimeScripts, sha256 } from "./wasmtts-pin.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = join(root, "public", "vendor");
 
 const BUNDLES = [
   // simplified→traditional only (1.0MB); the full bi-directional bundle is not needed
   { pkg: "opencc-js", src: "dist/esm/cn2t.js", dst: "opencc-cn2t.js" },
   { pkg: "fflate", src: "esm/browser.js", dst: "fflate.js" },
-  // Offline TTS glue (small files only). The binaries these load — the two
-  // Matcha ONNX models, the lexicon, and ort's own 13.5MB wasm — are NOT
-  // deployed as assets: the page fetches them from the wasmtts-assets GitHub
-  // release, so the deploy stays small and files may exceed the 25 MiB
-  // per-asset limit. Versions here must match that release's contents: ort's
-  // release filename carries its version, so a bump that forgets to re-cut the
-  // release 404s loudly. This repo does NOT pin ort (or lamejs) itself: both
-  // resolve through the wasmtts git dependency (`via`), whose exact pins are
-  // what upstream's release gates actually tested — the version can only move
-  // together with the engine, never on its own.
-  //
-  // ort.wasm.min.js is the wasm-only UMD build — no webgpu code at all, which
-  // is what we want: the engine runs one wasm thread and nothing else. The
-  // synth worker loads it via importScripts.
-  { pkg: "onnxruntime-web", via: "wasmtts", src: "dist/ort.wasm.min.js", dst: "wasmtts/ort-wasm.min.js" },
-  // ort import()s this glue by URL, so unlike every other binary it cannot
-  // arrive as a cached blob — it ships as a same-origin asset and rides the
-  // service worker's SHELL_ASSETS to stay available offline.
-  { pkg: "onnxruntime-web", via: "wasmtts", src: "dist/ort-wasm-simd-threaded.mjs", dst: "wasmtts/ort-wasm-simd-threaded.mjs" },
-  // mp3 encoder for the offline TTS engine: iOS only keeps lock-screen
-  // audio alive on ONE continuous ManagedMediaSource timeline, and MSE
-  // does not eat WAV — the synth worker encodes each unit to mp3 frames.
-  // importScripts-style global (the npm main entry has the MPEGMode bug;
-  // this bundle is self-contained). LGPL-2.1 — see lamejs's LICENSE.
-  { pkg: "lamejs", via: "wasmtts", src: "lame.min.js", dst: "wasmtts/lame.min.js" },
-  // The Matcha engine itself, vendored whole from the wasmtts git dependency
-  // (pinned in package.json, bumped by Renovate) instead of hand-copied into
-  // public/ — upstream runs the release gates (FST golden, RTF, memory, ASR
-  // CER) this repo cannot, and the hand-copies had already drifted both ways
-  // by the time they were retired. matcha-fst.js is the JS applier the node
-  // tests use as their FST oracle; the product worker runs the real kaldifst
-  // wasm (matcha-kaldifst-normalizer.*, built and committed upstream).
-  { pkg: "wasmtts", src: "platform/matcha-frontend.js", dst: "wasmtts/matcha-frontend.js" },
-  // The taiwan reading layer: upstream's dictionary-and-ear-reviewed phrase
-  // overrides and contextual rules (得/著/長/還…), plus the review ledger they
-  // are compiled from. The engine loads both — the profile is part of the
-  // product voice, not a diagnostic extra (owner ruling 2026-08-15).
-  { pkg: "wasmtts", src: "platform/matcha-taiwan-profile.js", dst: "wasmtts/matcha-taiwan-profile.js" },
-  { pkg: "wasmtts", src: "platform/matcha-g2p-review.json", dst: "wasmtts/matcha-g2p-review.json" },
-  { pkg: "wasmtts", src: "platform/matcha-synthesis.js", dst: "wasmtts/matcha-synthesis.js" },
-  { pkg: "wasmtts", src: "platform/matcha-fst.js", dst: "wasmtts/matcha-fst.js" },
-  { pkg: "wasmtts", src: "platform/kaldifst-normalizer.js", dst: "wasmtts/kaldifst-normalizer.js" },
-  { pkg: "wasmtts", src: "platform/kaldifst-wasm/dist/matcha-kaldifst-normalizer.js", dst: "wasmtts/matcha-kaldifst-normalizer.js" },
-  { pkg: "wasmtts", src: "platform/kaldifst-wasm/dist/matcha-kaldifst-normalizer.wasm", dst: "wasmtts/matcha-kaldifst-normalizer.wasm" },
+  // The JS applier for sherpa's rule FSTs — the node tests' oracle for the
+  // real kaldifst wasm (scripts/test-matcha-fst.mjs), from the wasmtts git
+  // tree: never served to a page, so it lives beside the bundles, not under
+  // wasmtts/ (everything there rides the service worker shell).
+  { pkg: "wasmtts", src: "platform/matcha-fst.js", dst: "matcha-fst.js" },
+];
+
+// The engine files the tarball ships that the reader serves same-origin under
+// /vendor/wasmtts/ (all ride the service worker shell — test-shell-policy.mjs
+// derives the list from the same names). NOT the compiled lexicon: 2.3 MB
+// under a content-hashed packName is a pack file, served by /api/wasmtts from
+// the assets release and cached by the synth worker like a model.
+export const ENGINE_FILES = [
+  "matcha-engine.js", "matcha-worker.js", "matcha-producer.mjs", "continuous-stream-player.mjs",
+  "matcha-frontend.js", "matcha-taiwan-profile.js", "matcha-synthesis.js", "kaldifst-normalizer.js",
+  "matcha-kaldifst-normalizer.js", "matcha-kaldifst-normalizer.wasm",
+  "matcha-profile.runtime.json", "matcha-assets.json", "matcha-lexicon.meta.json",
 ];
 
 mkdirSync(outDir, { recursive: true });
 mkdirSync(join(outDir, "wasmtts"), { recursive: true });
 const versions = {};
-const declared = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).devDependencies;
-for (const { pkg, via, src, dst } of BUNDLES) {
-  // `via` resolves through that dependency's own tree (pnpm keeps a package's
-  // deps as siblings of its real location in the virtual store), so the copy
-  // is the version the UPSTREAM declares, not one pinned here
-  const pkgDir = via
-    ? join(realpathSync(join(root, "node_modules", via)), "..", pkg)
-    : join(root, "node_modules", pkg);
+for (const { pkg, src, dst } of BUNDLES) {
+  const pkgDir = join(root, "node_modules", pkg);
   copyFileSync(join(pkgDir, src), join(outDir, dst));
-  // the wasmtts git dependency carries no version field — record the pinned
-  // spec (its release tag) so versions.json still says what shipped
-  versions[pkg] = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).version ?? declared[pkg];
+  versions[pkg] = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).version;
 }
+
+// The Matcha engine, whole, from the pinned release tarball (verified against
+// the release's .sha256 in wasmtts-pin.mjs) — upstream runs the release gates
+// (FST golden, RTF, memory, ASR CER, the streaming player) this repo cannot,
+// and the tarball is the only place the compiled lexicon, the runtime profile
+// and the complete pack manifest exist.
+const tag = pinnedTag();
+const engine = await ensureEngine(tag);
+const assets = readAssets(engine);
+for (const f of ENGINE_FILES) copyFileSync(join(engine, f), join(outDir, "wasmtts", f));
+versions.wasmtts = tag;
+
+// The runtime scripts (ort's UMD + loader glue, lamejs) come from the npm
+// packages the wasmtts dependency itself resolves — the versions upstream's
+// gates tested — under the versioned packNames the pack manifest's runtime
+// block declares, and every byte is checked against its sha256 there: a pin
+// whose lockfile resolved a different build than its manifest names fails
+// here, not on a phone.
+const runtime = runtimeScripts(assets);
+for (const r of runtime) {
+  const installed = JSON.parse(readFileSync(join(r.dir, "package.json"), "utf8"));
+  if (installed.version !== r.version)
+    throw new Error(`${r.pkg} ${installed.version} is installed but the wasmtts pin's runtime block names ${r.version}`);
+  const bytes = readFileSync(r.local);
+  if (bytes.length !== r.bytes || sha256(bytes) !== r.sha256)
+    throw new Error(`${r.pkg}/${r.file}: installed bytes do not match the pin's runtime block (${r.name})`);
+  writeFileSync(join(outDir, "wasmtts", r.name), bytes);
+  versions[r.pkg] = r.version;
+}
+
+// The pack manifest for the reader and the worker: the complete assets
+// definition (the pin's own words, no name written here) and the flat list
+// of release-served names /api/wasmtts may answer for. wasm-tts.mjs builds
+// the synth worker's config from ASSETS; src/worker.js allowlists PACK_NAMES;
+// sync-wasmtts-assets.mjs keeps the release in step with the same list.
+const entries = packEntries(assets, engine);
+const packNames = entries.map((e) => e.name);
+writeFileSync(join(outDir, "wasmtts", "pack-manifest.mjs"),
+  `// generated by scripts/vendor.mjs from ${tag}'s matcha-assets.json — do not edit\n`
+  + `export const ASSETS = ${JSON.stringify(assets)};\n`
+  + `export const PACK_NAMES = ${JSON.stringify(packNames)};\n`
+  + `export const WASMTTS_TAG = ${JSON.stringify(tag)};\n`);
 writeFileSync(join(outDir, "versions.json"), JSON.stringify(versions, null, 2) + "\n");
 
-// The ort wasm binary's release filename and byte length, derived from the
-// same tree the glue above was copied from. wasm-tts.mjs imports this instead
-// of hardcoding either, and CI's sync-wasmtts-assets step uploads the binary
-// under this name — so a repin that moves ort updates the manifest, the
-// release and the runtime gate in one motion, with nothing to keep in step by
-// hand. (Node tests that import wasm-tts.mjs therefore need vendor to have
-// run first; every test entry point already does.)
-const wasmttsDir = realpathSync(join(root, "node_modules", "wasmtts"));
-const ortDir = join(wasmttsDir, "..", "onnxruntime-web");
-const ortManifest = {
-  name: `ort-${JSON.parse(readFileSync(join(ortDir, "package.json"), "utf8")).version}-wasm-simd-threaded.wasm`,
-  bytes: statSync(join(ortDir, "dist", "ort-wasm-simd-threaded.wasm")).size,
-};
-writeFileSync(join(outDir, "wasmtts", "ort-manifest.mjs"),
-  `// generated by scripts/vendor.mjs — do not edit\nexport const ORT_WASM = ${JSON.stringify(ortManifest)};\n`);
-
-// The voice pack's file list, derived the same way from upstream's canonical
-// pack definition (platform/matcha-assets.json, schemaVersion 3). packName is
-// the flat name the release and /api/wasmtts serve under; upstream's
-// invariant — bytes change ⇒ packName changes — is what keeps cache-first
-// serving honest. wasm-tts.mjs and the worker allowlist import this instead
-// of naming files, so the served pack can no longer sit on a different model
-// than the engine the same pin shipped (steps-3 outliving the v1.1.0 bump
-// was exactly that drift). The .fst key order is the FST application order —
-// load-bearing upstream and here.
-const pack = JSON.parse(readFileSync(join(wasmttsDir, "platform", "matcha-assets.json"), "utf8"));
-if (pack.schemaVersion !== 3)
-  throw new Error(`wasmtts matcha-assets.json schemaVersion ${pack.schemaVersion} — this vendor step understands 3`);
-// The synthesis block is the pack's playback recipe (noise/length/silence,
-// ear-verified on device, graduated upstream 2026-08-15). The engine reads it
-// from the manifest; a pin without it would silently fall back to the code
-// defaults — a voice nobody signed off — so its absence fails the build here.
-if (!pack.synthesis)
-  throw new Error("wasmtts matcha-assets.json has no synthesis block — the playback recipe rides the pin, not this repo");
-const packFile = ({ packName, bytes }) => ({ name: packName, bytes });
-const packManifest = {
-  synthesis: pack.synthesis,
-  acoustic: packFile(pack.acoustic),
-  vocos: packFile(pack.vocos),
-  lexicon: packFile(pack.matcha.files["lexicon.txt"]),
-  tokens: packFile(pack.matcha.files["tokens.txt"]),
-  rules: Object.entries(pack.matcha.files).filter(([f]) => f.endsWith(".fst")).map(([, meta]) => packFile(meta)),
-};
-const packNames = [packManifest.acoustic, packManifest.vocos, packManifest.lexicon, packManifest.tokens, ...packManifest.rules]
-  .map((f) => f.name);
-writeFileSync(join(outDir, "wasmtts", "pack-manifest.mjs"),
-  `// generated by scripts/vendor.mjs — do not edit\nexport const PACK = ${JSON.stringify(packManifest)};\nexport const PACK_NAMES = ${JSON.stringify(packNames)};\n`);
-
 // Drop anything this run did not produce. CI deploys from a fresh checkout, so
-// public/vendor/ there holds exactly the BUNDLES above; a long-lived working
-// copy otherwise keeps serving files from deps that were removed months ago,
+// public/vendor/ there holds exactly what is listed above; a long-lived
+// working copy otherwise keeps serving files from pins that moved months ago,
 // and a stale bundle that only exists locally is how "works on my machine"
 // starts. Pruning makes the two match.
-const keep = new Set([...BUNDLES.map(({ dst }) => dst), "versions.json", "wasmtts/ort-manifest.mjs", "wasmtts/pack-manifest.mjs"]);
+const keep = new Set([
+  ...BUNDLES.map(({ dst }) => dst),
+  ...ENGINE_FILES.map((f) => `wasmtts/${f}`),
+  ...runtime.map((r) => `wasmtts/${r.name}`),
+  "versions.json", "wasmtts/pack-manifest.mjs",
+]);
 const stale = [];
 const walk = (dir) => {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -143,5 +107,7 @@ const walk = (dir) => {
 };
 walk(outDir);
 
+const mb = (n) => (n / 1048576).toFixed(1);
 console.log(`✓ vendored to public/vendor/: ${Object.entries(versions).map(([p, v]) => `${p}@${v}`).join(", ")}`);
+console.log(`  engine ${tag}: ${ENGINE_FILES.length} files, runtime ${runtime.map((r) => r.name).join(", ")}, pack ${packNames.length} names (${mb(entries.reduce((s, e) => s + e.bytes, 0))} MiB)`);
 if (stale.length) console.log(`  pruned ${stale.length} stale file(s): ${stale.join(", ")}`);
