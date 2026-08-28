@@ -9,6 +9,12 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-28 — `d38af98ed0e3`
+
+> 書籤同步成功時，右下角會亮一下綠點。
+
+- reader: a flight recorder for the bookmark, and a corner blink when it syncs (`d38af98`)
+
 ## 2026-08-23 — `1323edf7e6bf`
 
 - renormalize: print +N when a rule added characters, not −-N (`1323edf`)
