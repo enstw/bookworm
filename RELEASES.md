@@ -9,6 +9,14 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-28 — `a3300d8c9392`
+
+> ENSFont v4.4.0_lxgw1.522_nerd3.5.0 → v4.5.0_lxgw1.522_nerd3.5.1
+
+- chore(deps): update weekly upstream roll-up (`a3300d8`)
+- renovate: hold wasmtts below v2 until the migration PR (`14e693a`)
+- renovate: the font pin rides the weekly roll-up, completed on the branch and re-derived by the verifier (`c7ab5bd`)
+
 ## 2026-08-28 — `f10ecad07a75`
 
 > 朗讀可選預設用線上或離線語音，另一個自動當備援；播放列多了切換鈕。
