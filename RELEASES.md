@@ -9,6 +9,13 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-29 — `6469586bde7e`
+
+> 離線朗讀升級到 wasmtts v2.4.0：接近書末時書籤不再提前停住，跨章回跳更穩；語音包不需重新下載。
+> wasmtts v2.3.0 → v2.4.0
+
+- tts: wasmtts v2.4.0 — the reader's workarounds go back upstream (`6469586`)
+
 ## 2026-08-29 — `f33cd1b91a7c`
 
 > 離線朗讀升級到 wasmtts v2：繁體詞典修正大批讀音（銀行、會計…），鎖屏播放更穩；語音包會提示補下載約 2 MB 的新詞典。
