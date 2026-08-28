@@ -1,5 +1,5 @@
 // Unit test for the JS applier for sherpa's zh rule FSTs — vendored from
-// wasmtts (public/vendor/wasmtts/matcha-fst.js). The product worker runs the
+// wasmtts (public/vendor/matcha-fst.js). The product worker runs the
 // real kaldifst wasm; this applier survives as the node-side oracle precisely
 // because these fixtures proved it byte-identical to kaldifst.
 //
@@ -28,7 +28,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import "../public/vendor/wasmtts/matcha-fst.js";
+import "../public/vendor/matcha-fst.js";
 
 const { readFst, applyFst, createNormalizer } = globalThis.MatchaFst;
 

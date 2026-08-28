@@ -1,19 +1,20 @@
-// Browser e2e for the offline TTS engine — the first coverage it has ever had.
-// The unit test (test-wasm-frontend.mjs) proves the text path; this proves the
-// half that only exists in a browser: two ort sessions in a worker, the Cache
-// API pack, and — the actual integration risk — whether the mp3 the worker
-// emits appends to a sequence-mode SourceBuffer and plays. Everything between
-// speakChunk() and audible sound is code no unit test can reach.
+// Browser e2e for the offline TTS engine. The unit test
+// (test-wasm-frontend.mjs) proves the text path; this proves the half that
+// only exists in a browser: wasmtts's worker configured by this app's URLs
+// (engine scripts off /vendor/, the pack off /api/wasmtts/, ort's wasm in its
+// own bucket), the Cache API pack, and — the actual integration risk —
+// whether the mp3 the worker emits appends to a sequence-mode SourceBuffer
+// and plays. Everything between speakChunk() and audible sound is code no
+// unit test can reach.
 //
 // NOT in the default `pnpm test` chain: it needs ~130 MB of model weights, so
 // it runs on demand. It serves them from MATCHA_MODEL_DIR rather than the
-// GitHub release, which keeps it runnable before a release is cut and keeps CI
-// off the network — the release proxy itself is a one-line allowlist in
-// src/worker.js, covered by reading it. Fetch the weights from the pinned
-// upstream (node_modules/wasmtts/platform/upstreams.yaml) into a private
-// cache — the fetch block lives in .claude/skills/e2e/SKILL.md. Never point
-// this at a live wasmtts checkout: that working folder mutates and vanishes
-// under experiments.
+// GitHub release (the compiled lexicon and ort's wasm from where the pin
+// already put them), which keeps it runnable before a release is re-cut and
+// keeps CI off the network — the release proxy itself is a one-line
+// allowlist in src/worker.js, covered by reading it. Fill the directory with
+// `node scripts/fetch-matcha-weights.mjs`. Never point this at a live wasmtts
+// checkout: that working folder mutates and vanishes under experiments.
 //
 //   MATCHA_MODEL_DIR=~/.cache/bookworm-matcha \
 //     node scripts/test-tts-wasm-e2e.mjs
@@ -23,13 +24,11 @@
 // the phone's exact append path, minus the entitlement rules only iOS enforces.
 
 import { createServer } from "node:http";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, extname, join, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { extname, join, normalize } from "node:path";
 import { launch } from "./cdp-client.mjs";
+import { engineDir, packEntries, readAssets, root } from "./wasmtts-pin.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MODELS = process.env.MATCHA_MODEL_DIR;
 const PORT = 9355;
 
@@ -39,34 +38,23 @@ if (!MODELS) {
   process.exit(2);
 }
 
-// The release names the worker allowlists, mapped to where the weights sit
-// locally — every name on both sides derived from the wasmtts pin
-// (matcha-assets.json for the pack, the ort package for the runtime), the
-// same derivation vendor.mjs bakes into pack-manifest.mjs / ort-manifest.mjs.
-// A model bump upstream therefore moves this suite by itself, and a consumer
-// that missed the rename is exactly the failure it should catch.
-const wasmttsDir = realpathSync(join(root, "node_modules", "wasmtts"));
-const pack = JSON.parse(readFileSync(join(wasmttsDir, "platform/matcha-assets.json"), "utf8"));
-const ortDir = join(wasmttsDir, "..", "onnxruntime-web");
-const ortVersion = JSON.parse(readFileSync(join(ortDir, "package.json"), "utf8")).version;
-const RELEASE = {
-  [pack.acoustic.packName]: join(MODELS, "matcha-icefall-zh-en", pack.acoustic.file),
-  [pack.vocos.packName]: join(MODELS, basename(new URL(pack.vocos.url).pathname)),
-  [pack.matcha.files["lexicon.txt"].packName]: join(MODELS, "matcha-icefall-zh-en/lexicon.txt"),
-  [pack.matcha.files["tokens.txt"].packName]: join(MODELS, "matcha-icefall-zh-en/tokens.txt"),
-  [`ort-${ortVersion}-wasm-simd-threaded.wasm`]: join(ortDir, "dist/ort-wasm-simd-threaded.wasm"),
-};
+// The release names the worker allowlists, mapped to where the bytes sit
+// locally — the same packEntries list vendor.mjs bakes into pack-manifest.mjs
+// and sync-wasmtts-assets.mjs keeps the release in step with: the weights
+// under MATCHA_MODEL_DIR, the compiled lexicon in the engine tarball's cache,
+// ort's wasm in its npm package. A model, lexicon or ort bump upstream
+// therefore moves this suite by itself, and a consumer that missed the
+// rename is exactly the failure it should catch. The rule tables are part of
+// the pack the worker downloads before it inits, so they are not optional
+// here any more (fetch-matcha-weights.mjs fills them too).
+const engine = engineDir();
+const RELEASE = Object.fromEntries(packEntries(readAssets(engine), engine).map((e) => [
+  e.name,
+  e.local ?? (e.name.startsWith("matcha-vocos") ? join(MODELS, e.file) : join(MODELS, "matcha-icefall-zh-en", e.file)),
+]));
 for (const [name, file] of Object.entries(RELEASE))
   if (!existsSync(file)) { console.error(`missing ${name}: ${file}`); process.exit(2); }
-
-// sherpa's zh rule tables, under the names the release gives them. Optional on
-// purpose: without MATCHA_FST_DIR they 404 and the run asserts the other half
-// of the contract — that a pack cut before the tables existed still speaks, on
-// the JS number rules. With it set, the run asserts the chain loaded.
-const FSTS = process.env.MATCHA_FST_DIR;
-if (FSTS) Object.assign(RELEASE, Object.fromEntries(
-  Object.entries(pack.matcha.files).filter(([f]) => f.endsWith(".fst"))
-    .map(([f, meta]) => [meta.packName, join(FSTS, f)])));
+const FSTS = true;
 
 const TYPES = { ".js": "text/javascript", ".mjs": "text/javascript", ".html": "text/html; charset=utf-8", ".css": "text/css", ".wasm": "application/wasm", ".txt": "text/plain", ".onnx": "application/octet-stream", ".json": "application/json" };
 
@@ -74,8 +62,9 @@ const PAGE = `<!doctype html><meta charset="utf-8"><title>wasm tts e2e</title><s
 import * as tts from "/wasm-tts.mjs";
 import { chunkChapter, ttsPrompt } from "/tts-core.mjs";
 
-// the reader's own append discipline: ONE element, ONE MediaSource, sequence
-// mode, remote playback off (without which iOS never fires sourceopen)
+// the reader's own append discipline (the same one wasmtts's player keeps):
+// ONE element, ONE MediaSource, sequence mode, remote playback off (without
+// which iOS never fires sourceopen)
 async function timeline() {
   const el = new Audio();
   el.disableRemotePlayback = true;
@@ -104,6 +93,8 @@ window.go = async (chapter) => {
   o.packAfter = await tts.packReady();
   o.threads = tts.engineInfo.threads;
   o.rules = tts.engineInfo.rules;
+  o.lexiconSize = tts.engineInfo.lexiconSize;
+  o.tag = tts.engineInfo.tag;
 
   const tl = await timeline();
   o.sourceopen = !!tl.sb;
@@ -202,12 +193,8 @@ try {
   console.log(`\nwasm tts e2e — ${o.units.length} units, ${audio.toFixed(1)}s audio in ${(wall / 1000).toFixed(1)}s (×${(audio * 1000 / wall).toFixed(2)} realtime)\n`);
 
   check("pack fills the cache", o.packAfter === true, `packReady ${o.packBefore} → ${o.packAfter}`);
-  // Only asserted when the tables were served this run: the profile is
-  // persistent, so a warm cache answers even when MATCHA_FST_DIR is unset and
-  // "engine falls back to the JS rules" is not reproducible from here. That
-  // half is pinned in scripts/test-wasm-frontend.mjs instead.
-  if (FSTS) check("rule tables loaded", o.rules === 3, `${o.rules}/3 tables`);
-  else console.log(`  · rule tables: ${o.rules}/3 from cache (set MATCHA_FST_DIR to assert)`);
+  check("rule tables loaded", o.rules === 3, `${o.rules}/3 tables`);
+  check("compiled lexicon loaded", o.lexiconSize > 90000, `${o.lexiconSize} entries (${o.tag})`);
   check("engine reports one thread", o.threads === 1, `init ${(o.initMs / 1000).toFixed(1)}s`);
   check("sourceopen fires", o.sourceopen === true);
   check("every chunk synthesized", o.aborted === undefined);

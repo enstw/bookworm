@@ -23,22 +23,25 @@
 // NOTE: fonts and icons are served cache-first out of this cache and their
 // URLs are unversioned — bump the shell version whenever either set changes,
 // or installed devices keep the old asset forever.
-const SHELL = "bw-shell-v22"; // v21: + ort-wasm.min.js, lame.min.js (the same offline gap v20 closed for pack-manifest.mjs)
-// The offline TTS engine's big binaries live in their own bw-wasmtts cache,
-// but its small same-origin files ride the shell, because /wasmtest
-// downloads only the voice pack: without these, the first ensureEngine() on a
-// device that has gone offline since would fetch them from a dead network and
-// fail into the online engine, holding a complete voice pack it could not use.
-// ort's loader glue additionally *has* to be a real URL — ort import()s it, and
-// a blob cannot satisfy that in a classic worker. All are unversioned like the
-// fonts: bump SHELL when the ort pin or any of the modules moves.
+const SHELL = "bw-shell-v23"; // v23: wasmtts v2 — the engine tarball's files under their own names, ort/lamejs under their versioned packNames
+// The offline TTS engine's big binaries live in their own bw-wasmtts cache
+// (the synth worker's) and ort's wasm in bw-wasmtts-rt (above), but every
+// same-origin file the engine loads by URL rides the shell: the worker
+// script itself, the scripts it importScripts (ort's UMD, lamejs, the engine
+// modules), ort's loader glue, the kaldifst wasm, the runtime profile. Without
+// these, the first init on a device that has gone offline since would fetch
+// them from a dead network and fail into the online engine, holding a
+// complete voice pack it could not use. All are unversioned like the fonts
+// (the runtime scripts carry their version in the name, but the pin moves
+// them all the same): bump SHELL when the wasmtts pin moves.
 //
-// This list is a hand copy of what wasm-tts.mjs needs, because a classic
-// service worker cannot import the module that knows — so it drifts, and it
-// has drifted twice. scripts/test-shell-policy.mjs is the answer: it reads
-// wasm-tts.mjs's own imports and init loads and fails if one is missing here,
-// and fails again if this list changes without SHELL moving.
-const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-taiwan-profile.js", "/vendor/wasmtts/matcha-g2p-review.json", "/vendor/wasmtts/matcha-synthesis.js", "/vendor/wasmtts/kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.wasm", "/vendor/wasmtts/ort-wasm-simd-threaded.mjs", "/vendor/wasmtts/ort-wasm.min.js", "/vendor/wasmtts/lame.min.js", "/vendor/wasmtts/ort-manifest.mjs", "/vendor/wasmtts/pack-manifest.mjs", "/manifest.webmanifest"];
+// This list is a hand copy of what wasm-tts.mjs and the vendored engine
+// need, because a classic service worker cannot import the modules that
+// know — so it drifts, and it has drifted twice. scripts/test-shell-policy.mjs
+// is the answer: it derives the list from wasm-tts.mjs's imports and from
+// what vendor.mjs put under public/vendor/wasmtts/, fails if one is missing
+// here, and fails again if this list changes without SHELL moving.
+const SHELL_ASSETS = ["/", "/app.css", "/i18n.js", "/app.js", "/player.mjs", "/tts-core.mjs", "/wasm-tts.mjs", "/vendor/wasmtts/continuous-stream-player.mjs", "/vendor/wasmtts/kaldifst-normalizer.js", "/vendor/wasmtts/lamejs-1.2.1.min.js", "/vendor/wasmtts/matcha-assets.json", "/vendor/wasmtts/matcha-engine.js", "/vendor/wasmtts/matcha-frontend.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.js", "/vendor/wasmtts/matcha-kaldifst-normalizer.wasm", "/vendor/wasmtts/matcha-lexicon.meta.json", "/vendor/wasmtts/matcha-producer.mjs", "/vendor/wasmtts/matcha-profile.runtime.json", "/vendor/wasmtts/matcha-synthesis.js", "/vendor/wasmtts/matcha-taiwan-profile.js", "/vendor/wasmtts/matcha-worker.js", "/vendor/wasmtts/ort-1.27.0-wasm-simd-threaded.mjs", "/vendor/wasmtts/ort-1.27.0-wasm.min.js", "/vendor/wasmtts/pack-manifest.mjs", "/manifest.webmanifest"];
 const NET_MS = 1000; // mirrors NET_MS in app.js — the same line, drawn twice
 
 self.addEventListener("install", (e) => {
@@ -59,6 +62,18 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
+  // The one /api/ route the worker serves from a cache: ort's 13 MB wasm.
+  // The synth worker (wasmtts's matcha-worker.js) caches the voice pack it
+  // downloads in bw-wasmtts and sweeps that cache by keep-set, but ort loads
+  // its own wasm by URL at every init and knows nothing of caches — so this
+  // file is parked in ITS OWN cache (bw-wasmtts-rt, never swept by the
+  // worker), cache-first under its versioned name, and a phone that has gone
+  // offline still inits. Every other /api/wasmtts/ file is the worker's to
+  // cache; the rest of /api/ is untouched.
+  if (url.pathname.startsWith("/api/wasmtts/")) {
+    if (RUNTIME_WASM.test(url.pathname)) e.respondWith(runtimeFetch(e.request));
+    return;
+  }
   if (url.pathname.startsWith("/api/")) return;
 
   if (url.pathname.startsWith("/books/")) {
@@ -96,6 +111,19 @@ function timedNetwork(e, save) {
 
 async function cacheFirst(req) {
   return (await caches.match(req)) ?? fetch(req);
+}
+
+// ort's wasm under its versioned packName (ort-<version>-wasm-simd-threaded.wasm)
+const RUNTIME_WASM = /^\/api\/wasmtts\/ort-[\w.-]+-wasm-simd-threaded\.wasm$/;
+const RUNTIME_CACHE = "bw-wasmtts-rt";
+
+async function runtimeFetch(req) {
+  const c = await caches.open(RUNTIME_CACHE);
+  const hit = await c.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res.ok) c.put(req, res.clone());
+  return res;
 }
 
 // fonts and PWA icons are immutable: serve from cache, fill on first fetch

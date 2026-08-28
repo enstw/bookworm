@@ -80,16 +80,6 @@
       },
     },
     {
-      // TEMPORARY (2026-08-28): wasmtts v2 is a breaking release (assets
-      // schemaVersion 4, engine tarball, producer/player API) that this repo
-      // adopts in a deliberate migration PR, not in a roll-up — until that
-      // PR lands, the roll-up would only ever be red on the vendor step and
-      // hold every other bump hostage (#148). Remove this rule in the
-      // migration PR; the verifier does not let Renovate remove it itself.
-      matchPackageNames: ["wasmtts", "enstw/wasmtts"],
-      allowedVersions: "<2",
-    },
-    {
       // blake3-wasm is pinned to whatever WRANGLER bundles with, never bumped
       // on its own: package-release.mjs uses it to precompute the asset hash
       // Cloudflare's upload session keys on (wrangler's hashFile), and a

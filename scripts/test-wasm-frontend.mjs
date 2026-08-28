@@ -1,17 +1,18 @@
-// Unit test for the offline TTS frontend: the pure parts of
-// public/wasm-tts.mjs (sentence segmentation, the WAV header, the override
-// table) and of the vendored wasmtts matcha-frontend.js (number and punctuation
-// normalisation, lexicon parsing, greedy longest match). No browser APIs and
-// no model files — plain node, so it stays in the `pnpm test` chain.
+// Unit test for the offline TTS frontend: this app's side of the wasmtts
+// contract (the sentence walk it re-exports, the WAV primer, the override
+// table, the pack list) and the vendored engine's pure parts (number and
+// punctuation normalisation, lexicon parsing, greedy longest match). No
+// browser APIs and no model files — plain node, so it stays in the
+// `pnpm test` chain. The engine's own gates run upstream; what is pinned
+// here is what THIS app relies on.
 //
-// The cases that need the real 1.4 MB lexicon run only when MATCHA_MODEL_DIR
-// points at a directory holding matcha-icefall-zh-en's lexicon.txt and
-// tokens.txt. That is where golden token-id vectors live, and where the
-// traditional-reading table is pinned — see the note above it. Fetch the
-// files from the pinned upstream (node_modules/wasmtts/platform/
-// upstreams.yaml) into a private cache — the fetch block lives in
-// .claude/skills/e2e/SKILL.md. Never point this at a live wasmtts checkout:
-// that working folder mutates and vanishes under experiments.
+// The cases that need the real lexicon run only when MATCHA_MODEL_DIR points
+// at a directory holding matcha-icefall-zh-en's tokens.txt (the compiled
+// lexicon comes from the engine tarball vendor.mjs already fetched). That is
+// where golden token-id vectors live, and where the traditional-reading
+// table is pinned — see the note above it. `node scripts/fetch-matcha-weights.mjs`
+// fills the directory from the pins. Never point this at a live wasmtts
+// checkout: that working folder mutates and vanishes under experiments.
 //
 //   node scripts/test-wasm-frontend.mjs
 //   MATCHA_MODEL_DIR=~/.cache/bookworm-matcha/matcha-icefall-zh-en \
@@ -19,20 +20,39 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { segments, mkWav, RATE, OVERRIDES, PACK_FILES } from "../public/wasm-tts.mjs";
+import { sentenceSpans, mkWav, RATE, OVERRIDES, PACK_FILES, ENDERS, CLOSERS, WASMTTS_TAG } from "../public/wasm-tts.mjs";
+import * as ttsCore from "../public/tts-core.mjs";
+import { engineDir } from "./wasmtts-pin.mjs";
 import "../public/vendor/wasmtts/matcha-frontend.js";
 import "../public/vendor/wasmtts/matcha-taiwan-profile.js";
+import * as upstreamWalk from "../public/vendor/wasmtts/matcha-producer.mjs";
+globalThis.__up = upstreamWalk;
 
 const { createFrontend, normalizeFullWidth, normalizeLocalForms, normalizeNumbers, normalizePunctuation,
         parseLexicon, parseTokens } = globalThis.MatchaFrontend;
 
-// the reviewed reading layer, compiled exactly the way the synth worker does
-const review = JSON.parse(readFileSync(new URL("../public/vendor/wasmtts/matcha-g2p-review.json", import.meta.url), "utf8"));
-const profileCfg = globalThis.MatchaTaiwanProfile.createConfig(review);
+// the reviewed reading layer as the synth worker gets it: the runtime
+// profile (contextual rules; phrase overrides are baked into the lexicon)
+const profile = JSON.parse(readFileSync(new URL("../public/vendor/wasmtts/matcha-profile.runtime.json", import.meta.url), "utf8"));
+const profileCfg = globalThis.MatchaTaiwanProfile.createConfig(profile, globalThis.MatchaFrontend);
 
 const out = {};
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const segments = (p) => sentenceSpans(p).filter((s) => s.text.trim());
 const texts = (p) => segments(p).map((s) => s.text);
+
+// ---- one walk ------------------------------------------------------------
+// tts-core.mjs cuts the online engines' chunks with its own copy of the
+// enders and closers (the server's synthesis worker imports it and cannot
+// reach the vendored engine); upstream's walk is the one the offline units
+// and the highlight use. They must agree, or the two engines would disagree
+// on where a sentence ends.
+out.oneWalk = ttsCore.ENDERS === ENDERS && ttsCore.CLOSERS === CLOSERS
+  && ["他看著窗外。「你來了。」她說。\n完了", "沒有句號的一句話", "「引號開頭。」接著；再來？"].every((t) =>
+    [0, 3, 7, t.length - 1].every((i) => ttsCore.sentenceStartFor(t, i) === globalThis.__up.sentenceStartFor(t, i)
+      && ttsCore.sentenceEndFor(t, i) === globalThis.__up.sentenceEndFor(t, i)))
+  ? `ok (tts-core.mjs and wasmtts ${WASMTTS_TAG} cut sentences alike)`
+  : "FAIL tts-core.mjs's ENDERS/CLOSERS or sentence walk drifted from upstream's";
 
 // ---- segmentation ---------------------------------------------------------
 
@@ -44,7 +64,8 @@ out.split = eq(texts("你好。好嗎？再見"), ["你好。", "好嗎？", "�
 out.closers = eq(texts("「你來了。」她說。"), ["「你來了。」", "她說。"])
   ? "ok (closer absorbed)" : `FAIL ${JSON.stringify(texts("「你來了。」她說。"))}`;
 
-// whitespace-only spans say nothing and must not become empty units
+// whitespace-only text says nothing: the producer drops blank segments
+// (setSegments filters them), and the walk never invents a non-blank one
 out.blank = eq(segments(""), []) && eq(segments("   　  "), [])
   ? "ok (nothing to say)" : `FAIL ${JSON.stringify(segments("   　  "))}`;
 
@@ -57,15 +78,15 @@ out.resplit = longSegs.length > 1 && longMax <= 72 && longSegs.every((s) => /[�
   ? `ok (${longSegs.length} units, max ${longMax} ch, cut at pauses)`
   : `FAIL ${longSegs.length} units, max ${longMax}: ${JSON.stringify(texts(long))}`;
 
-// The player turns frac0/frac1 into char offsets, so the spans must be ordered,
-// non-overlapping and inside the prompt — otherwise a bookmark lands in the
-// wrong paragraph and the reader silently jumps.
+// The player turns each unit's meta.start/end into the reader's offsets, so
+// the spans must be ordered, non-overlapping and tile the text — otherwise a
+// bookmark lands in the wrong paragraph and the reader silently jumps.
 const prompt = "第十二章　窗外。他看著窗外，銀行的招牌顯得格外明亮。「你來了。」她說。";
-const segs = segments(prompt);
+const segs = sentenceSpans(prompt);
 out.spans = segs.every((s, i) => s.start >= 0 && s.end <= prompt.length && s.end > s.start
-  && (i === 0 || s.start >= segs[i - 1].end))
+  && s.text === prompt.slice(s.start, s.end) && (i === 0 ? s.start === 0 : s.start === segs[i - 1].end))
   && segs.at(-1).end === prompt.length
-  ? `ok (${segs.length} ordered spans tiling ${prompt.length} ch)`
+  ? `ok (${segs.length} spans tiling ${prompt.length} ch, text = the raw slice)`
   : `FAIL ${JSON.stringify(segs)}`;
 
 // ---- helpers --------------------------------------------------------------
@@ -77,8 +98,12 @@ out.mkWav = wav.size === 44 + 200 && wav.type === "audio/wav"
 out.rate = RATE === 16000 ? "ok (16 kHz, the model's own rate)" : `FAIL ${RATE}`;
 
 // the pack list is what packReady() gates on and what /wasmtest downloads; a
-// typo here silently means "no offline engine, ever"
+// typo here silently means "no offline engine, ever". Eight files: the two
+// models, the compiled lexicon (content-hashed name), tokens, three rule
+// tables, ort's wasm.
 out.pack = PACK_FILES.length === 8 && PACK_FILES.every((f) => f.name && f.bytes > 0 && f.label)
+  && PACK_FILES.some((f) => /^matcha-lexicon-[0-9a-f]{8}\.txt$/.test(f.name))
+  && PACK_FILES.some((f) => /^ort-\d.*-wasm-simd-threaded\.wasm$/.test(f.name))
   ? `ok (8 files, ${(PACK_FILES.reduce((s, f) => s + f.bytes, 0) / 1048576).toFixed(0)} MiB)`
   : `FAIL ${JSON.stringify(PACK_FILES)}`;
 
@@ -185,16 +210,16 @@ out.overrides = Object.entries(OVERRIDES).every(([w, p]) => w.length && /^[a-z]+
   ? `ok (${Object.keys(OVERRIDES).length} local entr${Object.keys(OVERRIDES).length === 1 ? "y" : "ies"} — the reviewed layer is the profile)`
   : `FAIL ${JSON.stringify(OVERRIDES)}`;
 
-// the taiwan profile the worker applies: its shape is pinned here so a review
-// ledger that compiles to nothing (a schema drift, a renamed profile) fails in
-// node instead of shipping a silently un-reviewed voice. 垃圾 → le4 se4 is the
-// profile's own base entry — the first local override to graduate upstream.
-out.profile = Object.keys(profileCfg.pronunciationOverrides).length >= 100
-  && profileCfg.contextualRules.length >= 10
-  && eq(profileCfg.pronunciationOverrides["覺得"], ["jue2", "de5"])
+// the runtime profile the worker applies: its shape is pinned here so a
+// profile that compiles to nothing (a schema drift, a renamed profile) fails
+// in node instead of shipping a silently un-reviewed voice. The phrase
+// readings are baked into the compiled lexicon now; what the runtime carries
+// is the contextual rules (得/著/長/還/乾…) plus 垃圾 → le4 se4, the base entry
+// — the first local override to graduate upstream.
+out.profile = profileCfg.contextualRules.length >= 10
   && eq(profileCfg.pronunciationOverrides["垃圾"], ["le4", "se4"])
   && profileCfg.contextualRules.some((r) => r.pattern === "著")
-  ? `ok (${Object.keys(profileCfg.pronunciationOverrides).length} words, ${profileCfg.contextualRules.length} contextual rules)`
+  ? `ok (${profileCfg.contextualRules.length} contextual rules, ${Object.keys(profileCfg.pronunciationOverrides).length} base words)`
   : `FAIL words=${Object.keys(profileCfg.pronunciationOverrides).length} rules=${profileCfg.contextualRules.length}`;
 
 // ---- with the real lexicon ------------------------------------------------
@@ -203,9 +228,10 @@ if (!dir) {
   out.golden = "skipped (set MATCHA_MODEL_DIR to run)";
   out.traditional = "skipped (set MATCHA_MODEL_DIR to run)";
 } else {
-  // the worker's exact recipe: profile under local OVERRIDES, rules alongside
+  // the engine's exact recipe (matcha-engine.js): the compiled lexicon from
+  // the tarball, the runtime profile, local OVERRIDES last
   const real = createFrontend({
-    lexiconText: readFileSync(join(dir, "lexicon.txt"), "utf8"),
+    lexiconText: readFileSync(join(engineDir(), "matcha-lexicon.txt"), "utf8"),
     tokensText: readFileSync(join(dir, "tokens.txt"), "utf8"),
     pronunciationOverrides: { ...profileCfg.pronunciationOverrides, ...OVERRIDES },
     contextualRules: profileCfg.contextualRules,
@@ -225,16 +251,19 @@ if (!dir) {
     ? "ok (垃圾 → le4 se4, via the profile's base entry)"
     : `FAIL ${JSON.stringify(real.tokensFor("垃圾。").phones)}`;
 
-  // 簡繁直輸 has a known, accepted cost: the multi-char entries are
-  // overwhelmingly simplified, so traditional prose falls through to per-char
-  // readings. This table PINS THE CURRENT ANSWERS on purpose — the 2026-08-15
-  // taiwan-profile adoption flipped 著/乾/得 to the reviewed readings, and the
-  // lines still marked "want" are the accepted defects the review has not
-  // reached yet. When it does, flip the line; this test proves the fix landed.
+  // 簡繁直輸's cost used to be accepted (traditional prose fell through to
+  // per-char readings — 銀行 as yín xíng); the compiled lexicon closed it with
+  // a curated traditional mirror (wasmtts v2). This table PINS THE CURRENT
+  // ANSWERS on purpose — the 2026-08-15 profile adoption flipped 著/乾/得, the
+  // 2026-08-28 wasmtts v2 migration flipped 銀行/會計 and added a guard that
+  // proves the mirror does not cross a word boundary. A reading that changes
+  // here is news: update upstream's review/curation, OVERRIDES or the pin,
+  // and this table, together.
   const TRADITIONAL = [
     ["他看著窗外", ["ta1", "kan4", "zhe5", "chuang1", "wai4"]],    // profile contextual rule
-    ["銀行", ["yin2", "xing2"]],                                   // want yin2 hang2
-    ["會計", ["hui4", "ji4"]],                                     // want kuai4 ji4
+    ["銀行", ["yin2", "hang2"]],                                   // compiled lexicon's mirror entry
+    ["會計", ["kuai4", "ji4"]],                                    // compiled lexicon's mirror entry
+    ["不會計較", ["bu4", "hui4", "ji4", "jiao4"]],                 // lexicon guard
     ["乾淨", ["gan1", "jing4"]],                                   // profile contextual rule
     ["顯得", ["xian3", "de5"]],                                    // profile phrase override
     // and a spread of the profile's own corrections, one per rule family
@@ -246,7 +275,7 @@ if (!dir) {
   const drift = TRADITIONAL.filter(([t, want]) => !eq(real.tokensFor(t).phones, want))
     .map(([t, want]) => `${t}: ${JSON.stringify(real.tokensFor(t).phones)} ≠ ${JSON.stringify(want)}`);
   out.traditional = drift.length === 0
-    ? `ok (${TRADITIONAL.length} readings pinned — profile fixes in, 銀行/會計 stay the accepted defects)`
+    ? `ok (${TRADITIONAL.length} readings pinned — profile and the compiled lexicon's mirror both in)`
     : `FAIL — reading changed, update the profile/OVERRIDES and this table together:\n    ${drift.join("\n    ")}`;
 }
 

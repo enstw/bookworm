@@ -66,7 +66,7 @@
     <li>×N＝實時倍率（音訊秒÷合成秒）。桌機實測約 ×7，遠高於邊播邊合成所需的 1。</li>
     <li>停頓由模型自己的標點音素決定，本頁不再插入靜音 — 與閱讀器完全一致。</li>
     <li>下載完成後回到書頁按 ▶，閱讀器預設改用離線引擎（console 顯示
-      wasm-tts ready: matcha zh-en）；播放列的「線上／離線」按鈕切換預設引擎，
+      wasm-tts ready: wasmtts vX.Y.Z）；播放列的「線上／離線」按鈕切換預設引擎，
       另一個自動成為備援（localStorage bw_tts）。</li>
     <li>繁體直接送入詞典，沒有 OpenCC：常用詞會有讀音誤差（銀行、看著），
       修正以 wasm-tts.mjs 的 OVERRIDES 逐條累加，依聽測結果決定。</li>
@@ -149,17 +149,20 @@ $("voiceLabel").textContent = `Matcha zh-en（${PACK_MB.toFixed(0)}MB·${RATE / 
 packReady().then((r) => log(`語音包 ${r ? "已就緒" : "未下載"}（${PACK_MB.toFixed(0)}MB）`));
 
 // ---- the pack -----------------------------------------------------------
-// The engine fetches these too, but silently and only when it starts; this
-// page is where a 138 MB download is a visible, per-file, interruptible act.
-// The download itself is wasm-tts.mjs's downloadPack — the same one the
-// reader's stale-pack pill runs — so either path primes the other; this page
-// only owns the per-file timeline lines.
+// This page is where a ~140 MB download is a visible, interruptible act. The
+// download itself is wasm-tts.mjs's downloadPack — wasmtts's worker filling
+// its cache, plus ort's wasm into its own bucket — the same one the reader's
+// stale-pack pill runs, so either path primes the other; this page only owns
+// the timeline lines (one per file as it starts, cached files included).
 async function fetchPack() {
-  await downloadPack((f) => {
-    if (f.cached) return log(`${f.label} ${f.name} 快取`);
-    const mb = f.bytes / 1048576;
-    log(`${f.label} ${f.name} ${mb.toFixed(1)}MB 網路 ${f.secs.toFixed(1)}s ${(mb / f.secs).toFixed(1)}MB/s — 累計 ${(f.gotBytes / 1048576).toFixed(0)}/${PACK_MB.toFixed(0)}MB`);
+  const t = performance.now();
+  let last = "";
+  await downloadPack(({ label, gotBytes, totalBytes }) => {
+    if (label === last) return;
+    last = label;
+    log(`${label} — 累計 ${(gotBytes / 1048576).toFixed(0)}/${(totalBytes / 1048576).toFixed(0)}MB`);
   });
+  log(`語音包就緒 ${((performance.now() - t) / 1000).toFixed(1)}s`);
   const est = await navigator.storage?.estimate?.().catch(() => null);
   if (est) log(`儲存 ${(est.usage / 1048576).toFixed(0)}MB / 配額 ${(est.quota / 1048576).toFixed(0)}MB`);
 }
@@ -170,7 +173,7 @@ async function prepare() {
   await fetchPack();
   const t = performance.now();
   engine = await ensureEngine();
-  log(`引擎就緒 ${((performance.now() - t) / 1000).toFixed(1)}s（${engineInfo.threads} 緒、${engineInfo.rules ? `${engineInfo.rules} 規則表` : "無規則表，數字走 JS 規則"}、台灣讀音 ${engineInfo.profileWords} 詞 + ${engineInfo.profileRules} 規則）`);
+  log(`引擎就緒 ${((performance.now() - t) / 1000).toFixed(1)}s（wasmtts ${engineInfo.tag}、${engineInfo.threads} 緒、${engineInfo.rules} 規則表、詞典 ${engineInfo.lexiconSize} 條、台灣讀音規則 ${engineInfo.contextualRules}、本地覆寫 ${engineInfo.localOverrides}）`);
   return engine;
 }
 
@@ -265,7 +268,7 @@ async function speak(text, tag) {
   let audioS = 0, synthS = 0, unitK = 0;
   for (const c of chunks) {
     if (token !== run) return;
-    // mp3=false: the chain players want WAV blobs, and this page has no MSE
+    // mp3=false: the chain players want blobs (mp3 in a Blob), not MSE frames
     const ok = await eng.speakChunk(ttsCore.ttsPrompt(c.text), (u) => {
       if (token !== run) return false;
       queue.push({ k: ++unitK, blob: u.blob, secs: u.secs });
