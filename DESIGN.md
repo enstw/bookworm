@@ -221,9 +221,20 @@ holes a line diff cannot see: every URL in the lockfile must be the wasmtts
 codeload source (a poisoned lockfile is how a clean package.json still
 installs attacker code), and every moved action digest is resolved against
 the upstream tag it claims (any fork-network commit fits the 40-hex format).
-The font pin is deliberately outside the allowlist and outside the roll-up
-group — its PR is a work order, not a change (see fetch-font.mjs);
-`scripts/test-renovate-policy.mjs` pins the bypass cases.
+The font pin rides the roll-up too (owner, 2026-08-28: enstw/font is ours,
+so it is tracked and merged weekly like wasmtts). A pin alone changes
+nothing served, so Renovate completes the bump on the branch — its
+`enstw/font` packageRule runs `node scripts/fetch-font.mjs` as a
+post-upgrade task (the one command `RENOVATE_ALLOWED_COMMANDS` in
+renovate.yml admits; uv is on the runner for fonttools) — and the commit
+carries four files that the verifier holds to one line or to rebuilt bytes:
+the `FONT_RELEASE` pin (strictly newer), `SHELL` in sw.js (exactly +1), the
+shell test's `GOLDEN_SHELL` (the same new name), and `ENSFont.woff2`, which
+must equal a fresh conversion of the release's TTF made in the merge job
+with the same pinned fonttools/brotli — the bytes are the one thing a line
+diff cannot vouch for, so they are re-derived, the way an action digest is
+resolved against its tag. `scripts/test-renovate-policy.mjs` pins the
+bypass cases.
 
 An **off-schedule roll-up** is three steps, each with a known pit. (1)
 Dispatch the `renovate` workflow. (2) If that run ends green yet opens

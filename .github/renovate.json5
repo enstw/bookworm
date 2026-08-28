@@ -63,16 +63,21 @@
       minimumReleaseAge: "30 days",
     },
     {
-      // The font pin rides its own PR, not the roll-up. A FONT_RELEASE bump
-      // alone changes nothing served (fetch-font.mjs must regenerate the
-      // committed woff2 and bump SHELL on the branch — its header has the
-      // runbook), so the merge job's verifier would fail the whole roll-up
-      // closed over a change it cannot complete. Ungrouped, the font PR waits
-      // for a human or agent while the mechanical roll-up keeps merging.
+      // The font pin rides the roll-up like everything else, and Renovate
+      // completes it: a FONT_RELEASE bump alone changes nothing served, so
+      // fetch-font.mjs runs on the branch (renovate.yml allows exactly this
+      // command and puts uv on the runner) to regenerate the committed woff2
+      // and bump SHELL plus the shell test's golden, and those files ride the
+      // same commit. The merge job's verifier re-derives the woff2 from the
+      // release and refuses anything else in the four files (owner,
+      // 2026-08-28: the font is ours, track it and merge it weekly — the
+      // ungrouped work-order PR sat unmerged for a week).
       matchPackageNames: ["enstw/font"],
-      groupName: null,
-      additionalBranchPrefix: "",
-      branchTopic: "ensfont-release",
+      postUpgradeTasks: {
+        commands: ["node scripts/fetch-font.mjs"],
+        fileFilters: ["public/fonts/ENSFont.woff2", "public/sw.js", "scripts/test-shell-policy.mjs"],
+        executionMode: "update",
+      },
     },
     {
       // blake3-wasm is pinned to whatever WRANGLER bundles with, never bumped
@@ -102,9 +107,9 @@
     // the ENSFont release pin: a plain const in the fetch script, not a
     // package.json entry, so no built-in manager sees it. The tag scheme
     // (v4.4.0_lxgw1.522_nerd3.5.0) is not semver — loose versioning sorts it.
-    // A font bump needs `node scripts/fetch-font.mjs` run on the branch to
-    // regenerate the committed woff2, plus a SHELL bump — the script header
-    // has the runbook; the pin alone changes nothing served.
+    // The pin alone changes nothing served; the packageRule above runs
+    // fetch-font.mjs on the branch to regenerate the committed woff2 and
+    // bump SHELL (the script header has the runbook for doing it by hand).
     {
       customType: "regex",
       managerFilePatterns: ["/^scripts/fetch-font\\.mjs$/"],
