@@ -9,6 +9,12 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-28 — `f10ecad07a75`
+
+> 朗讀可選預設用線上或離線語音，另一個自動當備援；播放列多了切換鈕。
+
+- player: choose the default voice engine, online or offline — the other is the fallback (`f10ecad`)
+
 ## 2026-08-28 — `d38af98ed0e3`
 
 > 書籤同步成功時，右下角會亮一下綠點。
