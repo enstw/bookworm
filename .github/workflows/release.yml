@@ -122,6 +122,18 @@ jobs:
       pull-requests: write
       actions: write
     steps:
+      # releases/latest is what every instance installs, so only main — the
+      # ref the ruleset gates — may be released. deploy.yml's fence is the
+      # production environment's branch policy; this workflow stays out of
+      # that environment on purpose (it is the one that holds no credential,
+      # and joining would hand it the secrets once they move there), so the
+      # fence is in-tree: refuse any other ref here, before the checkout.
+      - name: Refuse a release from any ref but main
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "release.yml releases main only, not $GITHUB_REF" >&2
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # update-releases.mjs walks released..HEAD; a shallow clone has

@@ -199,6 +199,14 @@ export function checkReleasePolicy(text) {
     violations.push("release artifact must be packaged, then published, then ledgered");
   }
   if (!/needs: test/.test(release)) violations.push("release job does not wait for the test gate");
+  // M-01 on the release path: releases/latest is what every instance
+  // installs, and this workflow names no environment (it must never gain the
+  // secrets one will hold), so the branch fence is a step of its own — the
+  // first one, before any checkout of the dispatched ref
+  const guardAt = release.search(/"\$GITHUB_REF" != refs\/heads\/main/);
+  const checkoutAt = release.indexOf("actions/checkout@");
+  if (guardAt === -1) violations.push("release job does not refuse refs other than main");
+  else if (checkoutAt !== -1 && checkoutAt < guardAt) violations.push("release job checks out the dispatched ref before refusing it");
   return violations;
 }
 
@@ -297,6 +305,10 @@ const releaseMutations = [
     .replace("          git push -f origin released\n", "          git push -f origin released\n          node scripts/package-release.mjs out/release && node scripts/publish-release.mjs out/release\n")],
   ["release job gaining an extra grant", (t) => t.replace("      pull-requests: write\n      actions: write", "      pull-requests: write\n      actions: write\n      issues: write")],
   ["release not gated on test", (t) => t.replace("  release:\n    needs: test\n", "  release:\n")],
+  ["release from any ref", (t) => t.replace(/      - name: Refuse a release from any ref but main\n        run: \|\n(?:          [^\n]*\n)+/, "")],
+  ["release checking out the ref before refusing it", (t) => t.replace(
+    /(      - name: Refuse a release from any ref but main\n        run: \|\n(?:          [^\n]*\n)+)(      - uses: actions\/checkout@[^\n]*\n(?:        [^\n]*\n)+)/,
+    "$2$1")],
   ["test job persisting credentials", (t) => t.replace("          # the suite runs the pushed code; leave no token on disk for it\n          persist-credentials: false\n", "")],
 ];
 for (const [label, mutate] of releaseMutations) {
