@@ -9,6 +9,16 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-08-30 — `1357e40e1183`
+
+- release: publish-release.mjs stops re-pointing latest, so releases can go immutable (`1357e40`)
+- worker: error text goes to the log, the body says only that it failed (`0134579`)
+- docs: SECURITY.md says release, not deploy, and DESIGN records the owner's 2FA (`8cc01ad`)
+- ci: release.yml refuses any dispatched ref but main, and the policy asserts it (`cfa1ec5`)
+- test: the wasm fixture server logs the missing path instead of echoing it (`f7cb3a0`)
+- docs: a public repo with no SECURITY.md tells a finder to open an issue (`6c2ec1e`)
+- ci: the jobs that can reach production name an environment, and the ops ones are asserted (`e31b19b`)
+
 ## 2026-08-29 — `6ec806bf5384`
 
 > 離線朗讀：再次按 ▶ 幾乎立刻出聲（先合成好畫面這頁的第一句）；⏮ 回前一章不再重建；/wasmtest 多了「短句合併」試聽選項。
