@@ -224,6 +224,23 @@ Settings that live in GitHub, not in any file:
   instance installs. It is a login-time factor only: `gh`'s keyring token,
   SSH and the per-job `GITHUB_TOKEN` are unaffected, and no workflow gains
   a step.
+- **Immutable releases** are on (enabled 2026-08-30). A published release's
+  tag, assets and `latest` standing are frozen — only its title and notes can
+  still change, and it cannot be deleted. The release feed is what every
+  instance installs and the bundle carries no signature, so this is the one
+  tamper-evidence GitHub offers: anything holding `contents: write` could
+  otherwise swap `worker.js` and `manifest.json` under an existing tag and
+  the fleet would install it on the next poll with nothing in the ledger.
+  Now a tamper needs a new release, which is visible. The price is that
+  `latest` never moves backwards: a bad release is superseded by a revert on
+  `main` and a new release — `publish-release.mjs` refuses a re-run whose
+  tag is no longer `latest`, and a hand `gh release edit --latest` on an
+  older tag is refused by GitHub. Each instance's own health-check rollback
+  (PM-07) is Cloudflare-side and unaffected. Only releases published after
+  the switch are locked: `wasmtts-assets-v2` predates it and
+  `sync-wasmtts-assets.mjs` keeps uploading to and sweeping it, but a
+  successor would have to be created complete in one `gh release create` —
+  a per-pin `wasmtts-assets-<tag>` — since nothing can be added afterwards.
 
 ### Dependencies (Renovate)
 
@@ -407,10 +424,13 @@ same esbuild pass a deploy runs, no credentials), hashes, zips — so it
 works both inside the deploy (where `deploy.sh` has already stamped the
 tree; a disagreeing stamp is an error) and from a clean checkout, and never
 touches the tree. `scripts/publish-release.mjs` cuts the release after
-`deploy.sh` and before the ledger step: only a live build is published, and
-a commit that already has a release (re-run, rollback) is re-pointed as
-`latest` with its assets untouched, so `released_at` keeps saying when that
-build was first published. The stamp formula lives once, in
+`deploy.sh` and before the ledger step: only a live build is published.
+Releases are immutable (*Repo settings outside the tree*), so a commit that
+already has a release (a re-run) is left exactly as it is — assets and
+`latest` untouched, `released_at` still saying when that build was first
+published — and the script fails, rather than pretend, if that release is
+no longer `latest`: nothing moves `latest` backwards; a fix is a new commit
+and a new release. The stamp formula lives once, in
 `scripts/build-id.mjs`: `deploy.sh` seds it into the tree and the manifest
 carries it as `version`, and an updater compares the two strings verbatim.
 **Reproducible means the clock cannot reach the bytes**: stamp and zip
@@ -1518,7 +1538,9 @@ it uploads whatever the pin names that the release lacks (SHA-verified),
 refuses a same-name-different-bytes replace, and then deletes stale names
 (sole install, no backward-compat window). So a model, lexicon or ort bump
 is: upstream repins → gated tag → bookworm repins one line → CI re-cuts and
-deploys.
+deploys. This works because `wasmtts-assets-v2` predates the
+immutable-releases switch (*Repo settings outside the tree*); a successor
+release would be frozen at creation and could not be re-cut in place.
 
 **The whole voice pack rides the same rail**: the tarball's
 `matcha-assets.json` (schemaVersion 4, `stage: complete`) is the pack's
