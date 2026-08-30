@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Non-interactive Cloudflare deploy. Credentials come from .deploy.env when
 # present (local use — see .deploy.env.example) or from the environment
-# (GitHub Actions, which gets them from repo secrets).
+# (GitHub Actions, which gets them from the production environment's secrets).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

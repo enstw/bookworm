@@ -1,5 +1,6 @@
 // Generate the VAPID keypair for Web Push (新書通知). Prints the private
-// JWK to put in VAPID_PRIVATE_JWK (repo secret + .deploy.env) and the
+// JWK to put in VAPID_PRIVATE_JWK (the production environment's secret,
+// mirrored in .deploy.env) and the
 // public key for reference — the worker derives the public key from the
 // JWK at runtime, so there is nothing else to keep in sync.
 //
