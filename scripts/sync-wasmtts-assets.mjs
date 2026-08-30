@@ -15,6 +15,12 @@
 // ort's wasm from the pinned npm package — every source is the pin's own.
 //
 // Needs `gh` authenticated with contents:write on this repo (CI: GH_TOKEN).
+//
+// wasmtts-assets-v2 predates the repo's immutable-releases switch (DESIGN,
+// "Repo settings outside the tree") and stays editable; any release created
+// since is frozen at publish. So a successor TAG cannot be run through this
+// upload-and-sweep loop — it would have to be created complete, every asset
+// in the one `gh release create`, as a per-pin release.
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
