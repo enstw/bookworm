@@ -16,12 +16,12 @@ Bookworm 的每個 fork 都是別人正在讀書的伺服器，公開細節等�
 這是一人維護的專案，沒有 24 小時輪值，也沒有獎金。實際能承諾的是：
 
 - 一週內回覆確認收到。
-- 確認成立後，修補會走跟其他變更一樣的路徑——PR、`candidate-gate`、部署——並在
-  修好後發 GitHub Security Advisory。
+- 確認成立後，修補會走跟其他變更一樣的路徑——PR、`candidate-gate`、release——並在
+  修好後發 GitHub Security Advisory。自架的實例由各自的 updater 從 release 取得修補。
 - 你可以決定要不要具名致謝。
 
-只有 `main` 的最新版本會收到修補。這裡沒有維護中的舊版分支：自架的 fork 請跟上
-`main`。
+只有 `main` 的最新版本會收到修補。這裡沒有維護中的舊版分支：自架的實例請讓
+updater 跟著 release 走。
 
 ## 範圍
 
@@ -55,9 +55,9 @@ Bookworm is someone's live reading server.
 
 **What to expect:** one maintainer, no bounty. An acknowledgement within a
 week; confirmed issues are fixed through the normal path (PR →
-`candidate-gate` → deploy) and published as a GitHub Security Advisory, with
-credit if you want it. Only the latest `main` is patched — self-hosted forks
-should track `main`.
+`candidate-gate` → release) and published as a GitHub Security Advisory, with
+credit if you want it. Only the latest `main` is patched — self-hosted
+instances receive the fix through their own updater from the release feed.
 
 **In scope:** code in this repository — the Worker, the reader frontend,
 `/admin`, the deploy and GitHub Actions workflows, and anything affecting

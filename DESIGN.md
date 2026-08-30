@@ -217,6 +217,13 @@ Settings that live in GitHub, not in any file:
   does not block a merge the way `candidate-gate` does. Reports arrive
   through the Security tab, not email — [SECURITY.md](./SECURITY.md) is the
   public half of that.
+- The **owner account has 2FA on** (confirmed 2026-08-30) and stays that
+  way. Every control above fences tokens and workflows; none fences the
+  admin login that can rewrite them — and in pull mode that login is the
+  fleet's root of trust, since whoever holds it can publish a release every
+  instance installs. It is a login-time factor only: `gh`'s keyring token,
+  SSH and the per-job `GITHUB_TOKEN` are unaffected, and no workflow gains
+  a step.
 
 ### Dependencies (Renovate)
 
