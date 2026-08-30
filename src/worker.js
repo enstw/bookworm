@@ -29,7 +29,10 @@ export default {
     const path = url.pathname;
     // every handler is awaited, not just returned: a returned promise settles
     // OUTSIDE this try, so an async throw used to escape as a bare platform
-    // 1101 (HTTP 500, no body) and the caller lost the message entirely
+    // 1101 (HTTP 500, no body) and nothing recorded the message at all. The
+    // message goes to the Worker log (wrangler tail, the dashboard), not the
+    // body: this catch answers anonymous requests too, and a D1 or R2 error
+    // text names tables, keys and bindings (CodeQL js/stack-trace-exposure)
     try {
       // The gate: everything that can open a book, read or move a bookmark,
       // or start a synthesis requires a reader key (see authenticate); the
@@ -81,7 +84,8 @@ export default {
       if (path === "/admin")
         return await env.ASSETS.fetch(new URL("/admin.html", url.origin));
     } catch (err) {
-      return json({ error: String(err?.message ?? err) }, 500);
+      console.error(`${request.method} ${path}: ${err?.stack ?? err}`);
+      return json({ error: "internal error" }, 500);
     }
     return json({ error: "not found" }, 404);
   },
@@ -860,7 +864,10 @@ async function handleTts(request, env, ctx, path, url) {
   try {
     bytes = await edgeSynthesize(ttsPrompt(chunk.text));
   } catch (err) {
-    return json({ error: `tts failed: ${err?.message ?? err}` }, 502);
+    // the status is what the player acts on (it falls back to the offline
+    // engine); the upstream's reason is for the log, same rule as the catch-all
+    console.error(`tts ${audioKey}: ${err?.message ?? err}`);
+    return json({ error: "tts failed" }, 502);
   }
   ctx.waitUntil(env.BOOKS.put(audioKey, bytes));
   return new Response(bytes, { headers });
