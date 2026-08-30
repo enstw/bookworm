@@ -67,6 +67,8 @@ workflows, split by what they may touch:
   full test gate, then package → publish the release → ledger. It holds
   **no Cloudflare credential** (only the per-job `GITHUB_TOKEN`) and never
   runs `deploy.sh`; `test-deploy-policy.mjs` refuses a version that does.
+  It releases `main` only — the release job refuses any other dispatched
+  ref before its checkout, since `releases/latest` is what the fleet installs.
   Upstream's own host is just the first instance to pull it — armed, soak 0
   (the fleet's canary) — not something the release pre-deploys.
 - **`deploy.yml` — the repair tool.** The same gate, then `deploy.sh`
@@ -200,7 +202,12 @@ Settings that live in GitHub, not in any file:
   own deploy, and a gate nobody can pass is a broken deploy, not a control.
   `deploy` and the three hand-run ops jobs name it; a dispatch of
   publish-book or renormalize-books from a side branch is refused before it
-  runs. The six secrets are still repository-level, so the environment is a
+  runs. `release.yml` stays out on purpose: it is the workflow that holds
+  no credential, and joining the environment would hand it the secrets once
+  they move there — so its release job refuses any ref but `main` itself,
+  as its first step, and `test-deploy-policy.mjs` asserts that guard the
+  way it asserts the environment on the others. The six secrets are still
+  repository-level, so the environment is a
   branch fence today, not yet a secret fence — closing that needs the values
   re-entered by hand, which is a human step, not an API call.
 - **Dependabot security updates**, **CodeQL default setup**
