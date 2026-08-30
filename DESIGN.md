@@ -206,10 +206,14 @@ Settings that live in GitHub, not in any file:
   no credential, and joining the environment would hand it the secrets once
   they move there — so its release job refuses any ref but `main` itself,
   as its first step, and `test-deploy-policy.mjs` asserts that guard the
-  way it asserts the environment on the others. The six secrets are still
-  repository-level, so the environment is a
-  branch fence today, not yet a secret fence — closing that needs the values
-  re-entered by hand, which is a human step, not an API call.
+  way it asserts the environment on the others. The six secrets live in the
+  environment, not at repository level (moved 2026-08-31, values re-entered
+  by hand since a secret can never be read back; the Cloudflare token was
+  re-minted in the move): GitHub hands them only to jobs inside
+  `production`, which only `main` enters — a secret fence, not just a
+  branch fence, and one a side-branch workflow edit cannot talk its way
+  past. The owner's `.deploy.env` (untracked, other machine) mirrors the
+  four instance values for local repair.
 - **Dependabot security updates**, **CodeQL default setup**
   (`javascript-typescript` + `actions`, default query suite, no workflow
   file in the tree) and **private vulnerability reporting** are all on.
