@@ -1620,6 +1620,16 @@ in — rebuild from this description if needed.
 
 ### iOS lock-screen ground truth
 
+Long play holds. On iOS both engines play one MediaSource timeline, and a
+locked phone keeps reading on it for at least 30 minutes without a stop —
+observed on the owner's phone, not yet read back from a flight-recorder
+session, so 30 minutes is a floor and no ceiling has been measured. The
+~5-minute death in *Units and playback* killed the chained-element
+transport this timeline replaced; it is not a limit of the current player.
+What it left behind is a recovery rule, still live upstream as "chain
+death": a pause the reader did not make is `suspended` and resumes on the
+foreground flip.
+
 Measured on iOS 18.7 with a LAN probe replaying real per-sentence mp3 units
 through the reader's exact MediaSource + Media Session discipline. Four
 facts, three of them platform ceilings no code change moves: (1) Media
