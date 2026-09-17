@@ -1325,7 +1325,10 @@ function wireReaderEvents() {
   addEventListener("scroll", onScroll, { passive: true, capture: true });
   addEventListener("keydown", onKey);
   addEventListener("click", onTap);
-  addEventListener("touchstart", onTouchStart, { passive: true });
+  // not passive: onTouchStart cancels touches that start in the edge band,
+  // and only a cancelled touchstart stops the engine's pan (the handler is
+  // a few comparisons, so the scroll it holds up does not notice)
+  addEventListener("touchstart", onTouchStart, { passive: false });
   addEventListener("touchend", onTouchEnd, { passive: true });
   // deliberate scrolling pauses the player's auto-follow for a few seconds
   addEventListener("wheel", () => (lastUserScroll = Date.now()), { passive: true });
@@ -2346,7 +2349,36 @@ function onKey(e) {
 let touchStart = null;
 let lastTouchTap = 0;
 
+// 邊緣不感應 (owner, 2026-09-17): a touch that STARTS within ~5 mm of a
+// screen edge is not input on the reading surface — no page turn, no pan.
+// The pos recorder caught the page dragged in the last seconds before a
+// lock, three times in one morning — positions between grid points every
+// 400 ms, a hand on the glass while the other one pressed the side button
+// — and twice the snap rounded the drag up to two and three whole pages. Nothing on the reading surface needs its edges. The bars
+// and every control keep theirs (owner: 工具列不修改), and outside the
+// reader nothing changes. CSS px are not physical: 30 px is 5 mm on the
+// owner's 402×874 @3x phone (460 ppi ÷ 3 ≈ 153 px per inch), and iPhones
+// span 153–163 px per inch, so the band is 5.0–5.3 mm on any of them.
+const EDGE_BAND_PX = 30;
+const TOUCH_CONTROLS = "a, button, input, select, textarea, .topbar, .botnav, .playerbar, .toc, .jumpnote";
+function inEdgeBand(e) {
+  const p = e.changedTouches[0];
+  if (!p || !$("#content") || document.querySelector("#app > section:not([hidden])")) return false;
+  if (e.target instanceof Element && e.target.closest(TOUCH_CONTROLS)) return false;
+  return p.clientX < EDGE_BAND_PX || p.clientY < EDGE_BAND_PX
+    || p.clientX > innerWidth - EDGE_BAND_PX || p.clientY > innerHeight - EDGE_BAND_PX;
+}
+
 function onTouchStart(e) {
+  if (inEdgeBand(e)) {
+    // cancelling touchstart stops the pan and the synthesized click
+    // together; the tap path in onTouchEnd never arms
+    e.preventDefault();
+    touchStart = null;
+    const p = e.changedTouches[0];
+    plog(`觸邊 ${Math.round(p.clientX)},${Math.round(p.clientY)} ${where()}`);
+    return;
+  }
   touchStart = e.touches.length === 1
     ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(),
         // a tap that stops momentum scrolling is a brake, not a page turn —

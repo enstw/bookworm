@@ -376,6 +376,60 @@ out.landsOnPagePoint = onPagePoint.err <= 1
 // the iOS fixed-overlay guard: paging must scroll #content, never the doc
 out.docNeverScrolls = (await evalJs(`scrollX === 0 && scrollY === 0`))
   ? "ok" : "FAIL: document scrolled";
+// 邊緣不感應: a touch that starts within 30 px of a screen edge is not
+// input — no tap page turn, no pan — while one just inside the band still
+// turns the page. The drags carry their own control: a pan from mid-screen
+// must move the page, or the edge drag's stillness would prove nothing.
+const touchAt = async (x, y) => {
+  await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] }, sessionId);
+  await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }, sessionId);
+  await sleep(700);
+};
+const vw = await evalJs(`({ w: innerWidth, h: innerHeight })`);
+const e0 = await contentScrollLeft();
+await touchAt(10, vw.h * 0.8);             // left edge, inside the forward quarter
+await touchAt(vw.w * 0.2, vw.h - 10);      // bottom edge, same quarter
+await touchAt(vw.w - 10, vw.h * 0.8);      // right edge, inside the back quarter
+const e1 = await contentScrollLeft();
+out.edgeTapIgnored = e1 === e0 ? `ok (${e0})` : `FAIL: ${e0} → ${e1}`;
+await touchAt(36, vw.h * 0.8);             // just inside the reading area
+const e2 = await contentScrollLeft();
+out.nearEdgeTapTurns = e2 < e1 ? `ok (${e1} → ${e2})` : `FAIL: ${e1} → ${e2}`;
+await touchAt(vw.w * 0.8, vw.h * 0.8);     // back to where the flow was
+const drag = async (x0, dx) => {
+  const y = vw.h * 0.5;
+  const before = await contentScrollLeft();
+  await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x0, y }] }, sessionId);
+  for (let i = 1; i <= 8; i++) {
+    await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x0 + (dx * i) / 8, y }] }, sessionId);
+    await sleep(16);
+  }
+  const during = await contentScrollLeft();
+  await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }, sessionId);
+  await sleep(900); // the snap back onto the page grid
+  return { moved: Math.abs(during - before) };
+};
+const edgeDrag = await drag(8, 120);
+const midDrag = await drag(vw.w * 0.4, 120);
+out.edgePanIgnored = midDrag.moved < 20
+  ? `FAIL: control pan from mid-screen moved ${midDrag.moved}px — the check proves nothing`
+  : edgeDrag.moved === 0 ? `ok (edge 0px, mid ${midDrag.moved}px)` : `FAIL: edge drag moved ${edgeDrag.moved}px`;
+// the bars keep their edges: with them shown, a touch on the top bar's
+// button still works (工具列不修改)
+await evalJs(`document.documentElement.toggleAttribute("data-bars", true)`);
+await sleep(200);
+const tocAt = await evalJs(`(() => {
+  const r = document.getElementById("tocBtn").getBoundingClientRect();
+  // a point on the button AND inside the 30 px band
+  return { x: r.left + r.width / 2, y: Math.max(r.top + 2, Math.min(r.top + r.height / 2, 26)) };
+})()`);
+await touchAt(tocAt.x, tocAt.y);
+const tocOpen = await evalJs(`!document.getElementById("toc").hidden`);
+out.edgeBarStillTaps = tocAt.y >= 30 ? `FAIL: ☰ starts below the band (y=${tocAt.y})`
+  : tocOpen ? `ok (☰ at y=${Math.round(tocAt.y)})` : "FAIL: toc did not open";
+await evalJs(`document.getElementById("toc").hidden = true;
+  document.documentElement.toggleAttribute("data-bars", false)`);
+
 await sleep(900); // let the snap and trackScroll settle before the reload
 const preReload = await savedOff();
 

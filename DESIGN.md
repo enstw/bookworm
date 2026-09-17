@@ -861,6 +861,23 @@ tree, so the repo never grows a second, diverging install path.
   1×. Never reintroduce `scrollBy`; every landing is an absolute assignment
   (`vSnap`/`vSlide`, native smooth `scrollTo`). Chromium is 1×, so e2e can
   only guard the invariant, not reproduce the bug.
+- **The screen's edges are not input.** A touch that starts within 30 px of
+  a viewport edge, on the reading surface, is cancelled at `touchstart`: no
+  tap page turn, no pan (`EDGE_BAND_PX` in `app.js`). The pos recorder
+  showed why. In the seconds before a lock the page moved through positions
+  between grid points every 400 ms, a hand on the glass while the other
+  pressed the side button, and the snap rounded two of those drags up to two
+  and three whole pages, which the reader only saw on unlock. The recorder
+  cannot tell a drag from a run of taps; the band stops both. 30 px is about
+  5 mm, since iPhones run 153–163 CSS px per inch. The bars, TOC, player bar,
+  pills and every control keep their edges, and outside the reader nothing
+  changes. Each cancelled touch writes a `觸邊 x,y` line to `page=pos` —
+  that line is how to confirm on the phone that the band caught a stray
+  hand. Accepted: a deliberate tap or swipe that starts in the outermost
+  5 mm does nothing, and the listener is non-passive, so every touch start
+  waits on a handler of a few comparisons. `test-vertical-e2e.mjs` asserts
+  edge taps and edge pans ignored against a mid-screen pan that moves, a tap
+  just inside the band still turning, and ☰ still tappable inside the band.
 - **What syncs and what doesn't.** fontSize/vertical/bg follow the reader id
   through `/api/settings` (LWW, client timestamps clamped server-side to
   now + 60 s, same as positions). Theme, language, 每頁行數 and wake lock
