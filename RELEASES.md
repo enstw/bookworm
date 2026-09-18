@@ -9,6 +9,14 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-09-17 — `2ef12334dfa0`
+
+> 閱讀時，螢幕邊緣約 0.5 公分內的觸控不再翻頁或拖動，握著手機按鎖定鍵時不會誤翻；工具列與按鈕照常可按。
+
+- reader: a touch that starts on the outer 5 mm of the screen turns no page and pans nothing (`2ef1233`)
+- docs: locked playback holds at least 30 minutes, and the 5-minute death is the old transport's (`a5e0890`)
+- docs: the six secrets live in the production environment now (`5bfcc11`)
+
 ## 2026-08-30 — `1357e40e1183`
 
 - release: publish-release.mjs stops re-pointing latest, so releases can go immutable (`1357e40`)
