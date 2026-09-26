@@ -87,6 +87,16 @@ else
   echo "    added"
 fi
 
+# online books (DESIGN.md → Online books): the same COLS probe, same rule
+echo "==> ensuring books.source column"
+if grep -q '"source"' <<<"$COLS"; then
+  echo "    (already present)"
+else
+  $W d1 execute bookworm --remote --command \
+    "ALTER TABLE books ADD COLUMN source TEXT NOT NULL DEFAULT ''"
+  echo "    added"
+fi
+
 # AFTER the books blocks: chapter_chars above reuses the books COLS probe, so
 # nothing may sit between them and clobber it (this block did once — the
 # 2026-08-21 dispatch failed on exactly that). Own variable, own probe.

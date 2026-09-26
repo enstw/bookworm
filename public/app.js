@@ -888,7 +888,10 @@ function shelfRow(b) {
       coverInto(el("div"), b, true),
       el("div", { class: "grid-meta" },
         t("lib.meta", b.chapters, b.totalChars), " · ",
-        pct === null ? t("lib.notStarted") : el("span", { class: "acc" }, t("lib.readPct", pct)))),
+        pct === null ? t("lib.notStarted") : el("span", { class: "acc" }, t("lib.readPct", pct)),
+        // an online book reads from its site: chapter and 字數 are the site's
+        // list and an estimate until the chapters have been opened
+        b.source ? [" · ", el("span", { class: "muted" }, t("lib.online"))] : null)),
     "caches" in window ? shelfOfflineBtn(b) : null);
 }
 
@@ -1535,7 +1538,9 @@ async function fetchChapter(i) {
   let text;
   try {
     const res = await fetch(bookUrl(file));
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // the worker says why in the body (an online book's site down, say), and
+    // that is the line worth showing over a bare status
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `HTTP ${res.status}`);
     text = await res.text();
   } catch (err) {
     // offline before the service worker took over — try the offline cache
@@ -1633,6 +1638,10 @@ async function openChapter(i, offset = 0) {
 const OFFLINE_BEHIND = 5;
 const OFFLINE_AHEAD = 50;
 const OFFLINE_AHEAD_IMPLICIT = 5;
+// an online book's chapters are fetched from its site the first time anyone
+// asks (DESIGN.md → Online books): the 50-ahead window would be 50 chapters
+// pulled off a stranger's server in one burst, so the ⇣ keeps fewer
+const OFFLINE_AHEAD_ONLINE = 10;
 
 const offlineKey = (id) => `bw_offline_${id}`;
 const offlineEnabled = (id = state.id) => localStorage.getItem(offlineKey(id)) !== "0";
@@ -1682,7 +1691,8 @@ async function updateOfflineWindow() {
 async function fillOfflineWindow(id, manifest, idx, alive = () => true) {
   const chs = manifest.chapters;
   const lo = Math.max(0, idx - OFFLINE_BEHIND);
-  const ahead = offlineExplicit(id) ? OFFLINE_AHEAD : OFFLINE_AHEAD_IMPLICIT;
+  let ahead = offlineExplicit(id) ? OFFLINE_AHEAD : OFFLINE_AHEAD_IMPLICIT;
+  if (manifest.source) ahead = Math.min(ahead, OFFLINE_AHEAD_ONLINE);
   const hi = Math.min(chs.length - 1, idx + ahead);
   const want = new Set();
   for (let i = lo; i <= hi; i++) want.add(assetUrl(id, chs[i].file, manifest.generatedAt));

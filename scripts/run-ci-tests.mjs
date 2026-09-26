@@ -112,6 +112,7 @@ run("deploy-policy", ["node", "scripts/test-deploy-policy.mjs"]);
 run("shell-policy", ["node", "scripts/test-shell-policy.mjs"]);
 run("slug", ["node", "scripts/test-slug.mjs"]);
 run("split-core", ["node", "scripts/test-split-core.mjs"]);
+run("online-source", ["node", "scripts/test-online-source.mjs"]);
 run("release-notes", ["node", "scripts/test-release-notes.mjs"]);
 run("release-manifest", ["node", "scripts/test-release-manifest.mjs"]);
 run("updater", ["node", "scripts/test-updater.mjs"]);
@@ -140,6 +141,9 @@ try {
     // after push-api, with shelf-admin: publishing a book writes a line into
     // the push log, and push-api asserts against that log's last 20 entries
     run("shelf-admin-e2e", ["node", "scripts/test-shelf-admin-e2e.mjs"]);
+    // boots its own worker: the online-book routes need ONLINE_TEST_ORIGIN
+    // (a wrangler --var) pointing the site adapters at the suite's stub
+    run("online-book-e2e", ["node", "scripts/test-online-book-e2e.mjs"]);
     // the /admin page driven in a real browser — including the enriched-zip
     // (agent upload) contract: meta.json, cover transcode, republish survival
     run("admin-e2e", ["node", "scripts/test-admin-e2e.mjs"]);
