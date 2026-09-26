@@ -1260,6 +1260,73 @@ tree, so the repo never grows a second, diverging install path.
   `IF NOT EXISTS`, which never alters a live table — a new column must also
   ship a guarded `ALTER` in `scripts/deploy.sh`.
 
+## Online books
+
+A book whose chapters live on a website (the owner's ask, 2026-09-26: a
+serial read from novels.com.tw without downloading it first). Registered
+on /admin from the book page or any chapter page (`POST /api/admin/online`
+→ `addOnlineBook`); the site's index page is read once, into a manifest
+whose chapters carry a `src` URL and an estimated `chars` (`EST_CHARS`,
+3,000) instead of bytes, plus `source: {site, url, checkedAt}`. Everything
+after that is the ordinary book: same R2 prefix, same routes, same offline
+cache, same TTS. The adapters live in `src/online-sources.mjs`, one per
+site, pure over strings plus an injected fetch.
+
+- **A chapter is fetched the first time anything asks for it, and never
+  again.** `onlineChapter` is the one fetch path: the file route, the TTS
+  route and its warm-ahead all read chapter text through `chapterText`,
+  so whichever asks first pays, writes the file under the key an uploaded
+  chapter would have (the real count in the object's `customMetadata`),
+  and every later read is R2. The fetch never rewrites the manifest —
+  two chapters fetched at once would race each other's copy — so the
+  manifest keeps its estimate until a refresh reconciles it.
+- **The index refreshes itself.** `refreshOnline` re-reads the site's
+  chapter list, appends what is new (matched by URL, so a retitled chapter
+  is not a new one), copies real counts and sizes from R2 over the
+  estimates, and re-registers the row. It runs from the 更新目錄 button on
+  /admin and in the background (`ctx.waitUntil`) whenever a reader opens a
+  book whose `checkedAt` is older than `ONLINE_REFRESH_MS` (6 h) — the
+  response is the stored copy; the new chapter is there on the next open.
+  Nothing is ever removed: a chapter the site took down stays readable.
+- **The audit knows.** `checkChapters` treats an absent file with a `src`
+  as unfetched, not missing, so 健康檢查 stays clean on a book nobody has
+  finished; a fetched chapter is checked by size like any other.
+- **The offline window stays polite.** `OFFLINE_AHEAD_ONLINE` caps the ⇣
+  window at 10 chapters ahead for an online book: 50 would be 50 chapters
+  pulled off someone else's server in one burst.
+- **The index row carries `books.source`** (schema.sql, migrations.sql,
+  deploy.sh): the shelf marks the book 線上, /admin offers 更新目錄, and
+  adding the same URL twice is one lookup and a 409 naming the book
+  already there. The enrichment sidecar is written at registration from
+  the site's meta (author, 簡介, source) and the site's cover lands in
+  the 書衣 slot when it is a JPEG.
+- **novels.com.tw** serves chapter text as `window.encryptedContent`,
+  AES-CBC under a fixed key with a zero IV, which the page's own script
+  decrypts for every visitor; the key is copied into the adapter, and a
+  rotation surfaces as a decrypt error naming the site, never as an empty
+  chapter. Long chapters are cut into `_2.html`, `_3.html` … pages at a
+  character boundary (the count is in the `<h1>` as 「（1 / 3）」; a page
+  past the last repeats the last), so the adapter joins a page's cut
+  paragraph to the next page's first — a cut paragraph ends without the
+  `\r` every whole one carries. The site's dressing (a stray quote, the
+  title re-spelled over a few lines and a dashed rule, the line pointing
+  back at the site) is stripped. Its text is already Traditional, with the
+  site's own converter artifacts (「下麵」 for 下面); the reader stores
+  what the site serves — OpenCC is a browser-side upload step, not a
+  Worker one.
+- **Testing** never touches the site: `test-online-source.mjs` drives the
+  adapter with pages it authors (encrypted with the site's own scheme),
+  and `test-online-book-e2e.mjs` boots its own worker with `--var
+  ONLINE_TEST_ORIGIN:<stub>` — `makeFetch` sends every source host to the
+  stub while the adapters keep matching the real hostnames, so the suite
+  runs the production path, URL matching included. A live source is a
+  moving target: when the site changes shape, the failure names the site
+  and the fix is the adapter, with a new authored page beside it.
+- Accepted: a site's terms may not welcome this, the adapter is as brittle
+  as the site's markup, and a chapter fetched from a phone on a bad link
+  waits on two servers instead of one. Not built: a generic extractor for
+  arbitrary sites — one adapter per site, added when a site is wanted.
+
 ## Ops
 
 publish-book, push-test and renormalize-books are hand-dispatched jobs that

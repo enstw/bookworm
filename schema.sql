@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS books (
   -- the column: listBooks falls back to the manifest, a republish or
   -- reindex fills it in.
   chapter_chars TEXT  NOT NULL DEFAULT '',
+  -- An online book's index URL (manifest.source.url, see DESIGN.md → Online
+  -- books); '' for a book whose chapters were uploaded. What the shelf
+  -- marks, what /admin offers 更新目錄 on, and the one lookup that stops
+  -- the same site book being added twice.
+  source      TEXT    NOT NULL DEFAULT '',
   updated_at  INTEGER NOT NULL DEFAULT 0,
   indexed_at  INTEGER NOT NULL DEFAULT 0
 );

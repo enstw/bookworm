@@ -4,7 +4,8 @@
 // this worker only runs for /api/* and /books/* (see run_worker_first).
 
 import { chunkChapter, ttsPrompt } from "../public/tts-core.mjs";
-import { RESERVED_SLUGS, SLUG_RE } from "../public/split-core.mjs";
+import { RESERVED_SLUGS, SLUG_RE, newBookId, shortSlug, safeName } from "../public/split-core.mjs";
+import { findSource, fetchIndex, fetchChapterText, onlineEntries, makeFetch, SUPPORTED_SITES } from "./online-sources.mjs";
 import { PACK_NAMES } from "../public/vendor/wasmtts/pack-manifest.mjs";
 import { edgeSynthesize } from "./edge-tts.js";
 import { vapidPublicKey, sendPush, b64u } from "./push.js";
@@ -80,7 +81,7 @@ export default {
       if (path.startsWith("/api/tts/")) return await handleTts(request, env, ctx, path, url);
       if (path.startsWith("/api/push/")) return await handlePush(request, env, ctx, path, who);
       if (path.startsWith("/api/admin/")) return await handleAdmin(request, env, ctx, path);
-      if (path.startsWith("/books/")) return await serveBook(request, env, path);
+      if (path.startsWith("/books/")) return await serveBook(request, env, ctx, path);
       if (path === "/admin")
         return await env.ASSETS.fetch(new URL("/admin.html", url.origin));
     } catch (err) {
@@ -337,7 +338,7 @@ async function listBooks(request, env, url) {
   const [keyRes, bookRes, posRes] = await env.DB.batch([
     env.DB.prepare("SELECT user FROM readers WHERE key = ?").bind(key),
     env.DB.prepare(
-      "SELECT id, slug, title, author, chapters, total_chars, chapter_chars FROM books"),
+      "SELECT id, slug, title, author, chapters, total_chars, chapter_chars, source FROM books"),
     env.DB.prepare(
       "SELECT book, chapter, char_off FROM positions WHERE user = (SELECT user FROM readers WHERE key = ?)",
     ).bind(key),
@@ -359,6 +360,8 @@ async function listBooks(request, env, url) {
     title: r.title || r.slug,
     // only when the enrichment sidecar named one — no empty keys on the wire
     ...(r.author ? { author: r.author } : {}),
+    // an online book: the site it reads from (see addOnlineBook)
+    ...(r.source ? { source: r.source } : {}),
     chapters: r.chapters,
     totalChars: r.total_chars,
   }));
@@ -416,13 +419,26 @@ async function resolveBook(request, env, path) {
   }, 200, { "cache-control": "public, max-age=60" });
 }
 
-async function serveBook(request, env, path) {
+async function serveBook(request, env, ctx, path) {
   if (request.method !== "GET" && request.method !== "HEAD")
     return json({ error: "method not allowed" }, 405);
   const key = decodeURIComponent(path.slice("/books/".length));
   if (!key || key.includes("..")) return json({ error: "bad key" }, 400);
 
-  const obj = await env.BOOKS.get(key);
+  let obj = await env.BOOKS.get(key);
+  if (!obj && key.endsWith(".txt")) {
+    // an online book's chapter nobody has asked for yet: fetched from its
+    // site into R2 now, then served from there like any other (onlineChapter)
+    const slash = key.indexOf("/");
+    let text = null;
+    try {
+      text = await onlineChapter(env, key.slice(0, slash), key.slice(slash + 1));
+    } catch (err) {
+      console.error(`online ${key}: ${err?.message ?? err}`);
+      return json({ error: `線上來源讀取失敗（${err?.message ?? err}）` }, 502);
+    }
+    if (text !== null) obj = await env.BOOKS.get(key);
+  }
   if (!obj) return json({ error: "not found" }, 404);
 
   const isManifest = key.endsWith(".json");
@@ -450,7 +466,170 @@ async function serveBook(request, env, path) {
   };
   if (request.headers.get("if-none-match") === obj.httpEtag)
     return new Response(null, { status: 304, headers });
+  if (isManifest && request.method === "GET") {
+    // An online book's index is re-read from its site in the background
+    // whenever a reader opens the book and the last look is older than
+    // ONLINE_REFRESH_MS — a serial grows, and this is the only moment the
+    // reader is known to care. The response is the copy already stored; new
+    // chapters show up on the next open.
+    const text = await obj.text();
+    let m = null;
+    try { m = JSON.parse(text); } catch { /* served as-is; the audit reports it */ }
+    if (m?.source?.url && Date.now() - (Number(m.source.checkedAt) || 0) > ONLINE_REFRESH_MS)
+      ctx.waitUntil(refreshOnline(env, key.split("/")[0]).catch((err) =>
+        console.error(`online refresh ${key}: ${err?.message ?? err}`)));
+    return new Response(text, { headers });
+  }
   return new Response(request.method === "HEAD" ? null : obj.body, { headers });
+}
+
+// ---------- online books (src/online-sources.mjs) ----------
+
+const ONLINE_REFRESH_MS = 6 * 3600 * 1000;
+// ONLINE_TEST_ORIGIN is the e2e suite's stub (a wrangler --var, never a
+// production secret): every source host is fetched from there instead
+const sourceFetch = (env) => makeFetch(env.ONLINE_TEST_ORIGIN);
+
+// The text of one chapter, fetching it from the book's site if it is an
+// online book's chapter that is not in R2 yet. null when the book has no
+// such chapter. Every reader of chapter text goes through here — the file
+// route, the TTS route and its warm-ahead — so the first of them to ask is
+// the one that pays for the fetch, and the stored file is what they all
+// read afterwards. The real character count rides the object's
+// customMetadata for refreshOnline to copy into the manifest; the fetch
+// itself never rewrites the manifest, since two chapters fetched at once
+// would race each other's copy.
+async function onlineChapter(env, id, file) {
+  if (!SLUG_RE.test(id) || file.includes("/") || !file.endsWith(".txt")) return null;
+  const mobj = await env.BOOKS.get(`${id}/manifest.json`);
+  const m = mobj ? await mobj.json().catch(() => null) : null;
+  const ch = m?.chapters?.find?.((c) => c.file === file);
+  if (!ch?.src) return null;
+  const src = findSource(ch.src);
+  if (!src) throw new Error("不支援的來源網站");
+  const { text, chars } = await fetchChapterText(src, ch, sourceFetch(env));
+  await env.BOOKS.put(`${id}/${file}`, text, { customMetadata: { chars: String(chars) } });
+  return text;
+}
+
+async function chapterText(env, id, file) {
+  const obj = await env.BOOKS.get(`${id}/${file}`);
+  if (obj) return await obj.text();
+  return onlineChapter(env, id, file);
+}
+
+// POST /api/admin/online {url, slug?, title?} — put a website's book on the
+// shelf. The URL may be the book page or any chapter page of it; the index
+// page is read once, here, and every chapter waits for its first reader.
+// The same URL twice is a 409 naming the book already there — the index row
+// carries the source for exactly this lookup.
+async function addOnlineBook(request, env, ctx) {
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+  const body = (await request.json().catch(() => ({}))) ?? {};
+  const url = String(body.url ?? "").trim();
+  const src = findSource(url);
+  if (!src) return json({ error: `不支援這個網站（目前支援：${SUPPORTED_SITES.join("、")}）` }, 400);
+  const indexUrl = src.indexUrl(new URL(url));
+  if (!indexUrl) return json({ error: "這個網址不是書頁或章節頁" }, 400);
+  const dup = await env.DB.prepare("SELECT id, slug FROM books WHERE source = ?").bind(indexUrl).first();
+  if (dup) return json({ error: `這本書已在書架上（${dup.slug}）`, id: dup.id, slug: dup.slug }, 409);
+
+  let index;
+  try {
+    index = await fetchIndex(src, indexUrl, sourceFetch(env));
+  } catch (err) {
+    return json({ error: `讀取書頁失敗（${err?.message ?? err}）` }, 502);
+  }
+  if (!index.chapters.length) return json({ error: "書頁上找不到章節" }, 502);
+
+  const title = String(body.title ?? "").trim().slice(0, 100) || index.title || indexUrl;
+  const taken = ((await env.DB.prepare("SELECT slug FROM book_slugs").all()).results ?? [])
+    .map((r) => r.slug);
+  const slug = String(body.slug ?? "").trim() || shortSlug(title, taken);
+  if (!SLUG_RE.test(slug) || RESERVED_SLUGS.includes(slug)) return json({ error: "bad slug" }, 400);
+  const id = newBookId();
+  const chapters = onlineEntries(index.chapters, 0, safeName);
+  const m = {
+    id, slug, title, charset: "utf-8",
+    totalChars: chapters.reduce((n, c) => n + c.chars, 0),
+    chapters,
+    generatedAt: new Date().toISOString(),
+    source: { site: src.site, url: indexUrl, checkedAt: Date.now() },
+  };
+  // the enrichment sidecar, written the way an enriched upload writes it
+  // (author/簡介/source, capped to the contract) — and before the manifest,
+  // because registerBook reads the author from it
+  const meta = {
+    title,
+    author: String(index.author ?? "").trim().slice(0, 100),
+    synopsis: String(index.synopsis ?? "").trim().slice(0, 2000),
+    source: indexUrl.slice(0, 500),
+  };
+  await env.BOOKS.put(`${id}/meta.json`, JSON.stringify(meta, null, 2) + "\n");
+  const reg = await registerBook(env, id, m, meta.author);
+  if (!reg.ok) {
+    await env.BOOKS.delete(`${id}/meta.json`);
+    return json({ error: `slug "${reg.slug}" 已被其他書使用` }, 409);
+  }
+  await env.BOOKS.put(`${id}/manifest.json`, JSON.stringify(m, null, 2) + "\n");
+  // the 書衣: best effort, after the book is already on the shelf
+  if (index.cover) ctx.waitUntil(fetchCover(env, id, index.cover));
+  ctx.waitUntil(pushNewBook(env, ctx, title));
+  return json({ ok: true, id, slug, title, chapters: chapters.length });
+}
+
+// the site's cover into the 書衣 slot, only when it really is a JPEG of a
+// sane size — the shelf's <img> is served as image/jpeg and sniffs nothing
+async function fetchCover(env, id, coverUrl) {
+  try {
+    const res = await sourceFetch(env)(coverUrl, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok || !/^image\/jpe?g/i.test(res.headers.get("content-type") ?? "")) return;
+    const bytes = await res.arrayBuffer();
+    if (!bytes.byteLength || bytes.byteLength > 2_000_000) return;
+    await env.BOOKS.put(`${id}/cover.jpg`, bytes);
+  } catch (err) {
+    console.error(`online cover ${id}: ${err?.message ?? err}`);
+  }
+}
+
+// Re-read an online book's index: chapters the site added since are
+// appended (matched by URL, so a retitled chapter is not a new one), and
+// every chapter already fetched gets its real count and size from R2 in
+// place of the estimate. Nothing is ever removed — a chapter the site took
+// down stays readable from the copy. Runs from the /admin button and from
+// serveBook's background look.
+async function refreshOnline(env, id) {
+  const manifestKey = `${id}/manifest.json`;
+  const mobj = await env.BOOKS.get(manifestKey);
+  if (!mobj) return { ok: false, status: 404, error: "not found" };
+  const m = await mobj.json().catch(() => null);
+  if (!m?.source?.url || !Array.isArray(m.chapters)) return { ok: false, status: 400, error: "不是線上書" };
+  const src = findSource(m.source.url);
+  if (!src) return { ok: false, status: 400, error: "不支援的來源網站" };
+  const index = await fetchIndex(src, m.source.url, sourceFetch(env));
+  const known = new Set(m.chapters.map((c) => c.src));
+  const fresh = index.chapters.filter((c) => !known.has(c.url));
+  m.chapters.push(...onlineEntries(fresh, m.chapters.length, safeName));
+
+  const have = new Map();
+  let cursor;
+  do {
+    const page = await env.BOOKS.list({ prefix: `${id}/`, cursor, limit: 1000, include: ["customMetadata"] });
+    for (const o of page.objects) have.set(o.key.slice(id.length + 1), o);
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  for (const c of m.chapters) {
+    const o = have.get(c.file);
+    if (!o) continue;
+    c.bytes = o.size;
+    const n = Number(o.customMetadata?.chars);
+    if (n > 0) c.chars = n;
+  }
+  m.totalChars = m.chapters.reduce((n, c) => n + (Number(c.chars) || 0), 0);
+  m.source.checkedAt = Date.now();
+  await env.BOOKS.put(manifestKey, JSON.stringify(m, null, 2) + "\n");
+  await registerBook(env, id, m, await sidecarAuthor(env, id));
+  return { ok: true, id, added: fresh.length, chapters: m.chapters.length };
 }
 
 // The user a position belongs to is the KEY's user, never a parameter: a
@@ -851,13 +1030,19 @@ async function handleTts(request, env, ctx, path, url) {
     "cache-control": "public, max-age=2592000, immutable",
   };
   const audioKey = `_tts/${id}/${v}/${file}/${chunkIdx}.mp3`;
-  ctx.waitUntil(warmChunk(env, id, v, file, chunkIdx + 1));
   const hit = await env.BOOKS.get(audioKey);
-  if (hit) return new Response(hit.body, { headers });
+  if (hit) {
+    ctx.waitUntil(warmChunk(env, id, v, file, chunkIdx + 1));
+    return new Response(hit.body, { headers });
+  }
 
-  const chap = await env.BOOKS.get(`${id}/${file}`);
-  if (!chap) return json({ error: "not found" }, 404);
-  const chunk = chunkChapter(await chap.text())[chunkIdx];
+  // the chapter first, the warm-ahead after: both read it through
+  // chapterText, and for an online book's first chunk a warm-ahead started
+  // here would fetch the chapter from its site a second time in parallel
+  const chap = await chapterText(env, id, file);
+  if (chap === null) return json({ error: "not found" }, 404);
+  ctx.waitUntil(warmChunk(env, id, v, file, chunkIdx + 1));
+  const chunk = chunkChapter(chap)[chunkIdx];
   if (!chunk) return json({ error: "no such chunk" }, 404);
 
   let bytes;
@@ -878,9 +1063,9 @@ async function warmChunk(env, id, v, file, chunkIdx) {
   try {
     const key = `_tts/${id}/${v}/${file}/${chunkIdx}.mp3`;
     if (await env.BOOKS.head(key)) return;
-    const chap = await env.BOOKS.get(`${id}/${file}`);
-    if (!chap) return;
-    const chunk = chunkChapter(await chap.text())[chunkIdx];
+    const chap = await chapterText(env, id, file);
+    if (chap === null) return;
+    const chunk = chunkChapter(chap)[chunkIdx];
     if (!chunk) return;
     await env.BOOKS.put(key, await edgeSynthesize(ttsPrompt(chunk.text)));
   } catch { /* the on-demand path still covers it */ }
@@ -1177,6 +1362,23 @@ async function handleAdmin(request, env, ctx, path) {
   if (path === "/api/admin/audit") return audit(request, env);
   if (path === "/api/admin/cleanup") return cleanup(request, env);
 
+  // POST /api/admin/online — a website's book onto the shelf; POST
+  // /api/admin/books/<id>/refresh — re-read its index for new chapters
+  if (path === "/api/admin/online") return addOnlineBook(request, env, ctx);
+  const rm = path.match(/^\/api\/admin\/books\/([^/]+)\/refresh$/);
+  if (rm) {
+    if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+    const id = decodeURIComponent(rm[1]);
+    if (!SLUG_RE.test(id)) return json({ error: "bad book id" }, 400);
+    let r;
+    try {
+      r = await refreshOnline(env, id);
+    } catch (err) {
+      return json({ error: `讀取書頁失敗（${err?.message ?? err}）` }, 502);
+    }
+    return json(r, r.ok ? 200 : r.status);
+  }
+
   // /api/admin/books/<id> — whole-book operations on the /admin page
   // (retitle, re-slug, delete). By ID, never by slug: the slug is the thing
   // being changed.
@@ -1258,17 +1460,20 @@ async function registerBook(env, id, m, author = "", indexedAt = Date.now()) {
   // of truth, this is the same derived-copy bargain as every column here
   const chapterChars = JSON.stringify(
     Array.isArray(m.chapters) ? m.chapters.map((c) => c.chars ?? 0) : []);
+  // an online book's index URL rides the row too: the shelf marks it, /admin
+  // offers 更新目錄, and adding the same URL twice is caught by one lookup
+  const source = String(m.source?.url ?? "").slice(0, 500);
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO books (id, slug, title, author, chapters, total_chars, chapter_chars, updated_at, indexed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO books (id, slug, title, author, chapters, total_chars, chapter_chars, source, updated_at, indexed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
          slug = excluded.slug, title = excluded.title, author = excluded.author,
          chapters = excluded.chapters, total_chars = excluded.total_chars,
-         chapter_chars = excluded.chapter_chars,
+         chapter_chars = excluded.chapter_chars, source = excluded.source,
          updated_at = excluded.updated_at, indexed_at = excluded.indexed_at`,
     ).bind(id, slug, String(m.title ?? slug), author, m.chapters?.length ?? 0,
-      Number(m.totalChars) || 0, chapterChars, now, indexedAt),
+      Number(m.totalChars) || 0, chapterChars, source, now, indexedAt),
     env.DB.prepare(
       `INSERT INTO book_slugs (slug, book, created_at) VALUES (?, ?, ?)
        ON CONFLICT (slug) DO UPDATE SET book = excluded.book`,
@@ -1545,6 +1750,9 @@ async function checkChapters(env, id, manifest) {
     const size = have.get(c.file);
     have.delete(c.file);
     if (size === undefined) {
+      // an online book's chapter is fetched on first read (onlineChapter):
+      // absent is the normal state of one nobody has opened yet
+      if (c.src) continue;
       missing++;
       sample ||= c.file;
     } else if (Number.isFinite(c.bytes) && size !== c.bytes) {

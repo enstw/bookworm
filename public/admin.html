@@ -195,6 +195,18 @@
       <div id="log"></div>
     </section>
 
+    <!-- 線上書: a book that lives on a website. The index page is read once
+         here; every chapter is fetched by the worker the first time a reader
+         opens it (DESIGN.md → Online books). -->
+    <details id="online" class="fold" hidden>
+      <summary data-i18n="online.h">新增線上書</summary>
+      <p class="hint" data-i18n="online.hint">貼上書頁或任一章的網址。章節在第一次翻到時才從網站取回；新章節每隔幾小時自動補上目錄。目前支援：novels.com.tw</p>
+      <label for="onlineUrl" data-i18n="online.url">網址</label>
+      <input type="url" id="onlineUrl" autocomplete="off" placeholder="https://www.novels.com.tw/novels/…/">
+      <button class="btn primary" id="onlineAdd" data-i18n="online.add">加入書架</button>
+      <div id="onlineMsg" class="msg"></div>
+    </details>
+
     <!-- Two phases, two buttons. 健康檢查 reads and reports; 修復 rebuilds the
          index and deletes what nothing can reach. Checking is the safe half and
          gets to be pressed on its own; 修復 stays dark until a check has found
@@ -322,7 +334,7 @@
       // which matters because an expired cookie is a 401 that sendBeacon
       // reports to nobody.
       fetch("/api/admin/session", { method: "POST", headers: authHeaders() });
-      for (const id of ["books", "readers", "pick", "house", "update", "fb", "diag"]) $(id).hidden = false;
+      for (const id of ["books", "readers", "pick", "online", "house", "update", "fb", "diag"]) $(id).hidden = false;
       loadBooks();
       loadReaders();
       loadUpdate();
@@ -443,6 +455,32 @@
         el("button", { class: "btn", text: t("admin.cancel"), onclick: () => toggle(del) }),
         bar);
 
+      // an online book: marked, and 更新目錄 re-reads its site for new
+      // chapters now rather than on the reader's next open (refreshOnline)
+      const rmsg = el("div", { class: "msg" });
+      const refresh = b.source
+        ? el("button", {
+          class: "linklike",
+          title: b.source,
+          text: t("admin.refresh"),
+          onclick: async (e) => {
+            e.target.disabled = true;
+            rmsg.className = "msg";
+            rmsg.textContent = t("admin.working");
+            try {
+              const r = await api(`${bookUrl(b.id)}/refresh`, { method: "POST" });
+              rmsg.className = "msg ok";
+              rmsg.textContent = t("admin.refreshed", r.added, r.chapters);
+              if (r.added) loadBooks();
+            } catch (err) {
+              rmsg.className = "msg err";
+              rmsg.textContent = t("admin.refreshFail", err.message);
+            }
+            e.target.disabled = false;
+          },
+        })
+        : null;
+
       return el("div", { class: "book" },
         el("div", { class: "book-head" },
           el("span", { class: "name", text: b.title }),
@@ -450,9 +488,11 @@
           // files actually are, and the only thing worth quoting in a bug report
           el("code", { class: "muted", title: t("admin.idIs", b.id), text: b.slug }),
           el("span", { class: "muted small", text: t("lib.meta", b.chapters, b.totalChars) }),
+          b.source ? el("span", { class: "muted small", text: t("admin.onlineTag") }) : null,
+          refresh,
           el("button", { class: "linklike", text: t("admin.edit"), onclick: () => toggle(edit) }),
           el("button", { class: "linklike danger", text: t("admin.remove"), onclick: () => toggle(del) })),
-        edit, del);
+        edit, del, rmsg);
     }
 
     // Rebuild the D1 shelf index from the bucket, one page of books per call.
@@ -1320,6 +1360,36 @@
       applyWake();
     };
 
+    // ---------- 線上書 ----------
+
+    $("onlineAdd").onclick = async () => {
+      const url = $("onlineUrl").value.trim();
+      const say = (text, cls = "") => {
+        $("onlineMsg").textContent = text;
+        $("onlineMsg").className = "msg" + (cls ? " " + cls : "");
+      };
+      if (!url) return say(t("online.needUrl"), "err");
+      $("onlineAdd").disabled = true;
+      say(t("online.adding"));
+      try {
+        const r = await api("/api/admin/online", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        $("onlineMsg").replaceChildren(el("a", {
+          href: `/${encodeURIComponent(r.slug)}/`,
+          text: t("online.added", r.title, r.chapters),
+        }));
+        $("onlineMsg").className = "msg ok";
+        $("onlineUrl").value = "";
+        loadBooks();
+      } catch (err) {
+        say(t("online.fail", err.message), "err");
+      }
+      $("onlineAdd").disabled = false;
+    };
+
     // ---------- 更新 (pull-mode panel) ----------
 
     // one labelled line for the panel; everything comes from the D1 the
@@ -1478,7 +1548,7 @@
     $("testlogOn").onchange = (e) => bwTestlogSet(e.target.checked);
 
     const OPEN_KEY = "bookworm:admin-open";
-    const FOLDS = ["books", "readers", "pick", "house", "update", "fb", "diag"];
+    const FOLDS = ["books", "readers", "pick", "online", "house", "update", "fb", "diag"];
     function saveFolds() {
       try {
         localStorage.setItem(OPEN_KEY, JSON.stringify(FOLDS.filter((id) => $(id).open)));
