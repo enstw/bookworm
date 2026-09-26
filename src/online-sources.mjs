@@ -77,10 +77,18 @@ export function decodeEntities(s) {
   });
 }
 
-// tags out, <br> as a line break, entities decoded, nbsp as a space
+// tags out, <br> as a line break, entities decoded, nbsp as a space. The
+// result is text — the reader sets it as textContent and the file is
+// text/plain — so this is not an HTML sanitizer; it still strips to a
+// fixed point, since one pass over "<<b>script>" leaves a tag behind.
 export function stripTags(s) {
-  return decodeEntities(s.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""))
-    .replace(/ /g, " ");
+  let t = s.replace(/<br\s*\/?>/gi, "\n");
+  for (let i = 0; i < 8; i++) {
+    const next = t.replace(/<[^>]*>/g, "");
+    if (next === t) break;
+    t = next;
+  }
+  return decodeEntities(t).replace(/\u00a0/g, " ");
 }
 
 const attr = (html, re) => decodeEntities((html.match(re) ?? [])[1] ?? "").trim();
