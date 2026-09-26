@@ -54,6 +54,8 @@ const ADMIN_401 = [
   "/api/admin/readers", "/api/admin/reindex",
   "/api/admin/audit", "/api/admin/cleanup", "/api/admin/owner-test",
   "/api/admin/update", "/api/admin/update/policy", "/api/admin/update/install-now",
+  // online books (DESIGN.md → Online books): register, and re-read an index
+  "/api/admin/online", "/api/admin/books/x/refresh",
 ];
 // Open, and each for its own reason: the shell is the public repo's
 // contents, feedback is the AI's inbox, the build stamp of a public repo

@@ -35,7 +35,7 @@ async function encrypt(text) {
   const key = await crypto.subtle.importKey("raw", KEY, { name: "AES-CBC" }, false, ["encrypt"]);
   const bytes = new Uint8Array(await crypto.subtle.encrypt(
     { name: "AES-CBC", iv: new Uint8Array(16) }, key, new TextEncoder().encode(text)));
-  return btoa(String.fromCharCode(...bytes)).replace(/\//g, "\\/");
+  return btoa(String.fromCharCode(...bytes)).replace(/[\\/]/g, (c) => "\\" + c);
 }
 const site = {
   chapters: [

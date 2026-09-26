@@ -21,8 +21,9 @@ async function encrypt(text) {
   const key = await crypto.subtle.importKey("raw", KEY, { name: "AES-CBC" }, false, ["encrypt"]);
   const bytes = new Uint8Array(await crypto.subtle.encrypt(
     { name: "AES-CBC", iv: new Uint8Array(16) }, key, new TextEncoder().encode(text)));
-  let b64 = btoa(String.fromCharCode(...bytes));
-  return b64.replace(/\//g, "\\/"); // the page escapes slashes in the JS string
+  // the page escapes slashes in its JS string literal (base64 carries no
+  // backslash, but the escape covers it the way a real serializer would)
+  return btoa(String.fromCharCode(...bytes)).replace(/[\\/]/g, (c) => "\\" + c);
 }
 const chapterPage = async (h1, plain) => `<!doctype html><html><head><meta charset="UTF-8"><title>x</title></head><body>
 <div class="text_title"><h1 class="style_h1">${h1}</h1></div>
