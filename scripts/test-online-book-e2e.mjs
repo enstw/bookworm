@@ -5,11 +5,12 @@
 // the background look a manifest read triggers — the duplicate refused, and
 // the delete sweeping it all.
 //
-// The site is a stub this file runs: pages in the exact shape novels.com.tw
-// serves (encrypted the way its own script decrypts them), so the worker's
-// adapter matches the real hostname and fetches the stub. That needs a
-// worker of its own, booted with `--var ONLINE_TEST_ORIGIN:<stub>` — this
-// suite never attaches to a running dev server, BOOKWORM_URL or not.
+// The sites are a stub this file runs: pages in the exact shape
+// novels.com.tw serves (encrypted the way its own script decrypts them) and
+// a book in aiyanzx.com's shape (base64 lines, a list page) — so the
+// worker's adapters match the real hostnames and fetch the stub. That
+// needs a worker of its own, booted with `--var ONLINE_TEST_ORIGIN:<stub>`
+// — this suite never attaches to a running dev server, BOOKWORM_URL or not.
 //
 //   node scripts/test-online-book-e2e.mjs
 
@@ -55,11 +56,37 @@ const indexHtml = () => `<!doctype html><html><head><meta charset="UTF-8">
 <div class="intro"><p><p> 一句簡介\\n</p></p></div>
 <div class="chapters"><ul>${site.chapters.map((c) =>
   `<li><a href="${BOOK_PATH}${c.id}.html" title="${c.title}"> ${c.title} </a></li>`).join("")}</ul></div></body></html>`;
+// the Simplified site: a book page, one list page, a chapter over two pages
+const AY_PATH = "/cat/hans/";
+const AY_INDEX_URL = `https://www.aiyanzx.com${AY_PATH}`;
+const b64 = (text) => btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+const ayLines = (paras) => paras.map((p) =>
+  `<script>document.writeln(qsbs.bb('${b64(`<p>　　${p}</p>`)}'));</script>`).join("\n");
+const ayChapter = (paras, next) => `<html><head><title>x_简体书(作者乙)_爱研阅读</title></head><body>
+<div id="chaptercontent">${ayLines(paras)}</div><div class="read_btn"><a href="${AY_PATH}">上一章</a><a href="${next}">下一章</a></div></body></html>`;
+const AY_PAGES = {
+  [AY_PATH]: `<html><head><meta property="og:novel:book_name" content="简体书"/><meta property="og:novel:author" content="主角"/>
+<meta property="og:description" content="简介一句"/><meta property="og:image" content="/bimg/9.jpg"/></head><body>
+<ul class="section-list fix"><li><a href="${AY_PATH}bx.html">第2 章 后台</a></li></ul>
+<ul class="fix section-list"><li><a href="${AY_PATH}ax.html">第1 章 头发</a></li></ul>
+<a href="${AY_PATH}mulu_1.html">查看更多章节...</a></body></html>`,
+  [`${AY_PATH}mulu_1.html`]: `<html><head><title>简体书(作者乙)_章节目录_爱研阅读</title>
+<style>.section-list.ycxsid>li:nth-child(1){display:none}</style></head><body>
+<select><option value="${AY_PATH}">第1-1章</option><option value="${AY_PATH}mulu_1.html">第2-2章</option></select>
+<ul class="section-list fix ycxsid"><li><a href="${AY_PATH}bx.html">第2 章 后台</a></li><li><a href="${AY_PATH}bx.html">第2 章 后台</a></li><li><a href="${AY_PATH}ax.html">第1 章 头发</a></li></ul></body></html>`,
+  [`${AY_PATH}ax.html`]: ayChapter(['"', "【第1", "章", "头发】", "------------------------------------------", "头发干净。", "软件与"], `${AY_PATH}ax_1.html`),
+  [`${AY_PATH}ax_1.html`]: ayChapter(["后台。", "第二段。"], `${AY_PATH}bx.html`),
+  [`${AY_PATH}bx.html`]: ayChapter(["只有一页。"], `${AY_PATH}`),
+};
+const EXPECT_AY1 = "第1章　头发\n头发干净。\n软件与后台。\n第二段。\n";
+
 const stub = createServer(async (req, res) => {
   const path = new URL(req.url, "http://x").pathname;
   site.hits.set(path, (site.hits.get(path) ?? 0) + 1);
   const send = (code, body, type = "text/html; charset=utf-8") => { res.writeHead(code, { "content-type": type }); res.end(body); };
   if (path === BOOK_PATH) return send(200, indexHtml());
+  if (AY_PAGES[path]) return send(200, AY_PAGES[path]);
+  if (path === "/bimg/9.jpg") return send(200, "not really a jpeg", "image/jpeg");
   if (path === "/ftimg/1/1/1s.jpg") return send(200, "not really a jpeg", "image/jpeg");
   const m = path.match(new RegExp(`^${BOOK_PATH}(\\d+)(?:_(\\d+))?\\.html$`));
   const ch = m && site.chapters.find((c) => c.id === Number(m[1]));
@@ -132,8 +159,8 @@ try {
     key = r.key;
     RKEY = { "x-reader-key": key };
   }
-  // clean slate: the stub's book from an earlier run
-  for (const b of await shelf()) if (b.source === INDEX_URL) await delBook(b.id);
+  // clean slate: the stub's books from an earlier run
+  for (const b of await shelf()) if (b.source === INDEX_URL || b.source === AY_INDEX_URL) await delBook(b.id);
 
   // 1. only a supported site, and only its book/chapter pages
   const [uStatus, uBody] = await jsonOf(await admin("/api/admin/online", {
@@ -237,7 +264,25 @@ try {
   const [nStatus, nBody] = await jsonOf(await admin(`/api/admin/books/b0nosuch1/refresh`, { method: "POST" }));
   out.refreshNeedsOnline = nStatus === 404 && nBody.ok === false ? "ok" : `FAIL: ${nStatus} ${JSON.stringify(nBody)}`;
 
-  // 10. gone means gone: files, index row, and the source lookup
+  // 10. a Simplified site: the manifest says so, the response carries what
+  //     /admin converts, the chapter is stored as the site wrote it — the
+  //     phone converts (test-hans-e2e.mjs) — and the list page's decoy and
+  //     repeat are not chapters
+  const [hStatus, hans] = await jsonOf(await admin("/api/admin/online", {
+    method: "POST", body: JSON.stringify({ url: `${AY_INDEX_URL}bx.html` }) }));
+  const hm = hans.id ? await manifestOf(hans.id) : null;
+  const hUrl = hm && `${BASE}/books/${hans.id}/${encodeURIComponent(hm.chapters[0].file)}?v=${encodeURIComponent(hm.generatedAt)}`;
+  const hText = hUrl ? await (await fetch(hUrl, { headers: RKEY })).text() : null;
+  out.hansBook =
+    hStatus === 200 && hans.script === "hans" && hans.title === "简体书" && hans.author === "作者乙" &&
+    hans.synopsis === "简介一句" && hans.chapters === 2 &&
+    hm?.script === "hans" && hm.chapters.map((c) => c.title).join("|") === "第1章　头发|第2章　后台" &&
+    hText === EXPECT_AY1 && site.hits.get(`${AY_PATH}ax_1.html`) === 1 && !site.hits.has(`${AY_PATH}bx.html`)
+      ? "ok (script in the manifest and the response, base64 pages joined)"
+      : `FAIL: ${hStatus} ${JSON.stringify(hans)} ${JSON.stringify(hm)} ${JSON.stringify(hText)}`;
+  if (hans.id) await delBook(hans.id);
+
+  // 11. gone means gone: files, index row, and the source lookup
   const del = await delBook(ID);
   const [rdStatus, readd] = await jsonOf(await admin("/api/admin/online", {
     method: "POST", body: JSON.stringify({ url: INDEX_URL }) }));
