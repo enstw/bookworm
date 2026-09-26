@@ -9,6 +9,13 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-09-26 — `71432ab3e86e`
+
+> 新增「線上書」：在 /admin 貼上小說網站的書頁網址（目前支援 novels.com.tw），整本書就上架；章節在第一次翻到時才取回，之後離線、朗讀、書籤都和上傳的書一樣，連載更新會自動補上目錄。
+
+- online: the new admin routes are claimed by the auth suite, and the adapter's text scrub runs to a fixed point (`71432ab`)
+- online: a website's book goes on the shelf, and its chapters are fetched the first time they are read (`b0023ac`)
+
 ## 2026-09-17 — `2ef12334dfa0`
 
 > 閱讀時，螢幕邊緣約 0.5 公分內的觸控不再翻頁或拖動，握著手機按鎖定鍵時不會誤翻；工具列與按鈕照常可按。
