@@ -6,14 +6,17 @@
 // would have, so nothing downstream can tell the two apart afterwards.
 //
 // One adapter per site, each knowing three things: which URLs are its, how
-// to read the index page (title, author, 簡介, cover, the chapter list) and
-// how to turn one chapter URL into text. Everything here is pure over
-// strings plus an injected fetch, so scripts/test-online-source.mjs drives
-// it with synthetic pages and the e2e suite points the real fetch at a stub
-// (makeFetch below). No DOM parser in a Worker: the sites' markup is regexed
-// on the exact shapes their pages have today, and a shape change surfaces
-// as "書頁上找不到章節" or a decrypt error naming the site, never as a
-// silently empty book.
+// to read the index (title, author, 簡介, cover, the chapter list — one page
+// via `parseIndex`, or its own walk over several via `index`) and how to
+// turn one chapter URL into text. An adapter whose site writes Simplified
+// says so (`script: "hans"`); the manifest carries it and the reader
+// converts on the phone, the Worker stores what the site serves. Everything
+// here is pure over strings plus an injected fetch, so
+// scripts/test-online-source.mjs drives it with synthetic pages and the e2e
+// suite points the real fetch at a stub (makeFetch below). No DOM parser in
+// a Worker: the sites' markup is regexed on the exact shapes their pages
+// have today, and a shape change surfaces as "書頁上找不到章節" or a decode
+// error naming the site, never as a silently empty book.
 
 import { normalizeBody, spaceHeading } from "../public/split-core.mjs";
 
@@ -27,6 +30,9 @@ export const EST_CHARS = 3000;
 const PAGE_TIMEOUT_MS = 20000;
 // a chapter split across more pages than this is not a chapter
 const MAX_PAGES = 40;
+// an index split across more list pages than this is not a book (6,000
+// chapters at a hundred a page)
+const MAX_LIST_PAGES = 60;
 // what the sites see: a phone browser, which is what they are built for
 const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 
@@ -165,16 +171,21 @@ function novelsTwJoin(pages) {
     }
     out.push(...ps);
   }
-  let paras = out.map((p) => stripTags(p).replace(/\r/g, "").trim()).filter(Boolean);
-  // the site's own dressing: a stray quote mark first and last, the chapter
-  // title re-spelled over a few lines and closed with a dashed rule, and a
-  // line pointing back at the site — none of it is the book
+  const paras = out.map((p) => stripTags(p).replace(/\r/g, "").trim()).filter(Boolean);
+  return stripDressing(paras, /novels\.com\.tw/i);
+}
+
+// The sites' own dressing, the same on both (they mirror the same feed): a
+// stray quote mark first and last, the chapter title re-spelled over a few
+// lines and closed with a dashed rule, and a line pointing back at the site
+// — none of it is the book
+function stripDressing(paras, siteRe) {
   const dressing = /^[\s"'“”‘’「」『』.。…\-—_]*$/;
   while (paras.length && dressing.test(paras[0])) paras.shift();
   while (paras.length && dressing.test(paras[paras.length - 1])) paras.pop();
   const rule = paras.slice(0, 8).findIndex((p) => /^[-—–=_]{5,}$/.test(p));
   if (rule >= 0) paras.splice(0, rule + 1);
-  return paras.filter((p) => !/novels\.com\.tw/i.test(p));
+  return paras.filter((p) => !siteRe.test(p));
 }
 
 const NOVELS_TW = {
@@ -213,7 +224,139 @@ const NOVELS_TW = {
   },
 };
 
-const SOURCES = [NOVELS_TW];
+// ---------- aiyanzx.com ----------
+//
+// A Simplified mirror of the 番茄小说 serials, reachable by a plain fetch
+// where every Traditional mirror of the same feed sits behind a Cloudflare
+// challenge a Worker cannot pass (the owner's book, 2026-09-27). Its text
+// is Simplified, so the adapter says `script: "hans"` and the phone converts.
+//
+// The "qsbs" template: the book page carries the meta and the first hundred
+// chapters and links a `mulu_1.html` list page, whose <select> enumerates
+// every list page (the book page is its first option). Each list page
+// repeats the newest chapters at its top, hidden by one
+// `li:nth-child(n){display:none}` rule per decoy, and pads its bottom with
+// the first few chapters again — the rule count drops the decoys, the URL
+// set drops the repeats. A chapter page holds one
+// `document.writeln(qsbs.bb('<base64>'))` per paragraph (qsbs.bb is plain
+// base64) inside #chaptercontent, over `_1.html`, `_2.html` … pages; the
+// 下一章 link names the next page until the last, where it names the next
+// chapter, and a page past the last serves page one again — so only a link
+// to exactly the page after this one is followed. The cut between pages can
+// fall inside a paragraph, and nothing marks it but the missing full stop.
+const AIYANZX = {
+  site: "aiyanzx.com",
+  script: "hans",
+  matches: (u) => /^(www\.|m\.)?aiyanzx\.com$/.test(u.hostname),
+  // /<category>/<book>/ prefixes the book page, its list pages and every chapter
+  indexUrl(u) {
+    const m = u.pathname.match(/^\/([a-z0-9]+)\/([a-z0-9]+)\//);
+    return m ? `https://www.aiyanzx.com/${m[1]}/${m[2]}/` : null;
+  },
+  async index(indexUrl, fetchFn) {
+    const first = await fetchHtml(indexUrl, fetchFn);
+    const meta = (p) => attr(first, new RegExp(`<meta property="${p}" content="([^"]*)"`));
+    const title = meta("og:novel:book_name") || meta("og:title") || attr(first, /<title>([^<(_]*)/);
+    const synopsis = meta("og:description").replace(/\\+n/g, "\n")
+      .split("\n").map((s) => s.trim()).filter(Boolean).join("\n");
+    const cover = meta("og:image") ? new URL(meta("og:image"), indexUrl).toString() : "";
+    let author = meta("og:novel:author");
+    const htmls = new Map([[indexUrl, first]]);
+    let pages = [indexUrl];
+    const listLink = first.match(/href="([^"]*mulu_\d+\.html)"/);
+    if (listLink) {
+      const listUrl = new URL(decodeEntities(listLink[1]), indexUrl).toString();
+      const list = await fetchHtml(listUrl, fetchFn);
+      htmls.set(listUrl, list);
+      // the list page's <title> is 「書名(作者)_章节目录…」; the book page's
+      // og:novel:author is another field of the site's, seen holding the
+      // protagonists' names instead
+      const by = list.match(/<title>[^<(]*\(([^)]+)\)_/);
+      if (by) author = decodeEntities(by[1]).trim();
+      const opts = [...list.matchAll(/<option[^>]*value="([^"]+)"/g)]
+        .map((m) => new URL(decodeEntities(m[1]), indexUrl).toString());
+      pages = [...new Set([indexUrl, ...(opts.length ? opts : [listUrl])])].slice(0, MAX_LIST_PAGES);
+    }
+    const chapters = [];
+    const seen = new Set();
+    for (const page of pages) {
+      const html = htmls.get(page) ?? await fetchHtml(page, fetchFn);
+      for (const c of qsbsList(html, page)) {
+        if (!c.url.startsWith(indexUrl) || seen.has(c.url)) continue;
+        seen.add(c.url);
+        chapters.push(c);
+      }
+    }
+    return { title, author, synopsis, cover, chapters };
+  },
+  async chapter(url, fetchFn) {
+    const base = url.replace(/(?:_\d+)?\.html$/, "");
+    const pages = [];
+    let page = url;
+    for (let n = 0; page && n < MAX_PAGES; n++) {
+      const html = await fetchHtml(page, fetchFn);
+      pages.push(qsbsPage(html));
+      const nav = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*下一章\s*<\/a>/);
+      const to = nav ? new URL(decodeEntities(nav[1]), page).toString() : "";
+      page = to === `${base}_${n + 1}.html` ? to : "";
+    }
+    return stripDressing(joinCut(pages), /aiyanzx|爱研阅读/i);
+  },
+};
+
+// one list page's chapters: the biggest <ul class="section-list"> on it,
+// minus the decoys its stylesheet hides at the top. The newest-chapters
+// block is the other one, above the main list and never longer — and equal
+// on a book of a dozen chapters, which is why a tie goes to the later list.
+function qsbsList(html, pageUrl) {
+  const rules = [...html.matchAll(/\.([\w-]+)>li:nth-child\(\d+\)\{display:\s*none\}/g)];
+  const hiddenClass = rules[0]?.[1];
+  let best = [];
+  for (const ul of html.matchAll(/<ul[^>]*class="([^"]*section-list[^"]*)"[^>]*>([\s\S]*?)<\/ul>/g)) {
+    const items = [];
+    for (const a of ul[2].matchAll(/<a\s[^>]*?href="([^"]+\.html)"[^>]*>([\s\S]*?)<\/a>/g)) {
+      const t = cleanTitle(stripTags(a[2]));
+      if (t) items.push({ title: t, url: new URL(decodeEntities(a[1]), pageUrl).toString() });
+    }
+    if (hiddenClass && ul[1].split(/\s+/).includes(hiddenClass)) items.splice(0, rules.length);
+    if (items.length >= best.length) best = items;
+  }
+  return best;
+}
+
+// one chapter page → its paragraphs: the base64 the page's own script
+// decodes into <p> lines (plain <p> lines when a page comes unobfuscated)
+function qsbsPage(html) {
+  const block = (html.match(/<div id="chaptercontent"[^>]*>([\s\S]*?)<\/div>/) ?? [])[1] ?? "";
+  const enc = [...block.matchAll(/qsbs\.bb\('([A-Za-z0-9+/=]*)'\)/g)];
+  let lines;
+  try {
+    lines = enc.map((m) => new TextDecoder("utf-8", { fatal: true })
+      .decode(Uint8Array.from(atob(m[1]), (c) => c.charCodeAt(0))));
+  } catch (err) {
+    throw new Error(`aiyanzx.com 章節解碼失敗（網站可能換了編碼）: ${err?.message ?? err}`);
+  }
+  if (!enc.length) lines = [...block.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)].map((m) => m[1]);
+  return lines.map((l) => stripTags(l).trim()).filter(Boolean);
+}
+
+// the pages of one chapter as one paragraph list: a page whose last
+// paragraph does not close on punctuation was cut mid-paragraph, and the
+// next page's first paragraph is its rest (every whole paragraph the site
+// serves closes on one — 149 of 149 measured)
+const CLOSED = /[。！？!?…”’」』）)】》〕—～]\s*$/;
+function joinCut(pages) {
+  const out = [];
+  for (const page of pages) {
+    const ps = page.slice();
+    if (out.length && ps.length && !CLOSED.test(out[out.length - 1]))
+      out[out.length - 1] += ps.shift();
+    out.push(...ps);
+  }
+  return out;
+}
+
+const SOURCES = [NOVELS_TW, AIYANZX];
 
 export const SUPPORTED_SITES = SOURCES.map((s) => s.site);
 
@@ -226,8 +369,9 @@ export function findSource(url) {
 }
 
 export async function fetchIndex(src, indexUrl, fetchFn) {
-  const html = await fetchHtml(indexUrl, fetchFn);
-  const index = src.parseIndex(html, indexUrl);
+  const index = src.index
+    ? await src.index(indexUrl, fetchFn)
+    : src.parseIndex(await fetchHtml(indexUrl, fetchFn), indexUrl);
   index.title = index.title.slice(0, 100);
   return index;
 }

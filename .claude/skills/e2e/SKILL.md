@@ -30,6 +30,7 @@ scripts in `scripts/` are the source of truth.
 | slug, worker-pool, push-crypto, relnotes | `pnpm run test:slug` etc. | nothing (pure node) |
 | release | `pnpm run test:release` | pure node + `public/vendor/` (runs wrangler's dry-run bundler, no account) |
 | vertical, bg, testlog | `pnpm run test:vertical` / `test:bg` / `test:testlog` | Chromium only (own static server) |
+| hans (a Simplified online book read as Traditional) | `pnpm run test:hans` | Chromium only (own static server; expected strings from the vendored OpenCC) |
 | auth, sync, admin, shelf-admin, push-api | `pnpm run test:auth` etc. | dev server + ADMIN_TOKEN |
 | online (online-source + online-book) | `pnpm run test:online` | ADMIN_TOKEN; boots its OWN worker with `--var ONLINE_TEST_ORIGIN` pointing the site adapters at its stub (never reuses 8787) |
 | tts-stream | `pnpm run test:tts-stream` | Chromium + `ffmpeg` on PATH (own static server) |

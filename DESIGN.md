@@ -1265,12 +1265,13 @@ tree, so the repo never grows a second, diverging install path.
 A book whose chapters live on a website (the owner's ask, 2026-09-26: a
 serial read from novels.com.tw without downloading it first). Registered
 on /admin from the book page or any chapter page (`POST /api/admin/online`
-→ `addOnlineBook`); the site's index page is read once, into a manifest
-whose chapters carry a `src` URL and an estimated `chars` (`EST_CHARS`,
-3,000) instead of bytes, plus `source: {site, url, checkedAt}`. Everything
-after that is the ordinary book: same R2 prefix, same routes, same offline
-cache, same TTS. The adapters live in `src/online-sources.mjs`, one per
-site, pure over strings plus an injected fetch.
+→ `addOnlineBook`); the site's index is read once, into a manifest whose
+chapters carry a `src` URL and an estimated `chars` (`EST_CHARS`, 3,000)
+instead of bytes, plus `source: {site, url, checkedAt}` and, for a site
+that writes Simplified, `script: "hans"`. Everything after that is the
+ordinary book: same R2 prefix, same routes, same offline cache, same TTS.
+The adapters live in `src/online-sources.mjs`, one per site, pure over
+strings plus an injected fetch.
 
 - **A chapter is fetched the first time anything asks for it, and never
   again.** `onlineChapter` is the one fetch path: the file route, the TTS
@@ -1311,17 +1312,65 @@ site, pure over strings plus an injected fetch.
   `\r` every whole one carries. The site's dressing (a stray quote, the
   title re-spelled over a few lines and a dashed rule, the line pointing
   back at the site) is stripped. Its text is already Traditional, with the
-  site's own converter artifacts (「下麵」 for 下面); the reader stores
-  what the site serves — OpenCC is a browser-side upload step, not a
-  Worker one.
-- **Testing** never touches the site: `test-online-source.mjs` drives the
-  adapter with pages it authors (encrypted with the site's own scheme),
-  and `test-online-book-e2e.mjs` boots its own worker with `--var
-  ONLINE_TEST_ORIGIN:<stub>` — `makeFetch` sends every source host to the
-  stub while the adapters keep matching the real hostnames, so the suite
-  runs the production path, URL matching included. A live source is a
-  moving target: when the site changes shape, the failure names the site
-  and the fix is the adapter, with a new authored page beside it.
+  site's own converter artifacts (「下麵」 for 下面); the Worker stores
+  what the site serves. In production the site answers a Worker with a
+  Cloudflare challenge (`cf-mitigated: challenge`, HTTP 403 — found
+  2026-09-27, the day after release), as does every other Traditional
+  mirror of the same feed; the adapter stays for the day that changes.
+- **aiyanzx.com** is the Simplified mirror that answers a plain fetch (the
+  origin, 番茄小说, serves its text in a per-page obfuscation font behind a
+  signed API — not worth an adapter). The "qsbs" template: the book page
+  carries the meta and chapters 1–100 and links `mulu_1.html`, whose
+  `<select>` names every list page; each list page hides its first N rows
+  (the newest chapters, one `li:nth-child(n){display:none}` rule each) and
+  repeats the first chapters at its bottom — the rule count drops the
+  decoys, the URL set drops the repeats, and the order is the pages' own.
+  The author comes from a list page's `<title>` 「書名(作者)」: the book
+  page's `og:novel:author` held the protagonists' names. Chapter text is
+  one `document.writeln(qsbs.bb('<base64>'))` per paragraph in
+  `#chaptercontent`, over `_1.html`, `_2.html` … pages; the 下一章 link
+  names the next page until the last, where it names the next chapter, and
+  a page past the last serves page one again — so only a link to exactly
+  the page after this one is followed. A cut between pages can fall inside
+  a paragraph with nothing marking it but the missing full stop, and every
+  whole paragraph the site serves closes on punctuation (149 of 149
+  measured), so an unclosed last paragraph is joined to the next page's
+  first. naibawu.com and cnsicw.com run the same engine with different
+  list layouts and were left out: one adapter is one moving target.
+- **A Simplified source reads as Traditional on the phone.** The Worker
+  cannot: OpenCC's dictionary is 1.1 MB of trie to build on every isolate
+  start, past the free plan's CPU budget. The reader can, cheaply: the
+  manifest's `script: "hans"` makes `initReader` import
+  `/vendor/opencc-cn2t.js` (the module /admin already runs on an upload),
+  convert the title and chapter titles once, and `fetchChapter` convert
+  each chapter as it lands — 2 ms a chapter — before it reaches the cache
+  the page, the player and the offline copy read. This is offset-safe
+  because cn→tw is length-preserving: all 53,060 entries of the vendored
+  cn→tw dictionary map to a string of the same UTF-16 length (measured
+  2026-09-27), so bookmarks, the sentence highlight, chunk maps and the
+  server's per-chapter positions keep working in raw-text coordinates
+  with nothing translated. The service worker serves the module cache-first
+  like a font (`assetFetch`, filled on first use; never precached, so a
+  phone that never opens a hans book never downloads it). Without the
+  module — the first open offline — the book reads as the site wrote it.
+  /admin converts the three strings the shelf shows (title, author, 簡介)
+  itself after registration and writes them back through the sidecar PUT
+  and the title PATCH, since a Simplified shelf row would be the one thing
+  left unconverted; the Worker's online TTS route still reads the stored
+  Simplified text (the zh-TW voice reads it; the offline engine gets the
+  converted text from the page's cache).
+- **Testing** never touches the sites: `test-online-source.mjs` drives the
+  adapters with pages it authors (encrypted or base64-encoded the way each
+  site does it), `test-online-book-e2e.mjs` boots its own worker with
+  `--var ONLINE_TEST_ORIGIN:<stub>` — `makeFetch` sends every source host
+  to the stub while the adapters keep matching the real hostnames, so the
+  suite runs the production path, URL matching included — and
+  `test-hans-e2e.mjs` opens a `script: "hans"` book in a browser and checks
+  the title, heading, paragraphs and 目錄 against the vendored module's own
+  answer, offsets unchanged, with a flagless copy of the same text left
+  alone. A live source is a moving target: when the site changes shape,
+  the failure names the site and the fix is the adapter, with a new
+  authored page beside it.
 - Accepted: a site's terms may not welcome this, the adapter is as brittle
   as the site's markup, and a chapter fetched from a phone on a bad link
   waits on two servers instead of one. Not built: a generic extractor for

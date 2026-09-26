@@ -331,7 +331,8 @@ const state = {
   idx: 0,
   off: 0,           // char offset within the current chapter file
   loading: true,    // chapter open in flight (or failed) — parks tap paging
-  cache: new Map(), // chapter file -> text
+  cache: new Map(), // chapter file -> text (converted, for a hans book)
+  hant: null,       // OpenCC cn→tw when the open book is Simplified, else null
   dirty: false,
   lastSaved: null,
   syncTimer: 0,
@@ -1289,6 +1290,16 @@ async function initReader(slug) {
     ]);
   }
   state.manifest = manifest;
+  // a book from a Simplified site reads as Traditional: the converter is
+  // loaded once here, and every title and chapter passes through it (the
+  // chapter text in fetchChapter). Without it — first open offline, before
+  // the service worker has the dictionary — the book reads as the site
+  // wrote it, which beats not reading at all.
+  state.hant = manifest.script === "hans" ? await hantConverter() : null;
+  if (state.hant) {
+    manifest.title = state.hant(manifest.title);
+    for (const c of manifest.chapters) c.title = state.hant(c.title);
+  }
   try { localStorage.setItem("bw_last_book", slug); } catch { /* private mode */ }
   state.cum = manifest.chapters.reduce((acc, c) => {
     acc.push((acc[acc.length - 1] ?? 0) + c.chars);
@@ -1532,6 +1543,21 @@ function buildReaderShell() {
   applyGrid(); // #pagebox exists now — derive the page before any text lands
 }
 
+// OpenCC cn→tw, the module /admin runs on an upload, loaded the first time
+// a hans book opens and kept for the session (1.1 MB, ~1 s on a phone; the
+// service worker caches it after that). Every one of its 53,060 cn→tw
+// entries maps to a string of the same length, so a converted chapter has
+// the same offsets as the file in R2: bookmarks, the sentence highlight and
+// the TTS chunk maps keep working in raw-text coordinates. Conversion costs
+// ~2 ms a chapter.
+let hantLoad = null;
+function hantConverter() {
+  hantLoad ??= import("/vendor/opencc-cn2t.js")
+    .then((m) => m.Converter({ from: "cn", to: "tw" }))
+    .catch(() => { hantLoad = null; return null; });
+  return hantLoad;
+}
+
 async function fetchChapter(i) {
   const file = state.manifest.chapters[i].file;
   if (state.cache.has(file)) return state.cache.get(file);
@@ -1548,6 +1574,9 @@ async function fetchChapter(i) {
     if (!hit) throw err;
     text = await hit.text();
   }
+  // the cache holds what the reader shows: a hans chapter converted once,
+  // for the page, the player and the offline copy alike
+  if (state.hant) text = state.hant(text);
   state.cache.set(file, text);
   while (state.cache.size > 8) state.cache.delete(state.cache.keys().next().value);
   return text;

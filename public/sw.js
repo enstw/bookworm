@@ -20,9 +20,11 @@
 // a re-open can cost, and a build that lost the race arrives on the next
 // one (checkVersion in app.js is what makes that visible).
 
-// NOTE: fonts and icons are served cache-first out of this cache and their
-// URLs are unversioned — bump the shell version whenever either set changes,
-// or installed devices keep the old asset forever.
+// NOTE: fonts, icons and the OpenCC dictionary (/vendor/opencc-cn2t.js, the
+// reader's cn→tw for a Simplified online book) are served cache-first out of
+// this cache and their URLs are unversioned — bump the shell version
+// whenever any of them changes, or installed devices keep the old asset
+// forever.
 const SHELL = "bw-shell-v25"; // v25: wasmtts v2.6.0 engine files
 // The offline TTS engine's big binaries live in their own bw-wasmtts cache
 // (the synth worker's) and ort's wasm in bw-wasmtts-rt (above), but every
@@ -75,7 +77,8 @@ self.addEventListener("fetch", (e) => {
     );
     return;
   }
-  if (url.pathname.startsWith("/fonts/") || url.pathname.startsWith("/icons/")) {
+  if (url.pathname.startsWith("/fonts/") || url.pathname.startsWith("/icons/")
+    || url.pathname.startsWith("/vendor/opencc")) {
     e.respondWith(assetFetch(e.request));
     return;
   }
@@ -104,8 +107,10 @@ async function cacheFirst(req) {
   return (await caches.match(req)) ?? fetch(req);
 }
 
-// fonts and PWA icons are immutable: serve from cache, fill on first fetch
-// (kept out of SHELL_ASSETS so a slow 6 MB font can't fail SW install)
+// fonts, PWA icons and the OpenCC dictionary are immutable: serve from
+// cache, fill on first fetch (kept out of SHELL_ASSETS so a slow 6 MB font
+// can't fail SW install, and so a phone that never opens a hans book never
+// downloads the dictionary)
 async function assetFetch(req) {
   const hit = await caches.match(req);
   if (hit) return hit;

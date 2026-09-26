@@ -1377,6 +1377,34 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ url }),
         });
+        // a Simplified site: the shelf row and the sidecar get the
+        // Traditional title, author and 簡介 through the same cn→tw an
+        // upload gets — the sidecar first, since the title PATCH re-reads
+        // the author from it. Chapter titles and text convert on the phone
+        // as they are read (DESIGN.md → Online books). Best effort: without
+        // the dictionary the row stays as the site wrote it, and the reader
+        // still converts.
+        if (r.script === "hans") {
+          try {
+            const OpenCC = await import("/vendor/opencc-cn2t.js");
+            const conv = OpenCC.Converter({ from: "cn", to: "tw" });
+            r.title = conv(r.title);
+            await api(`/api/admin/objects/${encodeURIComponent(r.id)}/meta.json`, {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                title: r.title, author: conv(r.author ?? ""), synopsis: conv(r.synopsis ?? ""), source: url,
+              }, null, 2) + "\n",
+            });
+            await api(bookUrl(r.id), {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ title: r.title }),
+            });
+          } catch (err) {
+            console.warn("hans title not converted:", err?.message ?? err);
+          }
+        }
         $("onlineMsg").replaceChildren(el("a", {
           href: `/${encodeURIComponent(r.slug)}/`,
           text: t("online.added", r.title, r.chapters),

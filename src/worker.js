@@ -556,6 +556,9 @@ async function addOnlineBook(request, env, ctx) {
     generatedAt: new Date().toISOString(),
     source: { site: src.site, url: indexUrl, checkedAt: Date.now() },
   };
+  // a Simplified site: the reader converts on the phone (DESIGN.md → Online
+  // books), the files here stay what the site serves
+  if (src.script) m.script = src.script;
   // the enrichment sidecar, written the way an enriched upload writes it
   // (author/簡介/source, capped to the contract) — and before the manifest,
   // because registerBook reads the author from it
@@ -575,7 +578,10 @@ async function addOnlineBook(request, env, ctx) {
   // the 書衣: best effort, after the book is already on the shelf
   if (index.cover) ctx.waitUntil(fetchCover(env, id, index.cover));
   ctx.waitUntil(pushNewBook(env, ctx, title));
-  return json({ ok: true, id, slug, title, chapters: chapters.length });
+  // author and 簡介 ride along for /admin, which converts a Simplified
+  // site's three strings itself and writes them back
+  return json({ ok: true, id, slug, title, chapters: chapters.length,
+    script: src.script ?? "", author: meta.author, synopsis: meta.synopsis });
 }
 
 // the site's cover into the 書衣 slot, only when it really is a JPEG of a

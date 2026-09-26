@@ -150,6 +150,7 @@ try {
     run("sync-e2e", ["node", "scripts/test-sync-e2e.mjs"]);
   }
   run("vertical-e2e", ["node", "scripts/test-vertical-e2e.mjs"]);
+  run("hans-e2e", ["node", "scripts/test-hans-e2e.mjs"]);
   run("bg-e2e", ["node", "scripts/test-bg-e2e.mjs"]);
   run("testlog-e2e", ["node", "scripts/test-testlog-e2e.mjs"]);
   run("tts-stream", ["node", "scripts/test-tts-stream-e2e.mjs"]);
