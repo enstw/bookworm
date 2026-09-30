@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-09-27 — `3af53d9b2a56`
+
+- online: aiyanzx.com joins as a Simplified source, and the phone converts its books to Traditional as they are read (`3af53d9`)
+
 ## 2026-09-26 — `71432ab3e86e`
 
 > 新增「線上書」：在 /admin 貼上小說網站的書頁網址（目前支援 novels.com.tw），整本書就上架；章節在第一次翻到時才取回，之後離線、朗讀、書籤都和上傳的書一樣，連載更新會自動補上目錄。
