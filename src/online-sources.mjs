@@ -33,8 +33,11 @@ const MAX_PAGES = 40;
 // an index split across more list pages than this is not a book (6,000
 // chapters at a hundred a page)
 const MAX_LIST_PAGES = 60;
-// what the sites see: a phone browser, which is what they are built for
+// what the sites see: a phone browser, which is what they are built for —
+// unless an adapter names another (`ua`), for a site whose phone pages are
+// a different layout from the one the adapter reads
 const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 // The fetch every adapter uses. `testOrigin` (the e2e suite's
 // ONLINE_TEST_ORIGIN, a wrangler --var) points every source host at a
@@ -55,10 +58,10 @@ export function makeFetch(testOrigin, fetchFn = globalThis.fetch) {
   };
 }
 
-async function fetchHtml(url, fetchFn) {
+async function fetchHtml(url, fetchFn, ua = UA) {
   const res = await fetchFn(url, {
     headers: {
-      "user-agent": UA,
+      "user-agent": ua,
       accept: "text/html,*/*;q=0.8",
       "accept-language": "zh-TW,zh;q=0.9",
     },
@@ -100,14 +103,18 @@ export function stripTags(s) {
 const attr = (html, re) => decodeEntities((html.match(re) ?? [])[1] ?? "").trim();
 const h1Of = (html) => stripTags((html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/) ?? [])[1] ?? "").trim();
 
-// 「第454 章 九宮迷局」→「第454章　九宮迷局」: the sites space the number
-// from its marker, which the reader's heading rule never expects, then
-// spaceHeading puts the one ideographic space before the name
+// 「第454 章 九宮迷局」「第 199章 龍蛋」→「第454章　九宮迷局」「第199章　龍蛋」:
+// the sites space the number from its markers, on either side, which the
+// reader's heading rule never expects; then spaceHeading puts the one
+// ideographic space before the name
 export function cleanTitle(s) {
   const t = s.replace(/\s+/g, " ").trim()
-    .replace(/^(第\s*[0-9〇零一二三四五六七八九十百千万萬两兩]+)\s+([章节節回卷部篇集话話])/u, "$1$2");
+    .replace(/^第\s*([0-9〇零一二三四五六七八九十百千万萬两兩]+)\s*([章节節回卷部篇集话話])/u, "第$1$2");
   return spaceHeading(t);
 }
+
+// the arabic chapter number a cleaned title opens with, or NaN
+const chapterNo = (title) => Number(title.match(/^第(\d+)[章节節回]/)?.[1]);
 
 // ---------- novels.com.tw ----------
 //
@@ -233,11 +240,25 @@ const NOVELS_TW = {
 //
 // The "qsbs" template: the book page carries the meta and the first hundred
 // chapters and links a `mulu_1.html` list page, whose <select> enumerates
-// every list page (the book page is its first option). Each list page
-// repeats the newest chapters at its top, hidden by one
-// `li:nth-child(n){display:none}` rule per decoy, and pads its bottom with
+// every list page (the book page is its first option). Each list page may
+// repeat the newest chapters at its top, hidden by one
+// `li:nth-child(n){display:none}` rule per decoy, and pad its bottom with
 // the first few chapters again — the rule count drops the decoys, the URL
-// set drops the repeats. A chapter page holds one
+// set drops the repeats. The site serves two skins of these pages at
+// random, request by request (the list a `section-list` in one, a
+// `chapter-list` in the other, the decoy rules left in the stylesheet of
+// both — seen 2026-09-30, three days after the adapter was written against
+// the first), so nothing here keys on a class name except to match a hide
+// rule to the list it names; and its phone pages are a third layout, so
+// the adapter asks as a desktop browser.
+//
+// The list itself is untidy past chapter 440: some chapters appear under
+// two to seven URLs, and near-neighbours swap places. Where the copies
+// differ, the earlier one is a Traditional re-post whose title block the
+// dressing strip cannot recognise and the later one is the Simplified
+// original (all 13 duplicated titles, 2026-09-30) — so the last copy of a
+// title wins, and when every title carries an arabic number the list is
+// put in that order. A chapter page holds one
 // `document.writeln(qsbs.bb('<base64>'))` per paragraph (qsbs.bb is plain
 // base64) inside #chaptercontent, over `_1.html`, `_2.html` … pages; the
 // 下一章 link names the next page until the last, where it names the next
@@ -247,6 +268,7 @@ const NOVELS_TW = {
 const AIYANZX = {
   site: "aiyanzx.com",
   script: "hans",
+  ua: DESKTOP_UA,
   matches: (u) => /^(www\.|m\.)?aiyanzx\.com$/.test(u.hostname),
   // /<category>/<book>/ prefixes the book page, its list pages and every chapter
   indexUrl(u) {
@@ -254,7 +276,8 @@ const AIYANZX = {
     return m ? `https://www.aiyanzx.com/${m[1]}/${m[2]}/` : null;
   },
   async index(indexUrl, fetchFn) {
-    const first = await fetchHtml(indexUrl, fetchFn);
+    const get = (u) => fetchHtml(u, fetchFn, this.ua);
+    const first = await get(indexUrl);
     const meta = (p) => attr(first, new RegExp(`<meta property="${p}" content="([^"]*)"`));
     const title = meta("og:novel:book_name") || meta("og:title") || attr(first, /<title>([^<(_]*)/);
     const synopsis = meta("og:description").replace(/\\+n/g, "\n")
@@ -266,27 +289,31 @@ const AIYANZX = {
     const listLink = first.match(/href="([^"]*mulu_\d+\.html)"/);
     if (listLink) {
       const listUrl = new URL(decodeEntities(listLink[1]), indexUrl).toString();
-      const list = await fetchHtml(listUrl, fetchFn);
+      const list = await get(listUrl);
       htmls.set(listUrl, list);
-      // the list page's <title> is 「書名(作者)_章节目录…」; the book page's
-      // og:novel:author is another field of the site's, seen holding the
-      // protagonists' names instead
-      const by = list.match(/<title>[^<(]*\(([^)]+)\)_/);
-      if (by) author = decodeEntities(by[1]).trim();
+      // the book page's og:novel:author is another field of the site's,
+      // seen holding the protagonists' names; a list page has the real
+      // one, in its <title> as 「書名(作者)_章节目录…」 in one skin and in
+      // its own og:novel:author in the other
+      const by = list.match(/<title>[^<(]*\(([^)]+)\)_/)?.[1] ??
+        list.match(/<meta property="og:novel:author" content="([^"]*)"/)?.[1];
+      if (by) author = decodeEntities(by).trim();
       const opts = [...list.matchAll(/<option[^>]*value="([^"]+)"/g)]
         .map((m) => new URL(decodeEntities(m[1]), indexUrl).toString());
       pages = [...new Set([indexUrl, ...(opts.length ? opts : [listUrl])])].slice(0, MAX_LIST_PAGES);
     }
-    const chapters = [];
-    const seen = new Set();
+    const byTitle = new Map();
     for (const page of pages) {
-      const html = htmls.get(page) ?? await fetchHtml(page, fetchFn);
-      for (const c of qsbsList(html, page)) {
-        if (!c.url.startsWith(indexUrl) || seen.has(c.url)) continue;
-        seen.add(c.url);
-        chapters.push(c);
+      const html = htmls.get(page) ?? await get(page);
+      for (const c of qsbsList(html, page, indexUrl)) {
+        // re-inserted, so a title keeps the position of its last copy
+        byTitle.delete(c.title);
+        byTitle.set(c.title, c);
       }
     }
+    let chapters = [...byTitle.values()];
+    if (chapters.every((c) => chapterNo(c.title) > 0))
+      chapters = chapters.sort((a, b) => chapterNo(a.title) - chapterNo(b.title));
     return { title, author, synopsis, cover, chapters };
   },
   async chapter(url, fetchFn) {
@@ -294,7 +321,7 @@ const AIYANZX = {
     const pages = [];
     let page = url;
     for (let n = 0; page && n < MAX_PAGES; n++) {
-      const html = await fetchHtml(page, fetchFn);
+      const html = await fetchHtml(page, fetchFn, this.ua);
       pages.push(qsbsPage(html));
       const nav = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*下一章\s*<\/a>/);
       const to = nav ? new URL(decodeEntities(nav[1]), page).toString() : "";
@@ -304,22 +331,28 @@ const AIYANZX = {
   },
 };
 
-// one list page's chapters: the biggest <ul class="section-list"> on it,
-// minus the decoys its stylesheet hides at the top. The newest-chapters
-// block is the other one, above the main list and never longer — and equal
-// on a book of a dozen chapters, which is why a tie goes to the later list.
-function qsbsList(html, pageUrl) {
-  const rules = [...html.matchAll(/\.([\w-]+)>li:nth-child\(\d+\)\{display:\s*none\}/g)];
-  const hiddenClass = rules[0]?.[1];
+// one list page's chapters: the <ul> holding the most links to this book's
+// chapter pages, minus the decoys its stylesheet hides at the top — a hide
+// rule counts only when every class its selector names is on that <ul>
+// (one skin keeps the other's rules, naming a list it does not have). The
+// newest-chapters block is the other such list, above the main one and
+// never longer — and equal on a book of a dozen chapters, which is why a
+// tie goes to the later list.
+function qsbsList(html, pageUrl, bookUrl) {
+  const rules = [...html.matchAll(/((?:\.[\w-]+)+)\s*>\s*li:nth-child\(\d+\)\s*\{\s*display:\s*none\s*;?\s*\}/g)]
+    .map((m) => m[1].split(".").filter(Boolean));
   let best = [];
-  for (const ul of html.matchAll(/<ul[^>]*class="([^"]*section-list[^"]*)"[^>]*>([\s\S]*?)<\/ul>/g)) {
+  for (const ul of html.matchAll(/<ul([^>]*)>([\s\S]*?)<\/ul>/g)) {
+    const classes = (ul[1].match(/class="([^"]*)"/)?.[1] ?? "").split(/\s+/).filter(Boolean);
     const items = [];
     for (const a of ul[2].matchAll(/<a\s[^>]*?href="([^"]+\.html)"[^>]*>([\s\S]*?)<\/a>/g)) {
+      const url = new URL(decodeEntities(a[1]), pageUrl).toString();
+      if (!url.startsWith(bookUrl) || /\/mulu_\d+\.html$/.test(url)) continue;
       const t = cleanTitle(stripTags(a[2]));
-      if (t) items.push({ title: t, url: new URL(decodeEntities(a[1]), pageUrl).toString() });
+      if (t) items.push({ title: t, url });
     }
-    if (hiddenClass && ul[1].split(/\s+/).includes(hiddenClass)) items.splice(0, rules.length);
-    if (items.length >= best.length) best = items;
+    items.splice(0, rules.filter((sel) => sel.every((c) => classes.includes(c))).length);
+    if (items.length && items.length >= best.length) best = items;
   }
   return best;
 }
