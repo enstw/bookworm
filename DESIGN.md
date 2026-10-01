@@ -1282,8 +1282,8 @@ strings plus an injected fetch.
   two chapters fetched at once would race each other's copy — so the
   manifest keeps its estimate until a refresh reconciles it.
 - **The index refreshes itself.** `refreshOnline` re-reads the site's
-  chapter list, appends what is new (matched by URL, so a retitled chapter
-  is not a new one), copies real counts and sizes from R2 over the
+  chapter list, appends what is new (matched by URL and title, so neither
+  a retitled chapter nor one re-posted under a second URL is a new one), copies real counts and sizes from R2 over the
   estimates, and re-registers the row. It runs from the 更新目錄 button on
   /admin and in the background (`ctx.waitUntil`) whenever a reader opens a
   book whose `checkedAt` is older than `ONLINE_REFRESH_MS` (6 h) — the
@@ -1335,8 +1335,22 @@ strings plus an injected fetch.
   a paragraph with nothing marking it but the missing full stop, and every
   whole paragraph the site serves closes on punctuation (149 of 149
   measured), so an unclosed last paragraph is joined to the next page's
-  first. naibawu.com and cnsicw.com run the same engine with different
-  list layouts and were left out: one adapter is one moving target.
+  first. The site serves these pages in two skins at random, request by
+  request (the list a `section-list` in one, a `chapter-list` in the
+  other, the first skin's hide rules left in the second's stylesheet), and
+  a third layout to phones — found 2026-09-30 as 「書頁上找不到章節」 on
+  the first live add, three days after the survey — so the adapter asks
+  as a desktop browser (`ua`), picks the list by its links to the book's
+  chapter pages rather than by class, and counts a hide rule only when its
+  selector's classes are all on that list. Past chapter 440 the list also
+  carries re-posts (a chapter under two to seven URLs; where the copies
+  differ the earlier is a Traditional re-post with an unstrippable title
+  block, the later the Simplified original) and swapped neighbours: the
+  last copy of a title wins, the list is ordered by chapter number when
+  every title has one, and `refreshOnline` treats a known title under a
+  new URL as a re-post, not a new chapter. naibawu.com and cnsicw.com run
+  the same engine with different list layouts and were left out: one
+  adapter is one moving target.
 - **A Simplified source reads as Traditional on the phone.** The Worker
   cannot: OpenCC's dictionary is 1.1 MB of trie to build on every isolate
   start, past the free plan's CPU budget. The reader can, cheaply: the

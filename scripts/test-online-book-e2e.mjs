@@ -222,8 +222,10 @@ try {
   out.sidecarAndCover = meta?.author === "作者甲" && meta.synopsis === "一句簡介" && meta.source === INDEX_URL && cover === 200
     ? "ok" : `FAIL: meta=${JSON.stringify(meta)} cover=${cover}`;
 
-  // 6. the site grows; 更新目錄 appends the new chapter and replaces the
-  //    fetched chapter's estimate with its real count
+  // 6. the site grows; 更新目錄 appends the new chapter — not chapter 2
+  //    re-posted under a second URL — and replaces the fetched chapter's
+  //    estimate with its real count
+  site.chapters.push({ id: 2002, title: "第2 章 中段", pages: [`<p> 重貼的第二章。\r</p>`] });
   site.chapters.push({ id: 1004, title: "第4 章 新增", pages: [`<p> 新的一章。\r</p>`] });
   const [fStatus, refreshed] = await jsonOf(await admin(`/api/admin/books/${ID}/refresh`, { method: "POST" }));
   const m1 = await manifestOf(ID);

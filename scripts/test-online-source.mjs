@@ -187,6 +187,16 @@ const ayListPage = (n, decoys, main, trailing) => `<!doctype html><html><head><m
 <div class="listpage">${aySelect(n)}<a href="/cat/book/mulu_${n + 1}.html" class="y">下一页</a></div>
 <ul class="section-list fix ycxsid">${ayItems([...decoys, ...main, ...trailing])}</ul>
 <div class="listpage">${aySelect(n)}</div></body></html>`;
+// the other skin (2026-09-30): the list is a `chapter-list`, and the
+// stylesheet still carries the first skin's hide rules, naming a list the
+// page does not have — they must hide nothing here
+const ayListPageSkin2 = (n, main) => `<!doctype html><html><head><meta charset="UTF-8">
+<meta property="og:novel:author" content="作者乙"/>
+<title>測試書章节目录_測試書最新章节_爱研阅读</title>
+<style>.section-list.ycxsid>li:nth-child(1){display:none}.section-list.ycxsid>li:nth-child(2){display:none}</style></head><body>
+<ul class="btn-group"><li><a href="/cat/book/">目录</a></li></ul>
+<div class="listpage">${aySelect(n)}<a href="/cat/book/mulu_${n + 1}.html" class="y">下一页</a></div>
+<ul class="chapter-list">${ayItems(main)}</ul></body></html>`;
 const AY_CH = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ id: "abcdefg".slice(0, n) + "x", title: `第${n} 章 標題${n}` }));
 
 // --- URLs: every page under /<category>/<book>/ is the book ---
@@ -207,7 +217,10 @@ const AY_CH = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ id: "abcdefg".slice(0, n) + "x
 {
   pages.set(AY, ayIndex(AY_CH.slice(0, 3), [AY_CH[6], AY_CH[5], AY_CH[4]]));
   pages.set(`${AY}mulu_1.html`, ayListPage(1, [AY_CH[6], AY_CH[5]], AY_CH.slice(3, 6), [AY_CH[0]]));
-  pages.set(`${AY}mulu_2.html`, ayListPage(2, [AY_CH[6]], [AY_CH[6]], AY_CH.slice(0, 2)));
+  // page 2 in the other skin, its two chapters out of order and chapter 7
+  // posted twice — the later copy is the one kept — with 「第 7章」 spacing
+  pages.set(`${AY}mulu_2.html`, ayListPageSkin2(2, [
+    { id: "repost7x", title: "第 7章 標題7" }, AY_CH[6], AY_CH[5], { id: "abcdefgx", title: "第7 章 標題7" }]));
   pages.set(`${AY}mulu_3.html`, ayListPage(3, [AY_CH[6]], [], AY_CH.slice(0, 9))); // the page past the last: never asked for
   const src = findSource(AY);
   const idx = await fetchIndex(src, AY, fake);
@@ -219,8 +232,8 @@ const AY_CH = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ id: "abcdefg".slice(0, n) + "x
     idx.chapters[0].url === `${AY}ax.html` && idx.chapters[6].url === `${AY}abcdefgx.html` &&
     hits.get(AY) === 1 && hits.get(`${AY}mulu_1.html`) === 1 && hits.get(`${AY}mulu_2.html`) === 1 &&
     !hits.has(`${AY}mulu_3.html`)
-      ? "ok (7 chapters over 3 list pages, author from the list page, cover absolute)"
-      : `FAIL: ${JSON.stringify({ ...idx, chapters: titles })} hits=${JSON.stringify([...hits].filter(([u]) => u.startsWith(AY)))}`;
+      ? "ok (7 chapters over 3 list pages in both skins, re-post and order settled, author from the list page)"
+      : `FAIL: ${JSON.stringify({ ...idx, chapters: idx.chapters })} hits=${JSON.stringify([...hits].filter(([u]) => u.startsWith(AY)))}`;
 }
 
 // --- a chapter over three pages: cut paragraph joined, dressing gone, the
@@ -278,6 +291,7 @@ const AY_CH = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ id: "abcdefg".slice(0, n) + "x
 
   const cases = [
     ["第454 章 九宮迷局", "第454章　九宮迷局"],
+    ["第 199章 龍蛋變化", "第199章　龍蛋變化"],
     ["  第一百二十三 回  名字 ", "第一百二十三回　名字"],
     ["第3章", "第3章"],
     ["番外 之一", "番外 之一"],
