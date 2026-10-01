@@ -9,6 +9,10 @@ The `>` lines are the reader-facing notes, taken from each commit's
 none says nothing to readers — which is the intended outcome for a week of
 pure CI work.
 
+## 2026-10-01 — `366e9eed2562`
+
+- online: aiyanzx.com's second skin reads, and its re-posted chapters are kept once, in order (`366e9ee`)
+
 ## 2026-09-27 — `3af53d9b2a56`
 
 - online: aiyanzx.com joins as a Simplified source, and the phone converts its books to Traditional as they are read (`3af53d9`)
