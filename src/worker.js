@@ -599,7 +599,8 @@ async function fetchCover(env, id, coverUrl) {
 }
 
 // Re-read an online book's index: chapters the site added since are
-// appended (matched by URL, so a retitled chapter is not a new one), and
+// appended (matched by URL and title, so neither a retitled chapter nor a
+// re-posted one is a new one), and
 // every chapter already fetched gets its real count and size from R2 in
 // place of the estimate. Nothing is ever removed — a chapter the site took
 // down stays readable from the copy. Runs from the /admin button and from
@@ -613,8 +614,12 @@ async function refreshOnline(env, id) {
   const src = findSource(m.source.url);
   if (!src) return { ok: false, status: 400, error: "不支援的來源網站" };
   const index = await fetchIndex(src, m.source.url, sourceFetch(env));
+  // new = a URL the book has not seen, under a title it has not seen: a
+  // site that re-posts a chapter under a second URL (aiyanzx.com does) is
+  // not publishing a new one
   const known = new Set(m.chapters.map((c) => c.src));
-  const fresh = index.chapters.filter((c) => !known.has(c.url));
+  const titled = new Set(m.chapters.map((c) => c.title));
+  const fresh = index.chapters.filter((c) => !known.has(c.url) && !titled.has(c.title));
   m.chapters.push(...onlineEntries(fresh, m.chapters.length, safeName));
 
   const have = new Map();
