@@ -2,33 +2,19 @@
 // Speaks the protocol of the edge-tts Python package: one wss connection per
 // synthesis, speech.config + SSML in, MP3 audio frames out (24 kHz 48 kbps
 // mono). Free, no API key — the endpoint authenticates with a time-derived
-// Sec-MS-GEC hash of a public client token.
+// Sec-MS-GEC token over a public client token (v2, `edge-gec.js`).
+
+import { secMsGecV2 } from "./edge-gec.js";
 
 const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 const WSS_HOST = "speech.platform.bing.com";
 const WSS_PATH = "/consumer/speech/synthesize/readaloud/edge/v1";
 // keep in sync with the edge-tts Python package's CHROMIUM_FULL_VERSION —
-// Microsoft appears to reject tokens claiming stale browser versions
+// Microsoft appears to reject tokens claiming stale browser versions. The
+// "2-" prefix names the token format: a v2 token under "1-" is a 403.
 const CHROMIUM_FULL = "143.0.3650.75";
 const CHROMIUM_MAJOR = CHROMIUM_FULL.split(".")[0];
 const SYNTH_TIMEOUT_MS = 30_000;
-
-// Sec-MS-GEC: uppercase SHA-256 hex of "<windows ticks floored to 5 min><token>".
-// The tick count deliberately goes through double-precision multiplication
-// (ticks * 1e7 overflows 2^53): the server validates against the original
-// Edge JS client's rounding, and the Python reference mimics it the same way.
-// BigInt(double) then prints that double's exact integer value.
-async function secMsGec() {
-  const unix = Math.floor(Date.now() / 1000);
-  const floored = unix - (unix % 300);
-  const ticks = (floored + 11644473600) * 10_000_000;
-  const data = new TextEncoder().encode(`${BigInt(ticks)}${TRUSTED_CLIENT_TOKEN}`);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(hash)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
-}
 
 const escapeXml = (s) =>
   s.replace(/[&<>'"]/g, (c) =>
@@ -49,8 +35,8 @@ export async function edgeSynthesize(text, voice = "zh-TW-HsiaoChenNeural") {
   const url =
     `https://${WSS_HOST}${WSS_PATH}` +
     `?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}` +
-    `&Sec-MS-GEC=${await secMsGec()}` +
-    `&Sec-MS-GEC-Version=1-${CHROMIUM_FULL}` +
+    `&Sec-MS-GEC=${secMsGecV2(TRUSTED_CLIENT_TOKEN)}` +
+    `&Sec-MS-GEC-Version=2-${CHROMIUM_FULL}` +
     `&ConnectionId=${connectionId}`;
 
   const resp = await fetch(url, {
@@ -60,6 +46,8 @@ export async function edgeSynthesize(text, voice = "zh-TW-HsiaoChenNeural") {
       "Cache-Control": "no-cache",
       Origin: "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",
       "Accept-Language": "en-US,en;q=0.9",
+      // a fresh random MUID per connection, as the Python reference sends
+      Cookie: `muid=${crypto.randomUUID().replaceAll("-", "").toUpperCase()};`,
       "User-Agent":
         `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ` +
         `(KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR}.0.0.0 Safari/537.36 ` +
