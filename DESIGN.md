@@ -1417,7 +1417,13 @@ cached), STREAM (`ManagedMediaSource`, one continuous mp3 timeline — no
 chunk boundary ever needs `play()` while the screen is locked) where
 supported, CHAIN (double-buffered element swap) elsewhere;
 `globalThis.bwPlayer` says which. The online backend speaks Microsoft Edge
-read-aloud (protocol gotchas commented in `src/edge-tts.js`); real Mandarin
+read-aloud (protocol gotchas commented in `src/edge-tts.js`). Its login is a
+time-derived `Sec-MS-GEC` token that Microsoft rotates without notice: the
+v1 plain SHA-256 started answering 403 in November 2026, which silenced
+every online session, and `src/edge-gec.js` is the hand port of the v2
+token from the edge-tts Python package's `drm.py`, pinned to its vectors by
+`test-edge-gec.mjs`. When the online voice goes silent with HTTP 403, the
+fix starts from the edge-tts package's newest release. Real Mandarin
 rate ≈ 4.5 chars/s; TTS chunk 0 is always the chapter heading alone. **The
 WASM engine serves all real listening by default: `packReady()` picks it
 whenever the voice pack is cached, and every reading device holds the pack —

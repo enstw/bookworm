@@ -111,6 +111,7 @@ run("renovate-policy", ["node", "scripts/test-renovate-policy.mjs"]);
 run("deploy-policy", ["node", "scripts/test-deploy-policy.mjs"]);
 run("shell-policy", ["node", "scripts/test-shell-policy.mjs"]);
 run("slug", ["node", "scripts/test-slug.mjs"]);
+run("edge-gec", ["node", "scripts/test-edge-gec.mjs"]);
 run("split-core", ["node", "scripts/test-split-core.mjs"]);
 run("online-source", ["node", "scripts/test-online-source.mjs"]);
 run("release-notes", ["node", "scripts/test-release-notes.mjs"]);
